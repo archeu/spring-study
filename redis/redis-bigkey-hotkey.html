@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis 大 key 与热 key</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Two villains: the big key (brown, heavy) and the hot key (orange, crowded). Nodes teal, local cache blue, replicas purple, overload red. Interactives: big-key calculator and hot-key cluster lab (anchor). */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --bg:#8A5A2B; --bg-tint:#F3E6D8;
+  --hk:#C2410C; --hk-tint:#FDE6D8;
+  --nd:#0D7A69; --nd-tint:#DCF0EB;
+  --lc:#3150C4; --lc-tint:#E2E7FA;
+  --rp:#6A3FC0; --rp-tint:#ECE5FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --bg:#D9A26B; --bg-tint:#3A2A1A;
+    --hk:#FB923C; --hk-tint:#3A2214;
+    --nd:#40C6B0; --nd-tint:#12352F;
+    --lc:#90A4FF; --lc-tint:#1D2650;
+    --rp:#B9A0FF; --rp-tint:#2A2148;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --bg:#D9A26B; --bg-tint:#3A2A1A;
+  --hk:#FB923C; --hk-tint:#3A2214;
+  --nd:#40C6B0; --nd-tint:#12352F;
+  --lc:#90A4FF; --lc-tint:#1D2650;
+  --rp:#B9A0FF; --rp-tint:#2A2148;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--lc)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--lc);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="bg"]{--rc:var(--bg);--rt:var(--bg-tint)}
+[data-role="hk"]{--rc:var(--hk);--rt:var(--hk-tint)}
+[data-role="nd"]{--rc:var(--nd);--rt:var(--nd-tint)}
+[data-role="lc"]{--rc:var(--lc);--rt:var(--lc-tint)}
+[data-role="rp"]{--rc:var(--rp);--rt:var(--rp-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.duo{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.pan{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.pan h3{color:var(--rc);font-size:26px}
+.pan h3 small{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);margin-left:8px}
+.pan p{font-size:14.5px}
+.memrow{display:flex;gap:3px;align-items:flex-end;height:70px}
+.memrow i{flex:1 1 0;border-radius:3px 3px 0 0;background:var(--nd-tint);border:1.5px solid var(--nd)}
+.memrow i.fat{flex:9 1 0;background:var(--bg);border-color:var(--bg)}
+.nodes3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:end}
+.n3{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px}
+.n3 .bar{width:100%;border-radius:6px 6px 0 0;background:var(--nd)}
+.n3 .bar.hot{background:var(--bad)}
+.n3 b{font-family:var(--font-mono)}
+.arrows{display:flex;justify-content:center;gap:2px;color:var(--hk);font-weight:700;font-size:14px;letter-spacing:-2px}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--rp)} .an{color:var(--nd)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--warn);font-weight:700}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:5px 12px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.tog{font-size:13px;padding:6px 10px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;min-width:0}
+.tog b{display:flex;align-items:center;gap:8px;font-size:13.5px}
+.tog b::before{content:"";width:14px;height:14px;border-radius:4px;border:2px solid var(--line-strong);flex:none}
+.tog span{font-size:11.5px;color:var(--muted);line-height:1.4}
+.tog[aria-pressed="true"]{border-color:var(--good);background:var(--good-tint)}
+.tog[aria-pressed="true"] b::before{background:var(--good);border-color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums}
+.tile span{font-size:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.row .lbl{font-size:13px;color:var(--muted);min-width:6.5em}
+
+/* ---------- harms ---------- */
+.harms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.hm{border:1.5px solid var(--line);border-radius:14px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.hm b{font-size:15.5px;color:var(--rc)}
+.hm span{font-size:13.5px}
+.hm code{font-size:12px}
+
+/* ---------- calculator ---------- */
+.calc{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+
+/* ---------- split ---------- */
+.split{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.4fr);gap:12px;align-items:center}
+.bigbox{border:2.5px solid var(--bg);border-radius:14px;background:var(--bg-tint);padding:10px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.bigbox code{font-weight:700}
+.bigbox span{font-size:12.5px;color:var(--muted)}
+.shards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+.shards span{border:1.5px solid var(--nd);background:var(--nd-tint);border-radius:8px;padding:4px 2px;text-align:center;font-family:var(--font-mono);font-size:10.5px;overflow-wrap:anywhere}
+.arr{font-size:26px;font-weight:700;color:var(--line-strong);text-align:center}
+
+/* ---------- hot lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.fixes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.chartbox{border:1.5px solid var(--line);border-radius:14px;padding:10px;min-width:0;background:var(--card)}
+.chartbox svg{display:block;width:100%;height:auto}
+.c-ax{font-family:var(--font-mono);font-size:10.5px;fill:var(--muted)}
+.c-t{font-size:12px;fill:var(--muted);font-weight:500}
+.c-gl{stroke:var(--line);stroke-width:1}
+.c-base{stroke:var(--line-strong);stroke-width:1}
+.c-norm{fill:var(--nd)}
+.c-hot{fill:var(--hk)}
+.c-over{fill:var(--bad);opacity:.18}
+.c-cap{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:5 4}
+.c-capl{font-size:11px;font-weight:700;fill:var(--ink)}
+.c-lbl{font-family:var(--font-mono);font-size:11px;font-weight:700;fill:var(--ink)}
+.c-val{font-family:var(--font-mono);font-size:10.5px;fill:var(--ink)}
+.c-rep{fill:var(--rp)}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:14px;height:12px;border-radius:3px}
+
+/* ---------- detect ---------- */
+.det{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fixes{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .duo,.two,.det,.eras{grid-template-columns:1fr}
+  .harms{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .split{grid-template-columns:1fr}
+  .arr{transform:rotate(90deg)}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .fixes{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .harms,.tiles,.fixes{grid-template-columns:1fr}
+  .shards{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-fat" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="14" width="56" height="44" rx="8"/>
+    <rect class="k-paper" x="12" y="22" width="40" height="6" rx="2"/>
+    <rect class="k-paper" x="12" y="32" width="40" height="6" rx="2"/>
+    <rect class="k-paper" x="12" y="42" width="28" height="6" rx="2"/>
+    <rect class="k-gold" x="24" y="4" width="16" height="10" rx="3"/>
+  </symbol>
+  <symbol id="i-fire" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4c4 10 16 16 16 32a16 16 0 0 1-32 0c0-8 4-12 6-16 1 6 4 8 6 8-2-10 2-18 4-24z"/>
+    <path class="k-gold" d="M32 34c2 4 7 6 7 12a7 7 0 0 1-14 0c0-4 3-6 4-9 1 2 2 3 3 3z"/>
+  </symbol>
+  <symbol id="i-radar" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="28"/>
+    <circle class="ks-paper" stroke-width="2.5" cx="32" cy="32" r="18"/>
+    <circle class="ks-paper" stroke-width="2.5" cx="32" cy="32" r="8"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M32 32L52 16"/>
+    <circle class="k-gold" cx="44" cy="22" r="4"/>
+  </symbol>
+  <symbol id="i-cut" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="10" width="16" height="44" rx="4"/>
+    <rect fill="currentColor" x="24" y="10" width="16" height="44" rx="4" opacity=".75"/>
+    <rect fill="currentColor" x="44" y="10" width="16" height="44" rx="4" opacity=".5"/>
+    <path stroke="var(--gold)" stroke-width="3" stroke-dasharray="4 3" d="M22 4v56M42 4v56"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis 大 key 与热 key</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS · BIG KEY · HOT KEY · --BIGKEYS · --HOTKEYS · UNLINK · LOCAL CACHE</p>
+  <h1>一个 key 太胖，或者一个 key 太红，都能拖垮一个节点</h1>
+  <p class="lead">Redis 把压力分摊开靠的是“key 很多、每个都不大、访问也分散”。大 key 打破了“每个都不大”，热 key 打破了“访问分散”。两种都会让某一个节点、某一条命令、某一段网络单独被压垮，而加机器往往没用。</p>
+
+  <div class="duo">
+    <div class="pan" data-role="bg">
+      <h3>大 key<small>big key</small></h3>
+      <div class="memrow" aria-label="一个节点的内存里，一个 key 占了一大半"><i style="height:30%"></i><i style="height:45%"></i><i class="fat" style="height:100%"></i><i style="height:25%"></i><i style="height:40%"></i><i style="height:35%"></i></div>
+      <p>一个 key 里塞了几十万个元素，或者一个值就有几 MB。读它、删它、迁移它，都要一次干完，主线程和网络被它独占。</p>
+    </div>
+    <div class="pan" data-role="hk">
+      <h3>热 key<small>hot key</small></h3>
+      <div class="arrows" aria-hidden="true">↓↓↓↓↓↓↓↓↓↓↓↓</div>
+      <div class="nodes3" aria-label="三个节点中，热 key 所在的节点 B 负载远高于 A 和 C">
+        <div class="n3"><div class="bar" style="height:30px"></div><b>节点 A</b></div>
+        <div class="n3"><div class="bar hot" style="height:90px"></div><b>节点 B</b></div>
+        <div class="n3"><div class="bar" style="height:30px"></div><b>节点 C</b></div>
+      </div>
+      <p>一个 key 每秒被读几万次。它只能在一个槽、一个节点上，那个节点 CPU 和网卡被打满，别的节点却很闲。</p>
+    </div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="bg">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fat"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">胖子<code>big key</code></div>
+        <p>值太大或元素太多，<b>一次操作就要很久</b>。</p>
+        <span class="belong">问题在“大小”</span>
+      </div>
+    </div>
+    <div class="who" data-role="hk">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fire"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">网红<code>hot key</code></div>
+        <p>同一时间<b>所有人都来读它</b>，分不出去。</p>
+        <span class="belong">问题在“集中”</span>
+      </div>
+    </div>
+    <div class="who" data-role="nd">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-radar"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">雷达<code>--bigkeys · --hotkeys</code></div>
+        <p>先找到是哪个 key，<b>再对症下药</b>。</p>
+        <span class="belong">尽量在从节点或离线做</span>
+      </div>
+    </div>
+    <div class="who" data-role="lc">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cut"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">切开<code>拆分 · 复制 · 本地缓存</code></div>
+        <p>大的切小，热的<b>多放几份、挡在外面</b>。</p>
+        <span class="belong">都有代价</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= BIG ================= -->
+<section id="big">
+  <div>
+    <h2>大 key：多大算大，大了有什么坏处</h2>
+    <p class="lead">没有统一标准，常见的经验线是：String 超过 10 KB；Hash、List、Set、ZSet 的元素超过 5000 个，或者总大小超过 10 MB。真正要看的是：操作它一次要多久、传它一次要多少流量。</p>
+  </div>
+  <div class="harms">
+    <div class="hm" data-role="bad"><b>卡住主线程</b><span>HGETALL、SMEMBERS、LRANGE 0 -1、DEL 都要处理全部元素，这期间所有请求排队（<a href="redis-threading-io.html">Redis 第 07 篇</a>）。</span></div>
+    <div class="hm" data-role="bad"><b>打满网卡</b><span>一个 1 MB 的值每秒读 1000 次，就是 1 GB/s，远超千兆网卡的 125 MB/s。</span></div>
+    <div class="hm" data-role="warn"><b>集群数据倾斜</b><span>一个 key 只能在一个节点上，那个节点内存比别人大一截，先触发淘汰或 OOM。</span></div>
+    <div class="hm" data-role="warn"><b>迁移和扩容卡住</b><span>槽迁移用 MIGRATE 一次搬整个 key，大 key 搬一次就阻塞两边，还可能超时失败。</span></div>
+    <div class="hm" data-role="warn"><b>过期、淘汰时卡顿</b><span>大 key 到期或被淘汰，同样要在主线程里释放，除非打开 lazyfree（<a href="redis-eviction-expire.html">Redis 第 05 篇</a>）。</span></div>
+    <div class="hm" data-role="other"><b>客户端也难受</b><span>Java 一次反序列化几 MB 的对象，GC 压力大；超时设置短了还会读到一半就断。</span></div>
+  </div>
+
+  <div class="calc" id="calc">
+    <h3>大 key 计算器：一个 Hash 有多危险</h3>
+    <div class="row"><span class="lbl">字段个数：</span><div class="seg-btns" role="group" aria-label="字段个数"><button data-n="10000" aria-pressed="false">1 万</button><button data-n="100000" aria-pressed="false">10 万</button><button data-n="1000000" aria-pressed="true">100 万</button></div></div>
+    <div class="row"><span class="lbl">每个字段＋值：</span><div class="seg-btns" role="group" aria-label="每个元素大小"><button data-s="100" aria-pressed="true">100 字节</button><button data-s="1000" aria-pressed="false">1 KB</button></div></div>
+    <div class="row"><span class="lbl">每秒读几次：</span><div class="seg-btns" role="group" aria-label="读取频率"><button data-q="1" aria-pressed="false">1 次</button><button data-q="10" aria-pressed="true">10 次</button><button data-q="100" aria-pressed="false">100 次</button></div></div>
+    <div class="row"><span class="lbl">存法：</span><div class="seg-btns" role="group" aria-label="是否拆分"><button data-k="1" aria-pressed="true">一个大 Hash，读用 HGETALL</button><button data-k="100" aria-pressed="false">拆成 100 个，只读要的那个</button></div></div>
+    <div class="tiles" id="calcTiles"></div>
+    <p class="verdict" id="calcV" data-role="bad"></p>
+    <p class="tip">粗略估算：读每个元素约 1 微秒，释放每个元素约 0.5 微秒，每个元素额外开销约 40 字节；实际和机器、编码有关，只看数量级。</p>
+  </div>
+</section>
+
+<!-- ================= FIX BIG ================= -->
+<section id="fixbig">
+  <div>
+    <h2>大 key 怎么治</h2>
+    <p class="lead">核心就一句：别让一次操作碰到太多数据。能拆就拆，拆不了就少读、分批读、后台删。</p>
+  </div>
+  <div class="mini">
+    <b>拆分：按字段的哈希值分到 N 个小 Hash 里</b>
+    <div class="split">
+      <div class="bigbox"><code>user:follows:1001</code><span>一个 Hash，100 万个字段</span></div>
+      <div class="arr" aria-hidden="true">→</div>
+      <div class="shards" aria-label="拆成 100 个小 Hash"><span>…:1001:0</span><span>…:1001:1</span><span>…:1001:2</span><span>…:1001:3</span><span>…</span><span>…:1001:96</span><span>…:1001:97</span><span>…:1001:98</span><span>…:1001:99</span><span>各 1 万个</span></div>
+    </div>
+    <p>读写某个字段时，先算 <code>hash(field) % 100</code> 找到它在哪一份，只碰那一份。集群下这 100 份还会落到不同节点，内存也均匀了。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>拆分后的读写</b><span>StringRedisTemplate</span></div>
+<pre><code><span class="kw">static final int</span> SHARDS = <span class="kw">100</span>;
+
+String shardKey(<span class="kw">long</span> userId, String field) {
+    <span class="kw">int</span> i = Math.floorMod(field.hashCode(), SHARDS);
+    <span class="kw">return</span> <span class="an">"user:follows:"</span> + userId + <span class="an">":"</span> + i;
+}
+
+redis.opsForHash().put(shardKey(uid, f), f, value);   <span class="cm">// 写只碰一份</span>
+redis.opsForHash().get(shardKey(uid, f), f);          <span class="cm">// 读也只碰一份</span></code></pre>
+    </div>
+    <div class="mini">
+      <b>拆不了的时候</b>
+      <p><b>少读</b>：用 HMGET 取需要的字段，别 HGETALL；LRANGE 只取一页。</p>
+      <p><b>分批读</b>：HSCAN、SSCAN、ZSCAN 每次取几百个。</p>
+      <p><b>后台删</b>：用 UNLINK，或打开 <code>lazyfree-lazy-user-del</code>；Redis 4.0 之前只能用 HSCAN + HDEL 一批批删。</p>
+      <p><b>压缩大 String</b>：几 MB 的 JSON 用 gzip 或 snappy 压一下，或者干脆放到对象存储，Redis 里只存地址。别用 JDK 序列化，它会让值变大很多（<a href="redis-data-encoding.html">Redis 第 04 篇</a>）。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOT ================= -->
+<section id="hot">
+  <div>
+    <h2>热 key：为什么加机器没用</h2>
+    <p class="lead">秒杀商品、热搜第一、明星官宣、首页配置，这些 key 一个就能占掉一个节点大半的流量。集群按 key 分片，同一个 key 永远在同一个槽、同一个节点（<a href="redis-ha-cluster.html">Redis 第 03 篇</a>）。加再多节点，分走的也只是别的 key。</p>
+  </div>
+  <div class="lab" id="lab">
+    <h3>热 key 实验台：集群总共每秒 15 万次请求</h3>
+    <div class="row"><span class="lbl">热 key 占比：</span><div class="seg-btns" role="group" aria-label="热 key 占总流量的比例"><button data-h="0.1" aria-pressed="false">10%</button><button data-h="0.25" aria-pressed="false">25%</button><button data-h="0.4" aria-pressed="true">40%</button></div>
+      <span class="lbl">主节点数：</span><div class="seg-btns" role="group" aria-label="主节点数量"><button data-nodes="3" aria-pressed="true">3 个</button><button data-nodes="6" aria-pressed="false">加到 6 个</button></div></div>
+    <div class="fixes" id="fixes"></div>
+    <div class="chartbox"><svg id="hotSvg" viewBox="0 0 640 240" role="img" aria-label="各节点每秒处理的请求数"></svg></div>
+    <div class="lg"><span><i style="background:var(--nd)"></i>普通 key 的请求</span><span><i style="background:var(--hk)"></i>热 key 的请求</span><span><i style="background:var(--rp)"></i>从节点分担的读</span><span>虚线：每个节点约 7 万 QPS 的上限</span></div>
+    <div class="tiles" id="hotTiles"></div>
+    <p class="verdict" id="hotV" data-role="bad"></p>
+    <p class="tip">示意模型：普通 key 均匀分布；热 key 本来全在节点 B。本地缓存命中 90%；复制 3 份并保证落在 3 个不同节点；从节点分担热 key 一半的读；限流把打到 Redis 的热 key 请求控制在每秒 2 万。</p>
+  </div>
+</section>
+
+<!-- ================= FIX HOT ================= -->
+<section id="fixhot">
+  <div>
+    <h2>热 key 怎么治</h2>
+    <p class="lead">思路是让热 key 的请求“到不了”或者“分得开”。最有效的通常是在应用里加一层本地缓存，因为热 key 的特点就是一份数据被反复读。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>本地缓存挡在前面</b><span>Caffeine，过期时间很短</span></div>
+<pre><code>Cache&lt;String, String&gt; local = Caffeine.newBuilder()
+        .maximumSize(<span class="kw">10_000</span>)
+        .expireAfterWrite(Duration.ofSeconds(<span class="kw">2</span>))   <span class="cm">// 最多 2 秒的旧数据</span>
+        .build();
+
+String get(String key) {
+    <span class="cm">// 同一个 key 并发时只有一个线程去 Redis（MyBatis 第 04 篇讲过）</span>
+    <span class="kw">return</span> local.get(key, k -&gt; redis.opsForValue().get(k));
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>热 key 复制成多份</b><span>写全部，读随机挑一份</span></div>
+<pre><code><span class="kw">static final int</span> COPIES = <span class="kw">3</span>;
+
+<span class="kw">void</span> setHot(String key, String v) {
+    <span class="kw">for</span> (<span class="kw">int</span> i = <span class="kw">0</span>; i &lt; COPIES; i++)
+        redis.opsForValue().set(key + <span class="an">"#"</span> + i, v, Duration.ofMinutes(<span class="kw">10</span>));
+}
+
+String getHot(String key) {
+    <span class="kw">int</span> i = ThreadLocalRandom.current().nextInt(COPIES);
+    <span class="kw">return</span> redis.opsForValue().get(key + <span class="an">"#"</span> + i);
+}
+<span class="cm">// 不能用 {key}#i 这种 hash tag，否则几份会落在同一个槽</span></code></pre>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">方案</th><th scope="col">怎么做</th><th scope="col">效果</th><th scope="col">代价</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">本地缓存（多级缓存）</th><td>每台应用用 Caffeine 缓存热 key 几秒</td><td class="good">最有效，热 key 请求大部分不出应用</td><td>几秒内数据不一致；要知道哪些是热 key</td></tr>
+        <tr><th scope="row">Redis 客户端缓存</th><td>Redis 6 的 <code>CLIENT TRACKING</code>：客户端缓存读过的 key，值变了服务端主动通知失效</td><td class="good">一致性比固定过期更好</td><td>要 RESP3；客户端要支持（Lettuce 6 有）；被追踪的 key 多了服务端也要记</td></tr>
+        <tr><th scope="row">复制多份打散</th><td><code>key#0</code>～<code>key#N</code> 分到不同节点，读随机挑</td><td class="good">压力分到 N 个节点</td><td>写要写 N 份，可能短暂不一致；多占内存</td></tr>
+        <tr><th scope="row">从节点分担读</th><td>Lettuce 配 <code>ReadFrom.REPLICA_PREFERRED</code></td><td>读能力翻倍左右</td><td>从节点有复制延迟；对所有 key 生效</td></tr>
+        <tr><th scope="row">限流降级</th><td>Sentinel 的热点参数限流，超过阈值走兜底</td><td class="good">节点一定不被打垮</td><td>一部分用户拿到降级结果</td></tr>
+        <tr><th scope="row">提前预热、不过期</th><td>活动前把已知热点写进去，不设过期，定时刷新</td><td>避免热 key 过期那一刻击穿到数据库</td><td>要提前知道谁会热（<a href="cache-problems.html">Redis 第 01 篇</a>）</td></tr>
+        <tr><th scope="row">加节点</th><td>扩容集群</td><td class="bad">对热 key 几乎没用</td><td>花钱，只分走了别的 key</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= DETECT ================= -->
+<section id="detect">
+  <div>
+    <h2>怎么找到它们</h2>
+    <p class="lead">找大 key 和热 key 本身也可能伤到线上实例。能在从节点上做就别在主节点上做，能离线分析就别在线扫。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">工具</th><th scope="col">找什么</th><th scope="col">原理</th><th scope="col">注意</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>redis-cli --bigkeys</code></th><td>大 key</td><td>用 SCAN 扫一遍，每种类型报告元素最多（String 报字节最多）的那个</td><td>只报每种类型的第一名；加 <code>-i 0.1</code> 每批之间歇一下</td></tr>
+        <tr><th scope="row"><code>redis-cli --memkeys</code></th><td>大 key</td><td>SCAN + 对每个 key 调 MEMORY USAGE</td><td>按真实内存排，比 --bigkeys 准，也更慢</td></tr>
+        <tr><th scope="row"><code>MEMORY USAGE key</code></th><td>单个 key 多大</td><td>估算这个 key 占的字节数</td><td>集合类默认抽样 5 个元素估算</td></tr>
+        <tr><th scope="row">离线分析 RDB</th><td>大 key</td><td>拿一份 RDB 文件，用 redis-rdb-tools 等工具统计</td><td class="good">对线上零影响，适合定期巡检</td></tr>
+        <tr><th scope="row"><code>redis-cli --hotkeys</code></th><td>热 key</td><td>SCAN + OBJECT FREQ 看访问频率</td><td>要求淘汰策略是 LFU 类，否则报错</td></tr>
+        <tr><th scope="row"><code>MONITOR</code></th><td>热 key</td><td>实时打印所有命令，统计次数</td><td class="bad">吞吐可能直接掉一半，只能短时间用</td></tr>
+        <tr><th scope="row">客户端或代理统计</th><td>热 key</td><td>在客户端埋点，按 key 计数，汇总后发现热点并推送给各实例</td><td class="good">最实时，能和本地缓存联动；要自己开发或用现成框架</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>Redis 版本，以及 JDK 8 和 JDK 17</h2>
+    <p class="lead">治理手段越来越多，但大 key 和热 key 的本质没变。Java 这边主要是客户端能力和本地缓存库的版本。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Redis 4.0 ～ 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>4.0 起有 UNLINK、lazyfree、LFU 淘汰策略和 <code>OBJECT FREQ</code>，--hotkeys 才能用</li>
+        <li>4.0 起有 <code>MEMORY USAGE</code></li>
+        <li>本地缓存用 Caffeine 2.x；Boot 2.4 起默认的 Lettuce 已经是 6.x</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Redis 6 ～ 7 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>6.0 起支持 RESP3 和客户端缓存（<code>CLIENT TRACKING</code>），Lettuce 6 提供 <code>ClientSideCaching</code></li>
+        <li>6.0 起有 <code>lazyfree-lazy-user-del</code>，普通 DEL 也能后台释放</li>
+        <li>本地缓存用 Caffeine 3.x；虚拟线程下更要防止大量请求同时去 Redis 读同一个热 key，用 <code>cache.get(key, loader)</code> 合并</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>大 key 拆小、少读、后台删</span><span>热 key 挡在外面、分散开</span><span>加节点治不了热 key</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">很多大 key 和热 key 不是设计出来的，是慢慢长出来、突然火起来的。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fat"/></svg><b>一个“关注列表”的 key 越长越大</b><p>业务刚上线时只有几百个元素，几年后有个大 V 有几百万粉丝。设计时就按用户和业务 ID 拆分，并对元素个数做监控告警。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>运维清理一个大 key，线上卡了几秒</b><p>用了 DEL。改用 UNLINK；老版本用 HSCAN / SSCAN 一批批删。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>集群扩容迁移槽时，某个槽一直迁不过去</b><p>槽里有个大 key，MIGRATE 超时。先把大 key 拆掉或删掉，再迁移。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fat"/></svg><b>集群里一个节点内存总是比别人高很多</b><p>数据倾斜：要么有大 key，要么用 hash tag 把太多 key 塞进了同一个槽。用 --bigkeys 和 <code>CLUSTER COUNTKEYSINSLOT</code> 查。</p></div>
+    <div class="pit" data-role="hk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fire"/></svg><b>大促时一个节点 CPU 100%，加了节点也没用</b><p>热 key。加本地缓存、复制多份打散；临时先对这个 key 限流。</p></div>
+    <div class="pit" data-role="hk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fire"/></svg><b>热 key 过期那一刻，数据库被打爆</b><p>热 key 和缓存击穿常常一起出现。已知的热点提前预热、逻辑过期，重建时加互斥锁。</p></div>
+    <div class="pit" data-role="lc"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cut"/></svg><b>复制多份后，不同用户看到的价格不一样</b><p>写了 N 份但不是同时生效。对一致性要求高的数据别用这招，或者改完价格后等所有副本写完再生效。</p></div>
+    <div class="pit" data-role="lc"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cut"/></svg><b>本地缓存把应用内存撑爆了</b><p>没设 <code>maximumSize</code>，所有读过的 key 都缓存了。本地缓存只放热 key，并限制大小和过期时间。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-radar"/></svg><b>为了找热 key 开了 MONITOR，结果线上更慢了</b><p>MONITOR 要把每条命令都发给你，吞吐可能掉一半。用 --hotkeys（需 LFU）、客户端统计，或者短时间在从节点上看。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-radar"/></svg><b>--bigkeys 只报了一个，其他大 key 没发现</b><p>它每种类型只报最大的那个。要完整清单，用 --memkeys 或离线分析 RDB。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7 为例，数字均为示意。相关：<a href="redis-threading-io.html">Redis 线程模型与 IO 多路复用</a> · <a href="cache-problems.html">缓存穿透、击穿与雪崩</a> · <a href="redis-ha-cluster.html">Redis 主从、哨兵与集群</a> · <a href="../mybatis/mybatis-cache.html">MyBatis 缓存与 Caffeine</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+function bigCalc(n, s, q, k){
+  var per = n / k;
+  return {
+    readMs: per * 1 / 1000,          // ~1 µs per element read
+    delMs: per * 0.5 / 1000,         // ~0.5 µs per element freed
+    netMBs: per * s * q / 1e6,       // bytes moved per second by reads
+    keyMB: per * (s + 40) / 1e6      // size of one key
+  };
+}
+var TOTAL=150000, CAP=70000, LIMIT=20000;
+function hotModel(h, nodes, f){
+  var hot=TOTAL*h, normal=(TOTAL-hot)/nodes, degraded=0;
+  if(f.local) hot=hot*0.1;
+  if(f.limit && hot>LIMIT){ degraded=hot-LIMIT; hot=LIMIT; }
+  var holders = f.copies ? [0,1,2] : [1];
+  var perHolder = hot/holders.length, out=[];
+  for(var i=0;i<nodes;i++){
+    var hh = holders.indexOf(i)>=0 ? perHolder : 0, rep=0;
+    if(f.replica && hh){ rep=hh/2; hh=hh/2; }
+    out.push({name:String.fromCharCode(65+i), normal:normal, hot:hh, rep:rep});
+  }
+  var peak=0, over=0; out.forEach(function(n){ var t=n.normal+n.hot; if(t>peak) peak=t; if(t>CAP) over++; if(n.rep>peak) peak=n.rep; });
+  return {nodes:out, peak:peak, over:over, degraded:degraded, hotToRedis:hot};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function fmt(v){ return Math.round(v).toLocaleString('en-US'); }
+  function nice(v,u){ return v<1 ? v.toFixed(2)+' '+u : (v<10 ? v.toFixed(1)+' '+u : fmt(v)+' '+u); }
+
+  /* ---------- big key calculator ---------- */
+  var n=1000000, s=100, q=10, k=1;
+  function renderCalc(){
+    var r=bigCalc(n,s,q,k);
+    var net100 = r.netMBs/125*100;
+    $('calcTiles').innerHTML=
+      '<div class="tile" data-role="'+(r.readMs>10?'bad':(r.readMs>1?'warn':'done'))+'"><small>'+(k>1?'读一份':'一次 HGETALL')+'卡住主线程</small><b>'+nice(r.readMs,'ms')+'</b><span>慢日志默认记 10 ms 以上的</span></div>'+
+      '<div class="tile" data-role="'+(r.delMs>10?'bad':(r.delMs>1?'warn':'done'))+'"><small>'+(k>1?'DEL 一份':'DEL 整个 key')+'卡住主线程</small><b>'+nice(r.delMs,'ms')+'</b><span>UNLINK 几乎为 0</span></div>'+
+      '<div class="tile" data-role="'+(net100>100?'bad':(net100>30?'warn':'done'))+'"><small>读它占的网络带宽</small><b>'+nice(r.netMBs,'MB/s')+'</b><span>千兆网卡约 125 MB/s（'+(net100>=1?Math.round(net100)+'%':'不到 1%')+'）</span></div>'+
+      '<div class="tile" data-role="'+(r.keyMB>10?'bad':(r.keyMB>1?'warn':'done'))+'"><small>'+(k>1?'每一份':'这个 key')+'的大小</small><b>'+nice(r.keyMB,'MB')+'</b><span>'+(k>1?'共 '+k+' 份，可分到不同节点':'全在一个节点上')+'</span></div>';
+    var v=$('calcV'), bad=r.readMs>10||net100>100||r.delMs>10;
+    v.setAttribute('data-role', bad?'bad':(r.readMs>1||net100>30?'warn':'done'));
+    if(k>1) v.textContent = bad ? '拆成 100 份后单份仍然偏大，可以再拆细，或者减少每次读取的量。' : '拆开以后，每次只碰其中一份：读写快了 100 倍，流量也只有原来的百分之一，集群里还能分到不同节点。';
+    else v.textContent = bad ? '这是一个危险的大 key：'+(r.readMs>10?'一次 HGETALL 就让所有请求排队 '+nice(r.readMs,'ms')+'；':'')+(net100>100?'光读它就超过了网卡上限；':'')+(r.delMs>10?'直接 DEL 也会卡住 '+nice(r.delMs,'ms')+'。':'') : '还不算危险，但要盯着它的增长。';
+  }
+  function bind(attr,fn){ document.querySelectorAll('['+attr+']').forEach(function(b){ b.addEventListener('click',function(){ fn(parseFloat(b.getAttribute(attr))); document.querySelectorAll('['+attr+']').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderCalc(); }); }); }
+  bind('data-n',function(v){n=v;}); bind('data-s',function(v){s=v;}); bind('data-q',function(v){q=v;}); bind('data-k',function(v){k=v;});
+  renderCalc();
+
+  /* ---------- hot key lab ---------- */
+  var H=0.4, NODES=3, F={local:false,copies:false,replica:false,limit:false};
+  var FX=[['local','本地缓存','命中 90%，数据最多旧 2 秒'],['copies','复制 3 份打散','写要写 3 份'],['replica','从节点分担读','从节点有复制延迟'],['limit','热 key 限流','超出部分降级'],['__nodes','（看上面的“加到 6 个”）','加节点能不能救']];
+  function renderFixes(){
+    $('fixes').innerHTML=FX.filter(function(x){ return x[0]!=='__nodes'; }).map(function(x){ return '<button class="tog" data-fx="'+x[0]+'" aria-pressed="'+(!!F[x[0]])+'"><b>'+x[1]+'</b><span>'+x[2]+'</span></button>'; }).join('');
+    document.querySelectorAll('[data-fx]').forEach(function(b){ b.addEventListener('click',function(){ var key=b.getAttribute('data-fx'); F[key]=!F[key]; renderFixes(); renderHot(); var nb=document.querySelector('[data-fx="'+key+'"]'); if(nb) nb.focus(); }); });
+  }
+  function renderHot(){
+    var r=hotModel(H,NODES,F), svg=$('hotSvg');
+    var bars=[]; r.nodes.forEach(function(nd){ bars.push({label:'主 '+nd.name, normal:nd.normal, hot:nd.hot, rep:0}); if(F.replica) bars.push({label:'从 '+nd.name, normal:0, hot:0, rep:nd.rep}); });
+    var W=640, L=54, R=12, T=22, Hh=170, B=T+Hh, ymax=Math.max(100000, Math.ceil(r.peak/20000)*20000), Y=function(v){ return B-v/ymax*Hh; };
+    var slot=(W-L-R)/bars.length, bw=Math.min(56, slot*0.62);
+    var h='<text class="c-t" x="'+L+'" y="12">每个节点每秒处理的请求（QPS）</text>';
+    for(var v=0; v<=ymax; v+=ymax/4){ var y=Y(v); h+='<line class="'+(v===0?'c-base':'c-gl')+'" x1="'+L+'" y1="'+y.toFixed(1)+'" x2="'+(W-R)+'" y2="'+y.toFixed(1)+'"/><text class="c-ax" x="'+(L-6)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="end">'+(v/10000)+' 万</text>'; }
+    bars.forEach(function(b,i){
+      var x=L+i*slot+(slot-bw)/2, tot=b.normal+b.hot+b.rep, over=tot>CAP;
+      if(over) h+='<rect class="c-over" x="'+(x-4).toFixed(1)+'" y="'+T+'" width="'+(bw+8).toFixed(1)+'" height="'+Hh+'" rx="4"/>';
+      var y0=B;
+      if(b.normal){ var hn=b.normal/ymax*Hh; h+='<rect class="c-norm" x="'+x.toFixed(1)+'" y="'+(y0-hn).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+hn.toFixed(1)+'"><title>'+b.label+'：普通 key '+fmt(b.normal)+' QPS</title></rect>'; y0-=hn; }
+      if(b.hot){ var hh=b.hot/ymax*Hh; h+='<rect class="c-hot" x="'+x.toFixed(1)+'" y="'+(y0-hh+(b.normal?2:0)).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(1,hh-(b.normal?2:0)).toFixed(1)+'"><title>'+b.label+'：热 key '+fmt(b.hot)+' QPS</title></rect>'; y0-=hh; }
+      if(b.rep){ var hr=b.rep/ymax*Hh; h+='<rect class="c-rep" x="'+x.toFixed(1)+'" y="'+(y0-hr).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+hr.toFixed(1)+'"><title>'+b.label+'：分担热 key 读 '+fmt(b.rep)+' QPS</title></rect>'; y0-=hr; }
+      h+='<text class="c-val" x="'+(x+bw/2).toFixed(1)+'" y="'+(Y(tot)-5).toFixed(1)+'" text-anchor="middle"'+(over?' style="fill:var(--bad);font-weight:700"':'')+'>'+(tot/10000).toFixed(1)+' 万</text>';
+      h+='<text class="c-lbl" x="'+(x+bw/2).toFixed(1)+'" y="'+(B+16)+'" text-anchor="middle">'+b.label+'</text>';
+    });
+    var cy=Y(CAP); h+='<line class="c-cap" x1="'+L+'" y1="'+cy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+cy.toFixed(1)+'"/>';
+    svg.innerHTML=h;
+    var costs=[];
+    if(F.local) costs.push('各应用实例最多 2 秒旧数据');
+    if(F.copies) costs.push('写一次要写 3 份，这个 key 占 3 倍内存');
+    if(F.replica) costs.push('从节点读到的可能稍旧');
+    if(F.limit && r.degraded) costs.push('每秒 '+fmt(r.degraded)+' 个请求被降级');
+    if(NODES===6) costs.push('多花 3 台机器');
+    $('hotTiles').innerHTML=
+      '<div class="tile" data-role="'+(r.peak>CAP?'bad':'done')+'"><small>最忙的节点</small><b>'+(r.peak/10000).toFixed(1)+' 万</b><span>上限约 7 万</span></div>'+
+      '<div class="tile" data-role="'+(r.over?'bad':'done')+'"><small>过载的节点</small><b>'+r.over+' 个</b><span>'+(r.over?'这个节点的所有 key 都变慢':'都在上限以内')+'</span></div>'+
+      '<div class="tile" data-role="hk"><small>打到 Redis 的热 key 请求</small><b>'+(r.hotToRedis/10000).toFixed(1)+' 万</b><span>原本 '+(TOTAL*H/10000).toFixed(1)+' 万/秒</span></div>'+
+      '<div class="tile" data-role="'+(costs.length?'warn':'other')+'"><small>付出的代价</small><span>'+(costs.length?costs.join('；'):'还没用任何办法')+'</span></div>';
+    var v=$('hotV'), any=F.local||F.copies||F.replica||F.limit;
+    if(r.over){ v.setAttribute('data-role','bad'); v.textContent = (NODES===6 && !any) ? '加到 6 个节点后，普通 key 分得更散了，但热 key 还是全在节点 B，它依然过载。加机器治不了热 key。' : '节点 B 过载：热 key 的请求全压在它一个节点上，同一节点上的其他 key 也跟着变慢。试试上面的办法。'; }
+    else { v.setAttribute('data-role','done'); v.textContent = '扛住了，最忙的节点每秒 '+(r.peak/10000).toFixed(1)+' 万次。'+(F.local?'本地缓存挡掉了九成热 key 请求，效果最明显。':''); }
+  }
+  document.querySelectorAll('[data-h]').forEach(function(b){ b.addEventListener('click',function(){ H=parseFloat(b.getAttribute('data-h')); document.querySelectorAll('[data-h]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderHot(); }); });
+  document.querySelectorAll('[data-nodes]').forEach(function(b){ b.addEventListener('click',function(){ NODES=parseInt(b.getAttribute('data-nodes'),10); document.querySelectorAll('[data-nodes]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderHot(); }); });
+  renderFixes(); renderHot();
+})();
+</script>
+
+</body>
+</html>

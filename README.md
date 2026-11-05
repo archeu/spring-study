@@ -54,3 +54,4 @@
 | 05 | [Redis 过期删除与内存淘汰](https://archeu.github.io/study-notes/redis/redis-eviction-expire.html) | 惰性删除加定期巡逻、八种淘汰策略、近似 LRU 的抽样和候选池、LFU 计数器，巡逻实验台和淘汰准确度对比 |
 | 06 | [Redis 分布式锁](https://archeu.github.io/study-notes/redis/redis-distributed-lock.html) | 五次进化、令牌和 Lua 解锁、Redisson 看门狗，锁与事务的顺序、主从切换丢锁、RedLock 和 fencing token，事故实验台 |
 | 07 | [Redis 线程模型与 IO 多路复用](https://archeu.github.io/study-notes/redis/redis-threading-io.html) | 单线程为什么快、select/poll/epoll、事件循环演示、慢命令怎么堵住所有人、I/O 线程和 Pipeline |
+| 08 | [Redis 大 key 与热 key](https://archeu.github.io/study-notes/redis/redis-bigkey-hotkey.html) | 多大算大、危害和拆分，热 key 为什么加机器没用、本地缓存和复制打散，怎么发现，大 key 计算器和热 key 实验台 |
