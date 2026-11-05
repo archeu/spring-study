@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis Lua 脚本与事务</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Two ways to make several commands one unit: queue then run (MULTI/EXEC, purple) or ship a little program into Redis (Lua, teal). WATCH amber, client A blue, client B orange, errors red, ok green. Anchor = "last item, two buyers" stepper. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --tx:#6A3FC0; --tx-tint:#ECE5FA;
+  --lu:#0D7A69; --lu-tint:#DCF0EB;
+  --wa:#9A6B00; --wa-tint:#FBF0CF;
+  --ca:#3150C4; --ca-tint:#E2E7FA;
+  --cb:#C2410C; --cb-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#C9B6FF; --console-bad:#FF8A85; --console-ok:#7FD8A0;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --tx:#B9A0FF; --tx-tint:#2A2148;
+    --lu:#40C6B0; --lu-tint:#12352F;
+    --wa:#F2C94C; --wa-tint:#3A3212;
+    --ca:#90A4FF; --ca-tint:#1D2650;
+    --cb:#FB923C; --cb-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#C9B6FF; --console-bad:#FF8A85; --console-ok:#7FD8A0;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --tx:#B9A0FF; --tx-tint:#2A2148;
+  --lu:#40C6B0; --lu-tint:#12352F;
+  --wa:#F2C94C; --wa-tint:#3A3212;
+  --ca:#90A4FF; --ca-tint:#1D2650;
+  --cb:#FB923C; --cb-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#C9B6FF; --console-bad:#FF8A85; --console-ok:#7FD8A0;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--ca)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--ca);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="tx"]{--rc:var(--tx);--rt:var(--tx-tint)}
+[data-role="lu"]{--rc:var(--lu);--rt:var(--lu-tint)}
+[data-role="wa"]{--rc:var(--wa);--rt:var(--wa-tint)}
+[data-role="ca"]{--rc:var(--ca);--rt:var(--ca-tint)}
+[data-role="cb"]{--rc:var(--cb);--rt:var(--cb-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.duo{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h3{color:var(--rc);font-size:26px}
+.way h3 small{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);margin-left:8px}
+.way p{font-size:14.5px}
+.q{display:flex;flex-direction:column;gap:3px;font-family:var(--font-mono);font-size:12px}
+.q span{display:flex;justify-content:space-between;gap:10px;padding:3px 8px;border-radius:6px;background:var(--code-bg);border:1px solid var(--line)}
+.q span em{font-style:normal;color:var(--tx);font-weight:700}
+.q span.ex{background:var(--tx);color:var(--on-accent);border-color:var(--tx)}
+.q span.ex em{color:var(--on-accent)}
+.box-redis{border:2px dashed var(--lu);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.box-redis small{font-size:11.5px;color:var(--muted)}
+.box-redis pre{margin:0;padding:6px 8px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);font-size:11.5px;line-height:1.5}
+.norb{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:14px;background:var(--bad-tint);border:2px solid var(--bad);font-size:14.5px}
+.norb b{color:var(--bad);font-size:16px;flex:none}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--tx)} .an{color:var(--lu)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--wa-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--wa);font-weight:700}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:6px 12px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.btn{font-size:14px;padding:7px 13px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.row .lbl{font-size:13px;color:var(--muted)}
+
+/* ---------- tx flow ---------- */
+.flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.sp{border:2px solid var(--rc);border-radius:12px;padding:8px 10px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.sp small{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--rc)}
+.sp b{font-size:14px}
+.sp span{font-size:12.5px;color:var(--muted)}
+
+/* ---------- error lab ---------- */
+.err{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.errg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.cli{margin:0;padding:10px 12px;border-radius:12px;background:var(--console-bg);color:var(--console-fg);font-family:var(--font-mono);font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre}
+.cli .p{color:var(--console-dim)}
+.cli .e{color:var(--console-bad)}
+.cli .o{color:var(--console-ok)}
+.cli .h{color:var(--console-hi)}
+.kvs{display:flex;gap:6px;flex-wrap:wrap}
+.kvs span{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:8px;border:1.5px solid var(--rc);background:var(--rt)}
+.eh{font-size:15px;font-weight:700;color:var(--rc)}
+
+/* ---------- acid ---------- */
+.acid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.ac{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.ac b{font-family:var(--font-display);font-weight:400;font-size:26px;color:var(--rc);line-height:1}
+.ac small{font-size:12px;font-weight:700;color:var(--rc)}
+.ac span{font-size:13px}
+
+/* ---------- race stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.capt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--rt,var(--tx-tint));border:2px solid var(--rc,var(--tx));min-height:3.4em}
+.race{display:grid;grid-template-columns:minmax(0,1fr) 13em minmax(0,1fr);gap:12px;align-items:start}
+.lane{display:flex;flex-direction:column;gap:6px;min-width:0}
+.lane > b{font-size:15px;color:var(--rc)}
+.ev{border-radius:10px;padding:6px 10px;border:1.5px solid var(--line);background:var(--code-bg);display:flex;flex-direction:column;gap:2px;font-size:12px;min-width:0}
+.ev code{font-size:11.5px;overflow-wrap:anywhere}
+.ev .rep{font-family:var(--font-mono);font-size:11.5px;font-weight:700}
+.ev .rep.ok{color:var(--good)} .ev .rep.bad{color:var(--bad)} .ev .rep.mid{color:var(--wa)}
+.ev.fut{opacity:.32}
+.ev.cur{border:2.5px solid var(--rc);background:var(--rt)}
+.ev.gap{visibility:hidden}
+.rbox{border:2.5px solid var(--lu);border-radius:14px;background:var(--lu-tint);padding:10px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;position:sticky;top:60px}
+.rbox small{font-size:12px;color:var(--muted)}
+.stock{font-family:var(--font-display);font-size:48px;line-height:1}
+.stock.neg{color:var(--bad)}
+.rbox .orders{font-size:13px}
+.rbox .watch{font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--wa-tint);color:var(--wa);border:1.5px solid var(--wa)}
+.rbox .watch.dirty{background:var(--bad-tint);color:var(--bad);border-color:var(--bad)}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.summ{border-collapse:collapse;font-size:13px;width:100%;min-width:560px}
+.summ th,.summ td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left}
+.summ tr.cur td,.summ tr.cur th{background:var(--tx-tint)}
+
+/* ---------- lua ---------- */
+.shaflow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sf{border:2px solid var(--rc);border-radius:12px;background:var(--rt);padding:6px 10px;font-size:13px;display:flex;flex-direction:column;line-height:1.35}
+.sf code{font-size:11.5px}
+.sf small{font-size:11.5px;color:var(--muted)}
+.fa{color:var(--line-strong);font-weight:700;font-size:20px}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .acid,.flow{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .duo,.two,.errg,.eras{grid-template-columns:1fr}
+  .race{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .rbox{grid-column:1 / -1;grid-row:1;position:static;flex-direction:row;justify-content:center;flex-wrap:wrap}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .acid,.flow{grid-template-columns:1fr}
+  .race{grid-template-columns:1fr}
+  .ev.gap{display:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-cart" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M4 10h10l6 30h32l6-22H18"/>
+    <path class="ks-cur" stroke-width="4" stroke-linejoin="round" d="M4 10h10l6 30h32l6-22H18"/>
+    <rect class="k-paper" x="24" y="22" width="8" height="10" rx="2"/><rect class="k-paper" x="36" y="22" width="8" height="10" rx="2"/>
+    <circle fill="currentColor" cx="24" cy="52" r="5"/><circle fill="currentColor" cx="48" cy="52" r="5"/>
+    <rect class="k-gold" x="46" y="22" width="6" height="10" rx="2"/>
+  </symbol>
+  <symbol id="i-eye" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M2 32C10 18 20 12 32 12s22 6 30 20c-8 14-18 20-30 20S10 46 2 32z"/>
+    <circle class="k-paper" cx="32" cy="32" r="13"/>
+    <circle class="k-ink" cx="32" cy="32" r="7"/>
+    <circle class="k-paper" cx="35" cy="29" r="2.5"/>
+  </symbol>
+  <symbol id="i-script" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="8" width="52" height="48" rx="6"/>
+    <path class="ks-paper" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" d="M16 22l8 8-8 8M30 40h16"/>
+    <circle class="k-gold" cx="48" cy="18" r="4"/>
+  </symbol>
+  <symbol id="i-lib" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="10" width="12" height="46" rx="2"/>
+    <rect fill="currentColor" opacity=".75" x="22" y="10" width="12" height="46" rx="2"/>
+    <rect fill="currentColor" opacity=".5" x="38" y="16" width="12" height="40" rx="2" transform="rotate(-10 44 36)"/>
+    <rect class="k-gold" x="8" y="18" width="8" height="4" rx="1"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis Lua 脚本与事务</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS · MULTI · EXEC · WATCH · EVAL · EVALSHA · FUNCTION · FCALL</p>
+  <h1>几条命令连着做，中间谁也插不进来，但做坏了不会撤销</h1>
+  <p class="lead">想让“查库存、扣库存”这几步一起完成，Redis 有两个办法：事务是先把命令排好队，再一口气执行；Lua 脚本是把一小段程序送进 Redis，在里面一口气跑完。两者都能保证执行期间不被别的命令插队，也都没有回滚。</p>
+
+  <div class="duo">
+    <div class="way" data-role="tx">
+      <h3>事务<small>MULTI / EXEC</small></h3>
+      <div class="q" aria-label="事务命令排队示意">
+        <span>MULTI <em>OK</em></span><span>DECR stock:888 <em>QUEUED</em></span><span>RPUSH orders:888 u1 <em>QUEUED</em></span><span class="ex">EXEC <em>一起执行</em></span>
+      </div>
+      <p>像先把商品放进购物车，最后一起结账。排队期间什么都不执行，所以没法“先看库存再决定扣不扣”。</p>
+    </div>
+    <div class="way" data-role="lu">
+      <h3>Lua 脚本<small>EVAL / FCALL</small></h3>
+      <div class="box-redis"><small>整段代码送进 Redis，在里面跑完</small>
+<pre>local s = tonumber(redis.call('GET', KEYS[1]) or '0')
+if s &lt;= 0 then return 0 end
+redis.call('DECR', KEYS[1])
+return 1</pre></div>
+      <p>可以读、判断、再写，一次网络来回。跑的时候其他命令都在外面等着。</p>
+    </div>
+  </div>
+  <div class="norb"><b>都不回滚</b><span>中间某条命令失败了，前面已经执行的不会撤销。Redis 只保证“一起执行、不被插队”，不保证“要么全成功要么全没做”。</span></div>
+
+  <div class="cast">
+    <div class="who" data-role="tx">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cart"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">购物车<code>MULTI · EXEC · DISCARD</code></div>
+        <p>命令先<b>排队</b>，EXEC 时一起执行，DISCARD 就全扔掉。</p>
+        <span class="belong">排队时拿不到结果</span>
+      </div>
+    </div>
+    <div class="who" data-role="wa">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-eye"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">盯梢<code>WATCH</code></div>
+        <p>EXEC 前这些 key 被别人改了，<b>整个事务作废</b>。</p>
+        <span class="belong">乐观锁，冲突就重试</span>
+      </div>
+    </div>
+    <div class="who" data-role="lu">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-script"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">脚本<code>EVAL · EVALSHA</code></div>
+        <p>能读能判断能写，<b>整段原子执行</b>。</p>
+        <span class="belong">别写太久，会堵住所有人</span>
+      </div>
+    </div>
+    <div class="who" data-role="other">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lib"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">函数库<code>FUNCTION · FCALL</code></div>
+        <p>Redis 7 的新写法，脚本<b>存进 Redis 本身</b>，重启和主从都还在。</p>
+        <span class="belong">7.0 起</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= TX ================= -->
+<section id="tx">
+  <div>
+    <h2>事务：先排队，再一起执行</h2>
+    <p class="lead">MULTI 之后发的命令，Redis 只回一句 QUEUED，放进这个连接的队列里。EXEC 时按顺序一条条执行，执行期间不会插入其他客户端的命令。</p>
+  </div>
+  <div class="flow">
+    <div class="sp" data-role="wa"><small>WATCH key…（可选）</small><b>先盯上要用的 key</b><span>必须在 MULTI 之前</span></div>
+    <div class="sp" data-role="tx"><small>MULTI</small><b>开始排队</b><span>回 OK</span></div>
+    <div class="sp" data-role="tx"><small>命令 1、命令 2 …</small><b>每条都回 QUEUED</b><span>此时还没执行，读命令也拿不到值</span></div>
+    <div class="sp" data-role="done"><small>EXEC / DISCARD</small><b>一起执行，或全部扔掉</b><span>盯的 key 被改过，EXEC 返回 nil，什么都不做</span></div>
+  </div>
+  <div class="mini">
+    <b>Redis 事务的 ACID，打几分</b>
+    <div class="acid">
+      <div class="ac" data-role="bad"><b>A</b><small>原子性：一半</small><span>能保证一起执行、不被插队；不能保证出错时全部撤销。</span></div>
+      <div class="ac" data-role="done"><b>C</b><small>一致性：有</small><span>命令要么正常执行，要么报错，不会写出坏数据结构。</span></div>
+      <div class="ac" data-role="done"><b>I</b><small>隔离性：最强</small><span>单线程执行，事务之间天然串行。</span></div>
+      <div class="ac" data-role="wa"><b>D</b><small>持久性：看配置</small><span>取决于 RDB / AOF；AOF everysec 断电最多丢 1 秒（<a href="redis-persistence.html">Redis 第 02 篇</a>）。</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ERRORS ================= -->
+<section id="err">
+  <div>
+    <h2>出错了会怎样</h2>
+    <p class="lead">同样三步：设置 a、把字符串 name 加 1（会失败）、设置 b。分别用事务和 Lua 来做，看最后 a 和 b 有没有写进去。</p>
+  </div>
+  <div class="err">
+    <div class="row"><span class="lbl">错误类型：</span>
+      <div class="seg-btns" role="group" aria-label="错误类型">
+        <button data-er="none" aria-pressed="false">没有错误</button>
+        <button data-er="run" aria-pressed="true">运行时出错（对字符串 INCR）</button>
+        <button data-er="syn" aria-pressed="false">写错了命令（少参数 / 语法错）</button>
+      </div>
+      <span class="lbl">Lua 里用：</span>
+      <div class="seg-btns" role="group" aria-label="Lua 调用方式">
+        <button data-lc="call" aria-pressed="true">redis.call</button>
+        <button data-lc="pcall" aria-pressed="false">redis.pcall</button>
+      </div>
+    </div>
+    <div class="errg">
+      <div class="mini" data-role="tx"><span class="eh">事务</span><pre class="cli" id="erTx"></pre><div class="kvs" id="erTxKv"></div></div>
+      <div class="mini" data-role="lu"><span class="eh">Lua 脚本</span><pre class="cli" id="erLua"></pre><div class="kvs" id="erLuaKv"></div></div>
+    </div>
+    <p class="verdict" id="erV" data-role="bad"></p>
+  </div>
+</section>
+
+<!-- ================= RACE ================= -->
+<section id="race">
+  <div>
+    <h2>库存只剩 1 件，A 和 B 同时下单</h2>
+    <p class="lead">四种写法，同样的并发时序，一步步看 Redis 里的库存最后是多少、卖出去几单。</p>
+  </div>
+  <div class="stage" id="rc" tabindex="0" aria-label="并发扣库存演示，可以用左右方向键切换">
+    <div class="st-top">
+      <div class="seg-btns" role="group" aria-label="写法">
+        <button data-ap="plain" aria-pressed="true">GET 再 DECR</button>
+        <button data-ap="multi" aria-pressed="false">用 MULTI 包起来</button>
+        <button data-ap="watch" aria-pressed="false">WATCH + MULTI</button>
+        <button data-ap="lua" aria-pressed="false">Lua 脚本</button>
+      </div>
+      <span class="st-pos" id="rcPos"></span>
+    </div>
+    <p class="capt" id="rcCap" aria-live="polite"></p>
+    <div class="race">
+      <div class="lane" data-role="ca" id="laneA"></div>
+      <div class="rbox" id="rbox"></div>
+      <div class="lane" data-role="cb" id="laneB"></div>
+    </div>
+    <div class="ctrl">
+      <button class="btn" id="rcPrev">← 上一步</button>
+      <button class="btn primary" id="rcNext">下一步 →</button>
+      <button class="btn" id="rcReset">从头来</button>
+    </div>
+    <div class="tbl-wrap"><table class="summ" id="rcSum"></table></div>
+  </div>
+</section>
+
+<!-- ================= LUA ================= -->
+<section id="lua">
+  <div>
+    <h2>Lua 脚本：怎么写、怎么调</h2>
+    <p class="lead">key 放在 KEYS 里，其他参数放在 ARGV 里，下标从 1 开始。脚本整段执行，期间不会插入任何别的命令。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>扣库存的脚本</b><span>deduct.lua</span></div>
+<pre><code><span class="kw">local</span> stock = tonumber(redis.call(<span class="an">'GET'</span>, KEYS[1]) <span class="kw">or</span> <span class="an">'0'</span>)
+<span class="kw">local</span> n = tonumber(ARGV[1])
+<span class="kw">if</span> stock &lt; n <span class="kw">then</span>
+    <span class="kw">return</span> 0                          <span class="cm">-- 库存不够</span>
+<span class="kw">end</span>
+redis.call(<span class="an">'DECRBY'</span>, KEYS[1], n)
+redis.call(<span class="an">'SADD'</span>, KEYS[2], ARGV[2])    <span class="cm">-- 记下谁买了</span>
+<span class="kw">return</span> 1</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>调用</b><span>redis-cli</span></div>
+<pre><code>EVAL "&lt;脚本内容&gt;" 2 stock:{888} buyers:{888} 1 user42
+<span class="cm">#          脚本     key 个数  KEYS[1]     KEYS[2]     ARGV[1] ARGV[2]</span>
+
+SCRIPT LOAD "&lt;脚本内容&gt;"          <span class="cm"># 存进脚本缓存，返回 SHA1</span>
+<span class="cm">→ "8f7c…e21a"</span>
+EVALSHA 8f7c…e21a 2 stock:{888} buyers:{888} 1 user42
+<span class="cm"># 集群下两个 key 必须在同一个槽，所以都带 {888}</span></code></pre>
+    </div>
+  </div>
+  <div class="mini">
+    <b>EVALSHA：只传 40 个字符的摘要</b>
+    <div class="shaflow" aria-label="EVALSHA 的调用流程">
+      <span class="sf" data-role="lu"><code>EVALSHA sha …</code><small>先试摘要</small></span><span class="fa">→</span>
+      <span class="sf" data-role="done"><b>缓存里有</b><small>直接执行</small></span>
+      <span class="fa">或</span>
+      <span class="sf" data-role="bad"><code>NOSCRIPT</code><small>Redis 重启过或换了节点</small></span><span class="fa">→</span>
+      <span class="sf" data-role="lu"><code>EVAL 全文</code><small>执行并顺便缓存</small></span>
+    </div>
+    <p>脚本缓存只在内存里，重启或主从切换后可能没了。Spring 的 RedisTemplate 执行脚本时就是这么做的：先 EVALSHA，收到 NOSCRIPT 再 EVAL。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">要注意</th><th scope="col">说明</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">redis.call 和 redis.pcall</th><td>call 遇错直接中断脚本并把错误返回给客户端；pcall 把错误当成一个值返回，脚本继续往下跑</td></tr>
+        <tr><th scope="row">返回小数会被截断</th><td>Lua 的数字转成 Redis 整数：<code>return 3.99</code> 得到 3。要返回小数，用 <code>tostring(x)</code></td></tr>
+        <tr><th scope="row">返回数组遇到 nil 就截断</th><td><code>return {1, nil, 3}</code> 只返回 1。用 <code>false</code> 占位</td></tr>
+        <tr><th scope="row">沙箱</th><td>不能用全局变量，没有 os、io；可以用 cjson、cmsgpack、bit、struct 这几个库</td></tr>
+        <tr><th scope="row">执行太久</th><td>超过 <code>busy-reply-threshold</code>（默认 5 秒，以前叫 lua-time-limit），别的命令都收到 BUSY；没写过数据可以 SCRIPT KILL，写过只能 SHUTDOWN NOSAVE（<a href="redis-threading-io.html">Redis 第 07 篇</a>）</td></tr>
+        <tr><th scope="row">主从复制</th><td>5.0 起默认只把脚本里真正执行的写命令复制给从节点，7.0 起只剩这一种方式，所以脚本里用随机数、时间也没问题</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= FUNCTIONS ================= -->
+<section id="func">
+  <div>
+    <h2>Redis 7：Functions，把脚本变成 Redis 自己的命令</h2>
+    <p class="lead">EVAL 的脚本只在缓存里，属于“客户端带过来的代码”。Functions 是一个函数库，加载后跟数据一样写进 RDB / AOF、复制到从节点，重启后还在，调用时用名字。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>stock.lua</b><span>一个库里可以注册多个函数</span></div>
+<pre><code>#!lua name=stock
+
+redis.register_function(<span class="an">'deduct'</span>, <span class="kw">function</span>(keys, args)
+    <span class="kw">local</span> s = tonumber(redis.call(<span class="an">'GET'</span>, keys[1]) <span class="kw">or</span> <span class="an">'0'</span>)
+    <span class="kw">local</span> n = tonumber(args[1])
+    <span class="kw">if</span> s &lt; n <span class="kw">then return</span> 0 <span class="kw">end</span>
+    redis.call(<span class="an">'DECRBY'</span>, keys[1], n)
+    <span class="kw">return</span> 1
+<span class="kw">end</span>)</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>加载和调用</b><span>redis-cli</span></div>
+<pre><code>redis-cli FUNCTION LOAD "$(cat stock.lua)"
+<span class="cm">→ "stock"</span>
+FCALL deduct 1 stock:888 1        <span class="cm"># 和 EVAL 一样：函数名、key 个数、keys、args</span>
+FUNCTION LIST                     <span class="cm"># 看已加载的库</span>
+FCALL_RO …                        <span class="cm"># 声明了 no-writes 的函数可以在从节点上调</span></code></pre>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">Pipeline</th><th scope="col">MULTI / EXEC</th><th scope="col">WATCH + MULTI</th><th scope="col">EVAL 脚本</th><th scope="col">Function</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">不被插队</th><td class="bad">不保证</td><td class="good">保证</td><td class="good">保证</td><td class="good">保证</td><td class="good">保证</td></tr>
+        <tr><th scope="row">能先读再决定</th><td class="bad">不能</td><td class="bad">不能</td><td class="mid">在 MULTI 前读，冲突就重来</td><td class="good">能</td><td class="good">能</td></tr>
+        <tr><th scope="row">出错回滚</th><td colspan="5" class="bad">都不回滚</td></tr>
+        <tr><th scope="row">网络来回</th><td class="good">一次</td><td>每条命令一次（可配合 Pipeline）</td><td>好几次，冲突还要重试</td><td class="good">一次</td><td class="good">一次</td></tr>
+        <tr><th scope="row">重启后还在</th><td>—</td><td>—</td><td>—</td><td class="mid">脚本缓存会丢，要能重新 EVAL</td><td class="good">在</td></tr>
+        <tr><th scope="row">集群</th><td>客户端按节点拆</td><td colspan="4">所有 key 要在同一个槽</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= JAVA ================= -->
+<section id="java">
+  <div>
+    <h2>Java 里怎么用</h2>
+    <p class="lead">事务要保证几条命令走同一个连接；脚本交给 RedisScript，Spring 会帮你处理 EVALSHA 和 NOSCRIPT。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>执行 Lua</b><span>推荐</span></div>
+<pre><code><span class="kw">private static final</span> RedisScript&lt;Long&gt; DEDUCT =
+        RedisScript.of(<span class="kw">new</span> ClassPathResource(<span class="an">"lua/deduct.lua"</span>), Long.<span class="kw">class</span>);
+
+<span class="kw">boolean</span> buy(<span class="kw">long</span> sku, String user) {
+    Long ok = redis.execute(DEDUCT,
+            List.of(<span class="an">"stock:{"</span> + sku + <span class="an">"}"</span>, <span class="an">"buyers:{"</span> + sku + <span class="an">"}"</span>),
+            <span class="an">"1"</span>, user);
+    <span class="kw">return</span> ok != <span class="kw">null</span> &amp;&amp; ok == <span class="kw">1</span>;
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>WATCH + MULTI</b><span>必须放进 SessionCallback</span></div>
+<pre><code>List&lt;Object&gt; res = redis.execute(<span class="kw">new</span> SessionCallback&lt;&gt;() {
+    <span class="kw">public</span> List&lt;Object&gt; execute(RedisOperations ops) {
+        ops.watch(<span class="an">"stock:888"</span>);
+        <span class="kw">int</span> s = Integer.parseInt((String) ops.opsForValue().get(<span class="an">"stock:888"</span>));
+        <span class="kw">if</span> (s &lt;= <span class="kw">0</span>) { ops.unwatch(); <span class="kw">return null</span>; }
+        ops.multi();
+        ops.opsForValue().decrement(<span class="an">"stock:888"</span>);
+        <span class="kw">return</span> ops.exec();     <span class="cm">// 被别人改过就不执行，要按结果判断后重试</span>
+    }
+});</code></pre>
+    </div>
+  </div>
+  <div class="note-box"><b>JDK 8 和 17</b><span>用法一样，Boot 2 和 Boot 3 只是配置前缀不同。Spring Data Redis 目前没有专门的 Functions API，要调 FCALL 可以用 <code>connection.execute("FCALL", …)</code> 发原始命令。另外，RedisTemplate 开了 <code>setEnableTransactionSupport(true)</code> 后，在 @Transactional 方法里的 Redis 命令会排进 MULTI，读命令全部返回 null。</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">大部分坑来自把 Redis 事务当成数据库事务。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>以为事务失败会回滚</b><p>运行时出错的那条失败，其余照样执行。需要“要么全做要么全不做”，先在脚本里检查好所有条件，再开始写。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cart"/></svg><b>在 MULTI 里 GET，拿到的是 QUEUED</b><p>排队期间不执行。要根据读到的值做判断，在 MULTI 之前读并 WATCH，或者直接用 Lua。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cart"/></svg><b>ERR EXEC without MULTI</b><p>直接用 RedisTemplate 调 <code>multi()</code>、<code>exec()</code>，两次调用可能拿到不同的连接。放进 SessionCallback 里执行。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cart"/></svg><b>@Transactional 方法里，Redis 读出来全是 null</b><p>开了 <code>enableTransactionSupport</code>，命令都被排进了 MULTI，提交时才执行。读操作放到事务外，或者用另一个没开事务支持的 RedisTemplate。</p></div>
+    <div class="pit" data-role="wa"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-eye"/></svg><b>秒杀时 WATCH 大量失败，重试打满 Redis</b><p>冲突越多，重试越多。热点场景改用 Lua，一次判断加扣减，没有重试。</p></div>
+    <div class="pit" data-role="lu"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-script"/></svg><b>CROSSSLOT 或者脚本在集群里改错了节点</b><p>脚本里用到的 key 没放进 KEYS，或者放了但不在同一个槽。所有 key 都从 KEYS 传进去，并用相同的 hash tag。</p></div>
+    <div class="pit" data-role="lu"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-script"/></svg><b>脚本返回的金额少了小数部分</b><p>Lua 数字转成 Redis 整数会截断。返回 <code>tostring(x)</code>，Java 那边按字符串解析。</p></div>
+    <div class="pit" data-role="lu"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-script"/></svg><b>脚本缓存越来越大</b><p>每次把参数拼进脚本文本里，每段都不一样，全被缓存下来。脚本写死，变化的部分走 ARGV。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>BUSY Redis is busy running a script</b><p>脚本里循环处理了大量 key。脚本要短小，大批量的活拆成多次调用。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lib"/></svg><b>主从切换后，EVALSHA 报 NOSCRIPT</b><p>新主节点的脚本缓存里没有它。客户端要能退回 EVAL（Spring 会自动做）；Redis 7 可以改用 Functions。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7 为例。相关：<a href="redis-distributed-lock.html">Redis 分布式锁</a>（解锁用的就是 Lua）· <a href="redis-threading-io.html">线程模型与 IO 多路复用</a>（Pipeline 和长脚本）· <a href="../database/mysql-mvcc-lock.html">MySQL MVCC 与锁</a>（对比数据库事务）
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+function errCase(mode, lcall){
+  var tx={lines:[], kv:{}}, lua={lines:[], kv:{}};
+  tx.lines.push(['p','> MULTI'],['o','OK'],['p','> SET a 1'],['h','QUEUED']);
+  if(mode==='syn'){ tx.lines.push(['p','> INCR'],['e','(error) ERR wrong number of arguments for \'incr\' command']); }
+  else { tx.lines.push(['p','> INCR name'],['h','QUEUED']); }
+  tx.lines.push(['p','> SET b 2'],['h','QUEUED'],['p','> EXEC']);
+  if(mode==='syn'){ tx.lines.push(['e','(error) EXECABORT Transaction discarded because of previous errors.']); }
+  else if(mode==='run'){ tx.lines.push(['o','1) OK'],['e','2) (error) ERR value is not an integer or out of range'],['o','3) OK']); tx.kv={a:'1',b:'2'}; }
+  else { tx.lines.push(['o','1) OK'],['o','2) (integer) 8'],['o','3) OK']); tx.kv={a:'1',b:'2'}; }
+  var fn = lcall==='pcall' ? 'redis.pcall' : 'redis.call';
+  lua.lines.push(['p',fn+"('SET','a','1')"]);
+  lua.lines.push(['p', mode==='syn' ? fn+"('INCR','name'" : fn+"('INCR','name')"]);
+  lua.lines.push(['p',fn+"('SET','b','2')"]);
+  if(mode==='syn'){ lua.lines.push(['e','(error) ERR Error compiling script … \')\' expected']); }
+  else if(mode==='run' && lcall==='call'){ lua.lines.push(['e','(error) ERR value is not an integer or out of range script: … on @user_script:2.']); lua.kv={a:'1'}; }
+  else if(mode==='run'){ lua.lines.push(['o','(nil)  第 2 行的错误被当成值返回，脚本继续']); lua.kv={a:'1',b:'2'}; }
+  else { lua.lines.push(['o','(nil)']); lua.kv={a:'1',b:'2'}; }
+  return {tx:tx, lua:lua};
+}
+
+/* race scenarios: each step = {who:'A'|'B', cmd, rep, cls, stock, orders, watch:{A,B}, cap} */
+var RACE={
+  plain:[
+    {who:'A', cmd:'GET stock', rep:'"1"', cls:'ok', stock:1, orders:0, cap:'A 先查库存：1 件，可以买。'},
+    {who:'B', cmd:'GET stock', rep:'"1"', cls:'ok', stock:1, orders:0, cap:'A 还没来得及扣，B 也查到 1 件。'},
+    {who:'A', cmd:'DECR stock', rep:'(integer) 0', cls:'ok', stock:0, orders:1, cap:'A 判断“有货”，扣成 0，下单成功。'},
+    {who:'B', cmd:'DECR stock', rep:'(integer) -1', cls:'bad', stock:-1, orders:2, cap:'B 拿着刚才的“1”也判断有货，扣成 -1。超卖了。'}
+  ],
+  multi:[
+    {who:'A', cmd:'GET stock', rep:'"1"', cls:'ok', stock:1, orders:0, cap:'MULTI 里读不到值，只能先在外面查：A 查到 1。'},
+    {who:'B', cmd:'GET stock', rep:'"1"', cls:'ok', stock:1, orders:0, cap:'B 也查到 1。'},
+    {who:'A', cmd:'MULTI → DECR stock → EXEC', rep:'1) (integer) 0', cls:'ok', stock:0, orders:1, cap:'A 的事务一口气执行，扣成 0。'},
+    {who:'B', cmd:'MULTI → DECR stock → EXEC', rep:'1) (integer) -1', cls:'bad', stock:-1, orders:2, cap:'B 的事务也照样执行，扣成 -1。MULTI 只保证排好的命令一起跑，管不了“查的时候和扣的时候库存变没变”。'}
+  ],
+  watch:[
+    {who:'A', cmd:'WATCH stock → GET stock', rep:'"1"', cls:'ok', stock:1, orders:0, watch:{A:'clean'}, cap:'A 先盯上 stock，再查到 1。'},
+    {who:'B', cmd:'WATCH stock → GET stock', rep:'"1"', cls:'ok', stock:1, orders:0, watch:{A:'clean',B:'clean'}, cap:'B 也盯上 stock，也查到 1。'},
+    {who:'A', cmd:'MULTI → DECR stock → EXEC', rep:'1) (integer) 0', cls:'ok', stock:0, orders:1, watch:{B:'dirty'}, cap:'A 先 EXEC：stock 没被别人动过，执行成功，扣成 0。这一改，B 盯着的 stock 就“脏了”。'},
+    {who:'B', cmd:'MULTI → DECR stock → EXEC', rep:'(nil)', cls:'mid', stock:0, orders:1, cap:'B 的 EXEC 返回 nil：盯的 key 被改过，整个事务作废，一条都没执行。'},
+    {who:'B', cmd:'重试：WATCH stock → GET stock', rep:'"0"', cls:'mid', stock:0, orders:1, watch:{B:'clean'}, cap:'B 重新来一遍，这次查到 0，判断卖完了，UNWATCH，告诉用户“已售罄”。结果正确，代价是多了一轮来回。'}
+  ],
+  lua:[
+    {who:'A', cmd:'EVALSHA deduct 1 stock', rep:'(integer) 1', cls:'ok', stock:0, orders:1, cap:'A 的脚本在 Redis 里一口气做完“查、判断、扣”，库存变成 0。B 的脚本这时在外面排队。'},
+    {who:'B', cmd:'EVALSHA deduct 1 stock', rep:'(integer) 0', cls:'mid', stock:0, orders:1, cap:'轮到 B 的脚本，查到 0，直接返回 0。一次来回，没有重试，结果正确。'}
+  ]
+};
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- error lab ---------- */
+  var ER='run', LC='call';
+  function renderErr(){
+    var r=errCase(ER,LC);
+    function cli(lines){ return lines.map(function(l){ return '<span class="'+l[0]+'">'+esc(l[1])+'</span>'; }).join('\n'); }
+    function kv(o){ return ['a','b'].map(function(k){ var has=o[k]!==undefined; return '<span data-role="'+(has?'done':'other')+'">'+k+' = '+(has?o[k]:'（没写进去）')+'</span>'; }).join(''); }
+    $('erTx').innerHTML=cli(r.tx.lines); $('erTxKv').innerHTML=kv(r.tx.kv);
+    $('erLua').innerHTML=cli(r.lua.lines); $('erLuaKv').innerHTML=kv(r.lua.kv);
+    var v=$('erV');
+    if(ER==='none'){ v.setAttribute('data-role','done'); v.textContent='没有错误时两者一样：三步都执行了。（这里假设 name 是数字 7，加 1 后是 8。）'; }
+    else if(ER==='syn'){ v.setAttribute('data-role','done'); v.textContent='命令写错了，事务在 EXEC 前就发现了，整个事务被丢弃；Lua 脚本编译不过，一行都不执行。这种情况下 a、b 都没写，看起来像“回滚”，其实是根本没开始。'; }
+    else if(LC==='call'){ v.setAttribute('data-role','bad'); v.textContent='运行时出错，两者都不回滚：事务里第 2 条失败，第 1、3 条照样执行；Lua 用 redis.call 在第 2 行中断，第 1 行写的 a 留下了，第 3 行没跑到。'; }
+    else { v.setAttribute('data-role','bad'); v.textContent='redis.pcall 把错误当成返回值，脚本继续跑完，a 和 b 都写进去了。要不要继续，得你自己在脚本里判断。'; }
+  }
+  document.querySelectorAll('[data-er]').forEach(function(b){ b.addEventListener('click',function(){ ER=b.getAttribute('data-er'); document.querySelectorAll('[data-er]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderErr(); }); });
+  document.querySelectorAll('[data-lc]').forEach(function(b){ b.addEventListener('click',function(){ LC=b.getAttribute('data-lc'); document.querySelectorAll('[data-lc]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderErr(); }); });
+  renderErr();
+
+  /* ---------- race stepper ---------- */
+  var AP='plain', pos=0;
+  var NAMES={plain:'GET 再 DECR',multi:'用 MULTI 包起来',watch:'WATCH + MULTI',lua:'Lua 脚本'};
+  function renderRace(){
+    var S=RACE[AP], LAST=S.length; // pos 0 = initial
+    $('rcPos').textContent='第 '+pos+' / '+LAST+' 步';
+    var cur = pos>0 ? S[pos-1] : null;
+    var cap=$('rcCap');
+    cap.setAttribute('data-role', !cur ? 'tx' : (cur.cls==='bad'?'bad':(cur.cls==='mid'?'wa':'tx')));
+    cap.textContent = cur ? cur.cap : '库存 stock = 1。A 和 B 两个请求几乎同时到达，都想买最后这一件。';
+    function lane(who){
+      var h='<b>客户端 '+who+'</b>';
+      S.forEach(function(st,i){
+        if(st.who!==who){ h+='<div class="ev gap" aria-hidden="true"><code>·</code><span class="rep">·</span></div>'; return; }
+        var cls='ev'+(i+1>pos?' fut':'')+(i+1===pos?' cur':'');
+        h+='<div class="'+cls+'"><code>'+esc(st.cmd)+'</code><span class="rep '+st.cls+'">'+(i+1>pos?'…':'→ '+esc(st.rep))+'</span></div>';
+      });
+      return h;
+    }
+    $('laneA').innerHTML=lane('A'); $('laneB').innerHTML=lane('B');
+    var stock = cur ? cur.stock : 1, orders = cur ? cur.orders : 0;
+    var w={}; for(var i=0;i<pos;i++){ var ww=S[i].watch; if(ww){ for(var k in ww) w[k]=ww[k]; } }
+    var wh=''; if(AP==='watch'){ ['A','B'].forEach(function(k){ if(w[k]) wh+='<span class="watch'+(w[k]==='dirty'?' dirty':'')+'">'+k+' 盯着 stock'+(w[k]==='dirty'?'：已被改过':'')+'</span>'; }); }
+    $('rbox').innerHTML='<small>Redis 里的 stock</small><span class="stock'+(stock<0?' neg':'')+'">'+stock+'</span><span class="orders">已下单 <b>'+orders+'</b> 笔</span>'+wh;
+    $('rcPrev').disabled=pos===0; $('rcNext').disabled=pos===LAST;
+    // summary
+    var h='<thead><tr><th>写法</th><th>最后库存</th><th>卖出</th><th>网络来回</th><th>结果</th></tr></thead><tbody>';
+    var RT={plain:'2 次 / 人',multi:'4 次 / 人',watch:'5 次起，冲突要重试',lua:'1 次 / 人'};
+    Object.keys(RACE).forEach(function(k){ var L=RACE[k][RACE[k].length-1]; h+='<tr'+(k===AP?' class="cur"':'')+'><th scope="row">'+NAMES[k]+'</th><td>'+L.stock+'</td><td>'+L.orders+' 单</td><td>'+RT[k]+'</td><td>'+(L.stock<0?'<b style="color:var(--bad)">超卖</b>':'<b style="color:var(--good)">正确</b>')+'</td></tr>'; });
+    $('rcSum').innerHTML=h+'</tbody>';
+  }
+  document.querySelectorAll('[data-ap]').forEach(function(b){ b.addEventListener('click',function(){ AP=b.getAttribute('data-ap'); pos=0; document.querySelectorAll('[data-ap]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderRace(); }); });
+  $('rcPrev').addEventListener('click',function(){ pos=Math.max(0,pos-1); renderRace(); });
+  $('rcNext').addEventListener('click',function(){ pos=Math.min(RACE[AP].length,pos+1); renderRace(); });
+  $('rcReset').addEventListener('click',function(){ pos=0; renderRace(); });
+  $('rc').addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'){ pos=Math.min(RACE[AP].length,pos+1); renderRace(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ pos=Math.max(0,pos-1); renderRace(); e.preventDefault(); }
+  });
+  renderRace();
+})();
+</script>
+
+</body>
+</html>
