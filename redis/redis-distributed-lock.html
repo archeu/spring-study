@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis 分布式锁</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: many app instances fight over one key hanging in Redis. Client A blue, B purple, C brown, the lock key teal, watchdog green, danger red. Anchor = the incident lab (4 lock versions x 4 incidents). */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --ca:#3150C4; --ca-tint:#E2E7FA;
+  --cb:#6A3FC0; --cb-tint:#ECE5FA;
+  --cc:#8A5A2B; --cc-tint:#F3E6D8;
+  --lk:#0D7A69; --lk-tint:#DCF0EB;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --ca:#90A4FF; --ca-tint:#1D2650;
+    --cb:#B9A0FF; --cb-tint:#2A2148;
+    --cc:#D9A26B; --cc-tint:#3A2A1A;
+    --lk:#40C6B0; --lk-tint:#12352F;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --ca:#90A4FF; --ca-tint:#1D2650;
+  --cb:#B9A0FF; --cb-tint:#2A2148;
+  --cc:#D9A26B; --cc-tint:#3A2A1A;
+  --lk:#40C6B0; --lk-tint:#12352F;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--ca)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--ca);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="ca"]{--rc:var(--ca);--rt:var(--ca-tint)}
+[data-role="cb"]{--rc:var(--cb);--rt:var(--cb-tint)}
+[data-role="cc"]{--rc:var(--cc);--rt:var(--cc-tint)}
+[data-role="lk"]{--rc:var(--lk);--rt:var(--lk-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.scene{margin-top:18px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.2fr);gap:14px;align-items:center;background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px}
+.apps{display:flex;flex-direction:column;gap:8px}
+.app{display:flex;align-items:center;gap:10px;border:2px solid var(--rc);background:var(--rt);border-radius:12px;padding:8px 12px;min-width:0}
+.app b{font-family:var(--font-mono);font-size:14px;color:var(--rc);flex:none}
+.app span{font-size:13px}
+.app .st{margin-left:auto;font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--card);border:1.5px solid var(--rc);color:var(--rc);white-space:nowrap}
+.arrows{font-size:28px;color:var(--line-strong);font-weight:700;text-align:center;line-height:1}
+.rkey{border:2.5px solid var(--lk);border-radius:16px;background:var(--lk-tint);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rkey small{font-size:12px;color:var(--muted)}
+.rkey code{font-size:13px;overflow-wrap:anywhere}
+.rkey .cmd{font-family:var(--font-mono);font-size:13px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--card);border:1.5px solid var(--lk);overflow-wrap:anywhere}
+.ttlbar{height:10px;border-radius:5px;background:var(--card);border:1.5px solid var(--lk);overflow:hidden}
+.ttlbar i{display:block;height:100%;width:62%;background:var(--lk)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--cb)} .an{color:var(--lk)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--warn);font-weight:700}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:6px 12px;font-size:13px;cursor:pointer;text-align:left}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+
+/* ---------- why ---------- */
+.why{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.jv{display:flex;flex-direction:column;gap:8px;border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);min-width:0}
+.jv h3{font-size:20px;color:var(--rc)}
+.boxes{display:flex;gap:10px;flex-wrap:wrap}
+.jvm{flex:1 1 130px;border:1.5px dashed var(--line-strong);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.jvm b{font-family:var(--font-mono);font-size:12.5px}
+.jvm .in{align-self:flex-start;font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--rt);color:var(--rc);border:1.5px solid var(--rc)}
+.uses{display:flex;flex-wrap:wrap;gap:6px}
+.uses span{font-size:13px;padding:3px 11px;border-radius:999px;background:var(--neutral-tint)}
+
+/* ---------- evolve ---------- */
+.evo{display:flex;flex-direction:column;gap:8px}
+.ev{display:grid;grid-template-columns:3.2em minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:stretch;border:1.5px solid var(--line);border-radius:14px;background:var(--card);padding:10px 12px}
+.ev .no{font-family:var(--font-display);font-size:28px;color:var(--rc);line-height:1}
+.ev .no small{display:block;font-family:var(--font-body);font-size:11px;color:var(--muted)}
+.ev code{font-size:12px;overflow-wrap:anywhere}
+.ev .c{min-width:0;display:flex;flex-direction:column;gap:2px;font-size:13px}
+.ev .c > b{font-size:12px;color:var(--muted);font-weight:700}
+.ev .p{color:var(--bad)}
+.ev .f{color:var(--good)}
+.ev.ok{border:2px solid var(--good)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.lab-row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.lab-row .lbl{font-size:13px;color:var(--muted);min-width:5.5em}
+.tl{width:100%;height:auto;display:block;border:1.5px solid var(--line);border-radius:12px;background:var(--code-bg)}
+.tl-ax{font-family:var(--font-mono);font-size:10px;fill:var(--muted)}
+.tl-rl{font-size:12px;font-weight:700;fill:var(--ink)}
+.tl-gl{stroke:var(--line);stroke-width:1}
+.s-A{fill:var(--ca)} .s-B{fill:var(--cb)} .s-C{fill:var(--cc)}
+.s-wait{fill:var(--neutral-tint);stroke:var(--line-strong);stroke-width:1;stroke-dasharray:3 3}
+.s-pause{fill:var(--warn-tint);stroke:var(--warn);stroke-width:1.5}
+.s-lost{fill:none;stroke:var(--bad);stroke-width:1.5;stroke-dasharray:4 3}
+.s-txt{font-size:10.5px;font-weight:700;fill:var(--on-accent)}
+.s-txtd{font-size:10.5px;fill:var(--ink)}
+.ov{fill:var(--bad);opacity:.16}
+.ovl{font-size:10.5px;font-weight:700;fill:var(--bad)}
+.mk-x{stroke:var(--bad);stroke-width:3;stroke-linecap:round}
+.mk-rn{fill:var(--good)}
+.mk-rf{fill:var(--bad)}
+.mk-t{font-size:10px;fill:var(--ink)}
+.mk-v{stroke:var(--bad);stroke-width:1.5;stroke-dasharray:4 3}
+.matrix{border-collapse:collapse;font-size:13px}
+.matrix th,.matrix td{padding:5px 8px;border:1px solid var(--line);text-align:center}
+.matrix th{font-weight:600;background:var(--code-bg);white-space:nowrap}
+.matrix td button{border:0;background:transparent;cursor:pointer;font-weight:700;padding:2px 6px;border-radius:6px;font-size:13px}
+.matrix td.safe button{color:var(--good)}
+.matrix td.dead button,.matrix td.bad button{color:var(--bad)}
+.matrix td.cur{outline:2.5px solid var(--ink);outline-offset:-2px}
+.mx-wrap{overflow-x:auto}
+.fix{font-size:14px;padding:8px 12px;border-radius:10px;background:var(--good-tint);border:1.5px solid var(--good)}
+
+/* ---------- redisson ---------- */
+.hashv{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.6fr);gap:10px;align-items:center}
+.hk{border:2px solid var(--lk);border-radius:12px;padding:8px 10px;background:var(--lk-tint);font-family:var(--font-mono);font-size:12.5px;font-weight:600;overflow-wrap:anywhere}
+.hf{border:2px solid var(--ca);border-radius:12px;background:var(--card);display:grid;grid-template-columns:minmax(0,1fr) auto;font-family:var(--font-mono);font-size:12px;overflow:hidden}
+.hf span{padding:6px 10px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.hf span:nth-child(2n){border-left:1px solid var(--line);font-weight:700;color:var(--ca);text-align:center}
+.hf small{grid-column:1 / -1;padding:4px 10px;font-family:var(--font-body);font-size:11.5px;color:var(--muted)}
+.wd{display:flex;flex-direction:column;gap:6px}
+.wdr{position:relative;height:30px;border-radius:7px;background:var(--neutral-tint)}
+.wdr .ttl{position:absolute;top:4px;bottom:4px;border-radius:5px;background:var(--lk);opacity:.85}
+.wdr .rn{position:absolute;top:-4px;width:0;height:38px;border-left:2px solid var(--good)}
+.wdr .rn b{position:absolute;top:-16px;left:-14px;font-size:10.5px;color:var(--good);white-space:nowrap}
+.wdax{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+
+/* ---------- tx order ---------- */
+.txo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.tx{border:2px solid var(--rc);border-radius:16px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.tx h3{font-size:19px;color:var(--rc)}
+.nest{border:2px solid var(--rc);border-radius:10px;padding:6px 8px;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+.nest > b{font-size:12px;color:var(--rc)}
+.nest.lk{--rc:var(--lk)} .nest.txn{--rc:var(--cb)}
+.step{font-family:var(--font-mono);font-size:11.5px;padding:3px 8px;border-radius:6px;background:var(--code-bg);border:1px solid var(--line)}
+.step.hot{background:var(--bad-tint);border-color:var(--bad)}
+
+/* ---------- redlock / fencing ---------- */
+.rl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.rn5{width:64px;border-radius:12px;padding:6px 0;text-align:center;font-size:12px;font-weight:700;border:2px solid var(--rc);background:var(--rt)}
+.rn5 small{display:block;font-weight:500;font-size:11px}
+.fence{display:flex;flex-direction:column;gap:6px}
+.fr{display:grid;grid-template-columns:4.5em minmax(0,1fr);gap:8px;align-items:center;font-size:13px}
+.fr > b{font-family:var(--font-mono)}
+.fr span{padding:4px 10px;border-radius:8px;border:1.5px solid var(--rc);background:var(--rt)}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .scene{grid-template-columns:1fr}
+  .arrows{transform:rotate(90deg)}
+  .why,.two,.txo,.eras{grid-template-columns:1fr}
+  .ev{grid-template-columns:3em minmax(0,1fr)}
+  .ev .c{grid-column:2}
+  .hashv{grid-template-columns:1fr}
+  .hashv .arrows{transform:rotate(90deg)}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-key" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="20" cy="32" r="14"/>
+    <circle class="k-paper" cx="20" cy="32" r="6"/>
+    <path fill="currentColor" d="M32 28h28v8h-6v8h-7v-8h-4v6h-7v-6h-4z"/>
+  </symbol>
+  <symbol id="i-badge" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="8" y="12" width="48" height="44" rx="6"/>
+    <rect class="k-ink" x="24" y="4" width="16" height="12" rx="3"/>
+    <circle class="k-paper" cx="24" cy="32" r="7"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M36 28h12M36 36h8M16 47h32"/>
+    <circle class="k-gold" cx="24" cy="32" r="3"/>
+  </symbol>
+  <symbol id="i-dog" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M14 18l6-12 8 10h8l8-10 6 12v18c0 14-9 22-18 22s-18-8-18-22z"/>
+    <circle class="k-paper" cx="25" cy="30" r="4"/><circle class="k-paper" cx="39" cy="30" r="4"/>
+    <circle class="k-ink" cx="25" cy="31" r="2"/><circle class="k-ink" cx="39" cy="31" r="2"/>
+    <ellipse class="k-ink" cx="32" cy="41" rx="5" ry="3.5"/>
+    <rect class="k-gold" x="22" y="50" width="20" height="5" rx="2"/>
+  </symbol>
+  <symbol id="i-num" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="14" width="52" height="36" rx="6"/>
+    <path class="ks-paper" stroke-width="4" stroke-linecap="round" d="M18 26l4-3v18M30 26c2-3 9-3 9 2 0 5-9 7-9 13h10"/>
+    <path class="k-gold" d="M46 24l8 8-8 8z"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis 分布式锁</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SET NX PX · LUA · WATCHDOG · REDISSON · REDLOCK · FENCING TOKEN</p>
+  <h1>好几台机器抢一把钥匙，钥匙挂在 Redis 上</h1>
+  <p class="lead">一台机器里用 synchronized 就够了；部署了好几台，每台的锁只管自己。分布式锁就是把“锁”放到大家都能看到的 Redis 里：谁先写进去 key，谁就拿到锁。难的不是加锁，而是锁会过期、会丢、会被别人删，下面一个个说。</p>
+
+  <div class="scene">
+    <div class="apps">
+      <div class="app" data-role="ca"><b>A</b><span>order-service #1</span><span class="st">拿到了</span></div>
+      <div class="app" data-role="cb"><b>B</b><span>order-service #2</span><span class="st">在等</span></div>
+      <div class="app" data-role="cc"><b>C</b><span>order-service #3</span><span class="st">在等</span></div>
+    </div>
+    <div class="arrows" aria-hidden="true">→</div>
+    <div class="rkey">
+      <small>Redis 里的一个 key</small>
+      <div class="cmd">SET lock:order:1001 a1b2c3 NX PX 30000</div>
+      <code>key = lock:order:1001　value = a1b2c3（A 的令牌）</code>
+      <small>NX：不存在才写入，所以只有一个人能成功　PX 30000：30 秒后自动过期</small>
+      <div class="ttlbar" aria-hidden="true"><i></i></div>
+    </div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="lk">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-key"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">锁<code>SET key value NX PX</code></div>
+        <p>写进去就是拿到了，<b>到时间自动消失</b>，防止拿锁的人死了没人放。</p>
+        <span class="belong">加锁和设过期必须一条命令</span>
+      </div>
+    </div>
+    <div class="who" data-role="ca">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">令牌<code>value = UUID</code></div>
+        <p>证明“这把锁是我的”，<b>解锁前先核对</b>，免得删了别人的。</p>
+        <span class="belong">核对和删除要用 Lua 一起做</span>
+      </div>
+    </div>
+    <div class="who" data-role="done">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-dog"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">看门狗<code>watchdog</code></div>
+        <p>业务还没干完，就<b>定时给锁续命</b>；进程一死，续命也停。</p>
+        <span class="belong">Redisson 默认 30 秒，每 10 秒续一次</span>
+      </div>
+    </div>
+    <div class="who" data-role="warn">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-num"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">递增号<code>fencing token</code></div>
+        <p>每次加锁领一个更大的号，<b>存储只认更大的号</b>，挡住过期的锁主人。</p>
+        <span class="belong">锁靠不住时的最后一道防线</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= WHY ================= -->
+<section id="why">
+  <div>
+    <h2>为什么本地锁不够</h2>
+    <p class="lead">synchronized 和 ReentrantLock 锁的是同一个 JVM 里的线程。服务部署了两台，各锁各的，两个请求照样同时进来。</p>
+  </div>
+  <div class="why">
+    <div class="jv" data-role="bad"><h3>只用本地锁</h3>
+      <div class="boxes"><div class="jvm"><b>JVM 1 · synchronized</b><span class="in">线程 1 进入</span></div><div class="jvm"><b>JVM 2 · synchronized</b><span class="in">线程 7 也进入</span></div></div>
+      <p class="tip">库存 1 件，两台机器各卖出 1 件：超卖。</p>
+    </div>
+    <div class="jv" data-role="done"><h3>锁放在 Redis</h3>
+      <div class="boxes"><div class="jvm"><b>JVM 1</b><span class="in">SET NX 成功，进入</span></div><div class="jvm"><b>JVM 2</b><span class="in" style="--rc:var(--warn);--rt:var(--warn-tint)">SET NX 失败，等待</span></div></div>
+      <p class="tip">大家看的是同一个 key，同一时刻只有一个人能写进去。</p>
+    </div>
+  </div>
+  <div class="uses"><span>扣库存、防超卖</span><span>定时任务多台只跑一次</span><span>缓存失效后只放一个人去重建</span><span>同一用户的请求串行处理</span><span>防重复提交（但更推荐幂等）</span></div>
+</section>
+
+<!-- ================= EVOLVE ================= -->
+<section id="evolve">
+  <div>
+    <h2>一把锁的五次进化</h2>
+    <p class="lead">每一版都是为了解决上一版的问题。前四版自己写也行，第五版一般直接用 Redisson。</p>
+  </div>
+  <div class="evo">
+    <div class="ev" data-role="bad"><span class="no">1<small>版</small></span><div class="c"><b>写法</b><code>SETNX lock 1</code><code>… 业务 …</code><code>DEL lock</code></div><div class="c"><b>问题</b><span class="p">拿锁的进程崩了，没执行 DEL，锁永远不会消失：死锁</span></div><div class="c"><b>修法</b><span class="f">给锁加过期时间</span></div></div>
+    <div class="ev" data-role="bad"><span class="no">2<small>版</small></span><div class="c"><b>写法</b><code>SETNX lock 1</code><code>EXPIRE lock 10</code></div><div class="c"><b>问题</b><span class="p">两条命令不是原子的，两条之间崩了，还是没有过期时间</span></div><div class="c"><b>修法</b><span class="f">一条命令同时加锁和设过期</span></div></div>
+    <div class="ev" data-role="warn"><span class="no">3<small>版</small></span><div class="c"><b>写法</b><code>SET lock 1 NX PX 10000</code><code>DEL lock</code></div><div class="c"><b>问题</b><span class="p">业务超过 10 秒，锁过期被 B 拿走；A 干完执行 DEL，删的是 B 的锁</span></div><div class="c"><b>修法</b><span class="f">value 存自己的令牌，Lua 比对后再删</span></div></div>
+    <div class="ev" data-role="warn"><span class="no">4<small>版</small></span><div class="c"><b>写法</b><code>SET lock &lt;uuid&gt; NX PX 10000</code><code>Lua：get == uuid 才 del</code></div><div class="c"><b>问题</b><span class="p">不会误删了，但业务超时后 A 和 B 仍然同时在干；同一线程再加锁会把自己锁住</span></div><div class="c"><b>修法</b><span class="f">看门狗自动续期；用计数支持可重入</span></div></div>
+    <div class="ev ok" data-role="done"><span class="no">5<small>版</small></span><div class="c"><b>写法</b><code>Redisson：RLock.lock() / tryLock()</code></div><div class="c"><b>还剩的问题</b><span class="p">主从切换时锁可能丢；进程长时间停顿（比如 GC），续期也跟着停</span></div><div class="c"><b>再往下</b><span class="f">fencing token、RedLock、ZooKeeper / etcd，或业务兜底</span></div></div>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>解锁的 Lua</b><span>比对和删除一起做，中间不会被别人插进来</span></div>
+<pre><code><span class="kw">if</span> redis.call(<span class="an">'get'</span>, KEYS[1]) == ARGV[1] <span class="kw">then</span>
+    <span class="kw">return</span> redis.call(<span class="an">'del'</span>, KEYS[1])
+<span class="kw">else</span>
+    <span class="kw">return</span> 0     <span class="cm">-- 不是我的锁（可能已经过期被别人拿了），不动</span>
+<span class="kw">end</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>自己写一个</b><span>StringRedisTemplate</span></div>
+<pre><code>String key = <span class="an">"lock:order:"</span> + orderId, token = UUID.randomUUID().toString();
+Boolean ok = redis.opsForValue().setIfAbsent(key, token, Duration.ofSeconds(<span class="kw">10</span>));
+<span class="kw">if</span> (!Boolean.TRUE.equals(ok)) <span class="kw">throw new</span> BizException(<span class="an">"操作太频繁"</span>);
+<span class="kw">try</span> {
+    doBusiness();
+} <span class="kw">finally</span> {
+    redis.execute(UNLOCK_SCRIPT, List.of(key), token);   <span class="cm">// 上面那段 Lua</span>
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LAB ================= -->
+<section id="lab">
+  <div>
+    <h2>事故实验台：四种写法 × 四种事故</h2>
+    <p class="lead">选一种锁的写法和一种生产上真会发生的事故，看时间线上谁拿着锁、谁在临界区里。红色阴影就是两个人同时在里面。锁的过期时间都按 10 秒算。</p>
+  </div>
+  <div class="lab">
+    <div class="lab-row"><span class="lbl">锁的写法：</span>
+      <div class="seg-btns" role="group" aria-label="锁的写法">
+        <button data-v="1" aria-pressed="false">SETNX，不设过期</button>
+        <button data-v="2" aria-pressed="true">SET NX PX + DEL</button>
+        <button data-v="3" aria-pressed="false">+ 令牌 + Lua 解锁</button>
+        <button data-v="4" aria-pressed="false">+ 看门狗续期</button>
+      </div>
+    </div>
+    <div class="lab-row"><span class="lbl">事故：</span>
+      <div class="seg-btns" role="group" aria-label="事故场景">
+        <button data-s="crash" aria-pressed="false">A 拿锁后进程崩了</button>
+        <button data-s="slow" aria-pressed="true">A 的业务跑了 15 秒</button>
+        <button data-s="failover" aria-pressed="false">Redis 主从切换</button>
+        <button data-s="gc" aria-pressed="false">A 停顿了 15 秒（GC）</button>
+      </div>
+    </div>
+    <svg class="tl" id="tl" viewBox="0 0 640 220" role="img" aria-label="锁和各客户端的时间线"></svg>
+    <p class="verdict" id="labV" data-role="bad"></p>
+    <p class="fix" id="labFix"></p>
+    <div class="mx-wrap">
+      <table class="matrix" id="mx" aria-label="16 种组合的结果"></table>
+    </div>
+    <p class="tip">表格是全部 16 种组合的结果，点格子可以直接跳过去。最后两列里，带过期时间的写法怎么改都过不去（不设过期的第 1 种看似安全，代价是崩溃就死锁），要靠下一节的办法。</p>
+  </div>
+</section>
+
+<!-- ================= REDISSON ================= -->
+<section id="redisson">
+  <div>
+    <h2>Redisson 是怎么做的</h2>
+    <p class="lead">生产上大多直接用 Redisson 的 <code>RLock</code>。它把前面说的几件事都做了：原子加锁、令牌核对、可重入、看门狗续期、等锁时不空转。</p>
+  </div>
+  <div class="mini">
+    <b>锁是一个 Hash：谁拿着、重入了几次</b>
+    <div class="hashv">
+      <div class="hk">lock:order:1001<br><small style="font-family:var(--font-body);font-weight:500;color:var(--muted)">TTL 30 秒</small></div>
+      <div class="arrows" aria-hidden="true">→</div>
+      <div class="hf"><span>8743c9c0-…:52（客户端 ID : 线程 ID）</span><span>2</span><small>同一个线程又 lock() 了一次，计数加到 2；unlock() 一次减 1，减到 0 才删 key</small></div>
+    </div>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>加锁的 Lua</b><span>简化版</span></div>
+<pre><code><span class="kw">if</span> (redis.call(<span class="an">'exists'</span>, KEYS[1]) == 0)
+   <span class="kw">or</span> (redis.call(<span class="an">'hexists'</span>, KEYS[1], ARGV[2]) == 1) <span class="kw">then</span>
+    redis.call(<span class="an">'hincrby'</span>, KEYS[1], ARGV[2], 1)   <span class="cm">-- 没人拿，或者就是我自己：计数 +1</span>
+    redis.call(<span class="an">'pexpire'</span>, KEYS[1], ARGV[1])       <span class="cm">-- 重新设过期时间</span>
+    <span class="kw">return nil</span>                                    <span class="cm">-- 成功</span>
+<span class="kw">end</span>
+<span class="kw">return</span> redis.call(<span class="an">'pttl'</span>, KEYS[1])            <span class="cm">-- 失败：告诉我还要多久才过期</span></code></pre>
+    </div>
+    <div class="mini">
+      <b>拿不到时怎么等</b>
+      <p>不是 while 循环一直问。客户端订阅一个频道 <code>redisson_lock__channel:{lock:order:1001}</code>，然后睡着；持锁的人解锁时往频道里发一条消息，等的人被叫醒再去抢。最多等到上面返回的剩余时间。</p>
+      <b>看门狗什么时候有</b>
+      <p>调用 <code>lock()</code> 或 <code>tryLock(waitTime, unit)</code>，<b>不传 leaseTime</b> 时才有。传了 leaseTime，到点就过期，不续期。</p>
+    </div>
+  </div>
+  <div class="mini wd">
+    <b>看门狗：默认 30 秒的锁，每 10 秒续回 30 秒</b>
+    <div class="wdr" role="img" aria-label="锁每 10 秒被续期一次，业务结束后解锁">
+      <span class="ttl" style="left:0;width:83.3%"></span>
+      <span class="rn" style="left:16.7%"><b>续期</b></span><span class="rn" style="left:33.3%"><b>续期</b></span><span class="rn" style="left:50%"><b>续期</b></span>
+    </div>
+    <div class="wdax" aria-hidden="true"><span>0 s 加锁</span><span>10</span><span>20</span><span>30</span><span>40</span><span>50 s 业务结束、解锁</span><span>60 s</span></div>
+    <p class="tip">续期时间是 <code>lockWatchdogTimeout</code>（默认 30000 毫秒）的三分之一。续期也是一段 Lua：先确认锁还是自己的，再重设过期时间。进程挂了，续期任务跟着没了，锁最多 30 秒后释放。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>推荐写法</b><span>Redisson</span></div>
+<pre><code>RLock lock = redisson.getLock(<span class="an">"lock:order:"</span> + orderId);   <span class="cm">// 按业务 ID 加锁，别一把锁锁全部</span>
+<span class="kw">if</span> (!lock.tryLock(<span class="kw">3</span>, TimeUnit.SECONDS)) {               <span class="cm">// 最多等 3 秒；不传 leaseTime，有看门狗</span>
+    <span class="kw">throw new</span> BizException(<span class="an">"系统繁忙，请稍后再试"</span>);
+}
+<span class="kw">try</span> {
+    orderService.create(orderId);                           <span class="cm">// 带 @Transactional 的方法，在另一个 Bean 里</span>
+} <span class="kw">finally</span> {
+    <span class="kw">if</span> (lock.isHeldByCurrentThread()) lock.unlock();      <span class="cm">// 锁可能已经过期，先确认是不是自己的</span>
+}</code></pre>
+  </div>
+</section>
+
+<!-- ================= PROD ================= -->
+<section id="prod">
+  <div>
+    <h2>生产上的经典问题和解法</h2>
+    <p class="lead">锁本身写对了，问题往往出在它和事务、主从、业务的配合上。</p>
+  </div>
+
+  <div>
+    <h3>问题一：锁在事务里面，先解锁后提交，照样超卖</h3>
+    <p class="tip">在 <code>@Transactional</code> 方法里加锁、解锁，finally 里的 unlock 先执行，事务由外面的代理在方法返回后才提交（<a href="../spring/spring-aop-tx.html">Spring 第 02 篇</a>）。解锁到提交之间，B 拿到锁，读到的还是没提交前的旧库存。</p>
+  </div>
+  <div class="txo">
+    <div class="tx" data-role="bad"><h3>错：锁在事务里面</h3>
+      <div class="nest txn"><b>事务（代理开启）</b>
+        <div class="nest lk"><b>锁</b><span class="step">查库存 = 1</span><span class="step">扣减，写入 0（还没提交）</span></div>
+        <span class="step hot">已解锁，还没提交：B 拿到锁，读到库存仍是 1</span>
+        <span class="step">提交</span>
+      </div>
+    </div>
+    <div class="tx" data-role="done"><h3>对：锁包住整个事务</h3>
+      <div class="nest lk"><b>锁</b>
+        <div class="nest txn"><b>事务（另一个 Bean 的 @Transactional 方法）</b><span class="step">查库存 = 1</span><span class="step">扣减，写入 0</span><span class="step">提交</span></div>
+        <span class="step">解锁：B 进来时读到的是 0</span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h3>问题二：主从切换，锁丢了</h3>
+    <p class="tip">A 在主节点上加了锁，还没复制到从节点，主节点就挂了。从节点升为主，上面没有这把锁，B 也加锁成功（复制是异步的，见 <a href="redis-ha-cluster.html">Redis 第 03 篇</a>）。有三条路：</p>
+  </div>
+  <div class="two">
+    <div class="mini">
+      <b>RedLock：找 5 个独立的 Redis 投票</b>
+      <div class="rl" aria-label="5 个独立 Redis 节点，3 个加锁成功">
+        <span class="rn5" data-role="done">R1<small>成功</small></span><span class="rn5" data-role="done">R2<small>成功</small></span><span class="rn5" data-role="done">R3<small>成功</small></span><span class="rn5" data-role="bad">R4<small>超时</small></span><span class="rn5" data-role="bad">R5<small>已被占</small></span>
+      </div>
+      <p>依次向 5 个互相独立的主节点加锁，超过半数（3 个）成功、并且总耗时小于锁的过期时间，才算拿到。锁的有效时间要扣掉加锁花的时间和时钟误差。</p>
+      <p>争议很大：它依赖各台机器的时钟和“停顿不会太久”的假设，碰上 GC 停顿、时钟跳变照样会出错。Redisson 已经把 <code>RedissonRedLock</code> 标为过时。</p>
+    </div>
+    <div class="mini fence">
+      <b>fencing token：让存储来把关</b>
+      <div class="fr" data-role="ca"><b>A</b><span>加锁，拿到号 33；然后停顿或断网</span></div>
+      <div class="fr" data-role="cb"><b>B</b><span>锁过期后加锁，拿到号 34，写入时带上 34</span></div>
+      <div class="fr" data-role="bad"><b>A</b><span>醒来写入，带的是 33 &lt; 34，存储拒绝</span></div>
+      <p>号要从一个强一致的地方来，比如 ZooKeeper 的 zxid、etcd 的 revision；存储要能比较号的大小，比如数据库里加一个 version 条件：<code>UPDATE … WHERE id = ? AND token &lt; 34</code>。</p>
+    </div>
+  </div>
+  <div class="note-box"><b>先分清是哪种锁</b><span><b>效率锁</b>：偶尔两个人同时进来，最多多干一次活、多发一条通知，可以接受。用单个 Redis 的锁就够了，业务上再加唯一索引、幂等兜底。<b>正确性锁</b>：两个人同时进来就会出错账。别只靠 Redis，用 ZooKeeper / etcd 的锁，配合 fencing token，或者直接用数据库的行锁和唯一约束。</span></div>
+
+  <div>
+    <h3>问题三：秒杀热点，一把锁成了瓶颈</h3>
+    <p class="tip">一件爆款商品，所有人都在抢同一把锁，同一时刻只有一个请求在扣库存，再多机器也没用。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">做法</th><th scope="col">怎么做</th><th scope="col">好处</th><th scope="col">代价</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">分布式锁锁商品</th><td>拿锁 → 查库存 → 扣减 → 解锁</td><td>好理解</td><td class="bad">同一商品完全串行，吞吐最低</td></tr>
+        <tr><th scope="row">Redis Lua 原子扣减</th><td>一段 Lua 里判断库存并 DECR，成功了再异步下单</td><td class="good">不用锁，单个分片每秒几万次</td><td>Redis 和数据库要对账</td></tr>
+        <tr><th scope="row">数据库条件更新</th><td><code>UPDATE stock SET n = n - 1 WHERE id = ? AND n &gt; 0</code>，看影响行数</td><td class="good">不会超卖，不用分布式锁</td><td>热点行的行锁排队（<a href="../database/mysql-mvcc-lock.html">数据库第 02 篇</a>）</td></tr>
+        <tr><th scope="row">库存分段</th><td>100 件拆成 10 段，每段一把锁，请求随机选一段</td><td class="good">并发提高到 10 倍</td><td>某段卖完要换段，实现复杂</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="two">
+    <div class="mini">
+      <b>问题四：定时任务部署了 3 台，同一个任务跑了 3 次</b>
+      <p>用分布式锁让同一时刻只有一台在跑。注意任务很快就结束时，另外两台可能因为时钟差一点点又拿到锁再跑一遍。ShedLock 这类库提供“至少锁多久”（<code>lockAtLeastFor</code>）和“最多锁多久”（<code>lockAtMostFor</code>）来解决。</p>
+    </div>
+    <div class="mini">
+      <b>问题五：用锁防重复提交，还是有重复订单</b>
+      <p>锁只管“同一时刻”，锁一释放，重复的请求照样进来。防重复靠幂等：前端带一个请求号，后端用唯一索引或 <code>SET 请求号 1 NX EX 600</code> 记下来，第二次直接返回第一次的结果。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= COMPARE ================= -->
+<section id="cmp">
+  <div>
+    <h2>几种分布式锁对比</h2>
+    <p class="lead">Redis 锁快，但不保证绝对正确；ZooKeeper 和 etcd 慢一些，但它们的数据是强一致的。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">方案</th><th scope="col">怎么加锁</th><th scope="col">持锁人挂了</th><th scope="col">锁会不会丢</th><th scope="col">性能</th><th scope="col">适合</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Redis（Redisson）</th><td>SET NX + 过期时间，Hash 计数</td><td>过期自动释放</td><td class="mid">主从切换时可能丢</td><td class="good">很高</td><td>效率锁，绝大多数业务</td></tr>
+        <tr><th scope="row">RedLock</th><td>5 个独立 Redis 多数派</td><td>过期自动释放</td><td class="mid">依赖时钟，有争议</td><td>较高</td><td>很少用</td></tr>
+        <tr><th scope="row">ZooKeeper</th><td>临时顺序节点，监听前一个节点</td><td>会话断开，节点自动删除</td><td class="good">不会，强一致</td><td>中</td><td>正确性锁</td></tr>
+        <tr><th scope="row">etcd</th><td>租约 + 事务比较版本号</td><td>租约到期自动删除</td><td class="good">不会，强一致；版本号可当 fencing token</td><td>中</td><td>正确性锁，云原生环境</td></tr>
+        <tr><th scope="row">数据库</th><td>唯一索引插入一行，或 <code>SELECT … FOR UPDATE</code></td><td>要自己清理，或靠连接断开回滚</td><td class="good">跟数据库一样可靠</td><td class="bad">低</td><td>并发不高、不想多引入组件</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>JDK 8 和 JDK 17</h2>
+    <p class="lead">锁的原理不变。要注意 Redisson 的版本搭配，以及新的线程模型下“哪个线程持有锁”。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>Redisson 3.x 支持 JDK 8，用 <code>redisson-spring-boot-starter</code>，它会读 <code>spring.redis.*</code></li>
+        <li>自己写的锁用 <code>StringRedisTemplate.setIfAbsent(key, value, Duration)</code>，Spring Data Redis 2.1 起有这个重载</li>
+        <li>Spring Integration 的 <code>RedisLockRegistry</code> 也能用，但默认没有看门狗</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>Redisson starter 要用和 Spring Boot 3 匹配的版本，配置读 <code>spring.data.redis.*</code></li>
+        <li>Redisson 的锁属于“客户端 ID + 线程 ID”。响应式或 CompletableFuture 代码里，加锁和解锁可能不在同一个线程，会报错；用带 threadId 参数的异步方法</li>
+        <li>JDK 21 虚拟线程下，每个虚拟线程有自己的 ID，可重入照常；但拿着锁时别做长时间阻塞，否则看门狗一直续，别人一直等</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>SET NX PX</span><span>令牌 + Lua 解锁</span><span>看门狗续期</span><span>主从切换会丢锁</span><span>锁要包住事务</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">分布式锁的问题，几乎都是“锁以为自己还在，其实已经不在了”。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-key"/></svg><b>某台机器重启后，这个功能再也用不了</b><p>加锁和设过期分成了两条命令，中间崩了，锁没有过期时间。一定用 <code>SET key value NX PX</code> 一条命令。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg><b>偶尔有两个请求同时进了临界区</b><p>锁过期后被别人拿走，自己干完又把别人的锁删了。value 存令牌，解锁用 Lua 比对后再删。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-dog"/></svg><b>用了 Redisson，锁还是在业务中途过期了</b><p>调用时传了 leaseTime，比如 <code>lock(10, SECONDS)</code>，传了就没有看门狗。业务时间不确定时，别传 leaseTime。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>加了锁还是超卖</b><p>锁在 @Transactional 方法里面，解锁比提交早。把锁放到事务外层，或者让带事务的方法在另一个 Bean 里被调用。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>IllegalMonitorStateException: attempt to unlock lock, not locked by current thread</b><p>解锁时锁已经过期了，或者在别的线程里解锁。finally 里先判断 <code>isHeldByCurrentThread()</code>，并查清为什么业务比锁还长。</p></div>
+    <div class="pit" data-role="ca"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>高峰期接口全部超时</b><p>用了 <code>lock()</code> 无限等待，一个慢请求拿着锁，后面的线程全卡在等锁上，线程池被耗光。用 <code>tryLock(等待时间, 单位)</code>，等不到就快速失败。</p></div>
+    <div class="pit" data-role="ca"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-key"/></svg><b>加了锁，整个下单接口的吞吐掉到几十</b><p>锁的粒度太粗，比如所有订单共用一把 <code>lock:order</code>。按业务 ID 加锁：<code>lock:order:{订单号}</code>、<code>lock:sku:{商品号}</code>。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>拿不到锁就 while 循环 + sleep，Redis 的 QPS 被打高</b><p>几百个线程不停地 SET NX。用 Redisson，它靠发布订阅通知等锁的人，不用空转。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-num"/></svg><b>Redis 主从切换那一下，出了两张一样的单</b><p>锁在切换时丢了。效率锁可以接受，再用唯一索引兜底；正确性要求高的，改用 ZooKeeper / etcd 加 fencing token。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg><b>用了锁还是有重复提交</b><p>锁释放后，重复的请求照样能进来。防重复要靠幂等：请求号 + 唯一索引，或者把处理结果记下来直接返回。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7、Redisson 3.x 为例。相关：<a href="cache-problems.html">缓存穿透、击穿与雪崩</a>（互斥锁重建缓存）· <a href="redis-ha-cluster.html">Redis 主从、哨兵与集群</a> · <a href="../spring/spring-aop-tx.html">Spring AOP 与事务</a> · <a href="../database/mysql-mvcc-lock.html">MySQL MVCC 与锁</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+/* A timeline for one (lock version, incident) pair. Times in seconds, lock TTL = 10. */
+function scenario(v, s){
+  var r={lock:[], rows:{A:[],B:[]}, marks:[], vlines:[], overlap:[], verdict:'safe', text:'', fix:''};
+  function seg(row,s0,e0,kind,label){ (r.rows[row]=r.rows[row]||[]).push({s:s0,e:e0,kind:kind,label:label||''}); }
+  if(s==='crash'){
+    if(v===1){
+      r.lock.push({s:1,e:30,who:'A'}); seg('A',1,3,'run','临界区'); r.marks.push({t:3,row:'A',kind:'x',text:'崩溃'});
+      seg('B',3,30,'wait','一直拿不到锁');
+      r.verdict='dead'; r.text='死锁：A 崩溃前没来得及 DEL，这把锁没有过期时间，永远不会消失。B 和之后所有人都进不来，只能人工删 key。';
+      r.fix='下一步：加锁时一起设过期时间，用 SET key value NX PX 一条命令。';
+    } else {
+      r.lock.push({s:1,e:11,who:'A'}); r.lock.push({s:11,e:17,who:'B'});
+      seg('A',1,3,'run','临界区'); r.marks.push({t:3,row:'A',kind:'x',text:'崩溃'});
+      seg('B',3,11,'wait','等锁过期'); seg('B',11,17,'run','临界区'); r.marks.push({t:17,row:'B',kind:'unlock',text:'解锁'});
+      r.text = v===4 ? '安全：进程没了，看门狗线程也跟着没了，不再续期。锁到期自动释放，B 在第 11 秒拿到。' : '安全：A 崩溃了，但锁 10 秒后自动过期，B 在第 11 秒拿到。代价是 B 白等了 8 秒。';
+      r.fix='这一关过了。换个事故试试，比如“A 的业务跑了 15 秒”。';
+    }
+  }
+  if(s==='slow'){
+    if(v===1){
+      r.lock.push({s:1,e:16,who:'A'}); r.lock.push({s:16,e:22,who:'B'});
+      seg('A',1,16,'run','临界区（15 秒）'); r.marks.push({t:16,row:'A',kind:'unlock',text:'DEL'});
+      seg('B',3,16,'wait','等 A 释放'); seg('B',16,22,'run','临界区'); r.marks.push({t:22,row:'B',kind:'unlock',text:'DEL'});
+      r.text='安全：没有过期时间，A 干多久锁就占多久，B 一直等到 A 释放。但这正是“进程崩了就死锁”的写法。';
+      r.fix='这一关过了，可第一关过不去。加过期时间后，这一关会出新问题。';
+    } else if(v===2){
+      r.lock.push({s:1,e:11,who:'A'}); r.lock.push({s:11,e:16,who:'B'}); r.lock.push({s:16,e:22,who:'C'});
+      seg('A',1,16,'run','临界区（锁 11 秒时已过期）'); r.marks.push({t:16,row:'A',kind:'bad',text:'DEL 删了 B 的锁'});
+      seg('B',3,11,'wait','等'); seg('B',11,17,'run','临界区');
+      r.rows.C=[]; seg('C',12,16,'wait','等'); seg('C',16,22,'run','临界区');
+      r.overlap=[{s:11,e:16,t:'A 和 B'},{s:16,e:17,t:'B 和 C'}];
+      r.verdict='bad'; r.text='两人同时在里面，还删错了锁：锁在第 11 秒过期，B 进来了；A 第 16 秒干完执行 DEL，删的是 B 的锁，于是 C 也进来了。';
+      r.fix='下一步：value 存自己的令牌，解锁时用 Lua 比对，是自己的才删。';
+    } else if(v===3){
+      r.lock.push({s:1,e:11,who:'A'}); r.lock.push({s:11,e:17,who:'B'});
+      seg('A',1,16,'run','临界区（锁 11 秒时已过期）'); r.marks.push({t:16,row:'A',kind:'fail',text:'令牌不对，没删'});
+      seg('B',3,11,'wait','等'); seg('B',11,17,'run','临界区'); r.marks.push({t:17,row:'B',kind:'unlock',text:'解锁'});
+      r.overlap=[{s:11,e:16,t:'A 和 B'}];
+      r.verdict='bad'; r.text='不会误删了，但第 11～16 秒 A 和 B 同时在临界区：锁过期时 A 还没干完。';
+      r.fix='下一步：业务没干完就给锁续期，也就是看门狗。或者把过期时间设得远大于业务最长耗时。';
+    } else {
+      r.lock.push({s:1,e:16,who:'A',renew:[4.3,7.7,11,14.3]}); r.lock.push({s:16,e:22,who:'B'});
+      seg('A',1,16,'run','临界区（15 秒）'); r.marks.push({t:16,row:'A',kind:'unlock',text:'解锁'});
+      seg('B',3,16,'wait','等'); seg('B',16,22,'run','临界区'); r.marks.push({t:22,row:'B',kind:'unlock',text:'解锁'});
+      r.text='安全：看门狗每过三分之一个过期时间就把锁续满，A 干多久锁就在多久；A 解锁后 B 才进来。';
+      r.fix='这一关过了。再试试“Redis 主从切换”和“A 停顿了 15 秒”。';
+    }
+  }
+  if(s==='failover'){
+    r.lock.push({s:1,e:2,who:'A'}); r.lock.push({s:2,e:5,who:'lost'}); r.lock.push({s:5,e:11,who:'B'});
+    r.vlines.push({t:2,text:'主节点挂了'}); r.vlines.push({t:5,text:'从节点升为主'});
+    seg('A',1,7,'run','临界区');
+    r.marks.push({t:7,row:'A',kind: v<=2?'bad':'fail', text: v<=2?'DEL 删了 B 的锁':'令牌不对，没删'});
+    if(v===4) r.marks.push({t:4.3,row:'L',kind:'rfail',text:'续期失败'});
+    seg('B',3,5,'wait','等'); seg('B',5,11,'run','临界区');
+    r.overlap=[{s:5,e:7,t:'A 和 B'}];
+    r.verdict='bad';
+    r.text='锁丢了：A 在主节点上加锁成功，还没复制到从节点主节点就挂了。从节点升为主后，上面没有这把锁，B 加锁也成功。'+(v===4?'看门狗续期时发现锁不在了，但 A 的业务并不知道。':'');
+    r.fix='单靠 Redis 主从过不了这一关：用 RedLock（5 个独立节点多数派），或者 ZooKeeper / etcd；业务上用唯一索引、乐观锁兜底。';
+  }
+  if(s==='gc'){
+    r.vlines.push({t:2,text:'A 开始停顿'}); r.vlines.push({t:17,text:'A 醒来'});
+    if(v===1){
+      r.lock.push({s:1,e:18,who:'A'}); r.lock.push({s:18,e:24,who:'B'});
+      seg('A',1,2,'run',''); seg('A',2,17,'pause','停顿 15 秒'); seg('A',17,18,'run','写'); r.marks.push({t:18,row:'A',kind:'unlock',text:'DEL'});
+      seg('B',3,18,'wait','等'); seg('B',18,24,'run','临界区');
+      r.text='安全：没有过期时间，A 停顿多久锁就留多久。但这又是“崩溃就死锁”的写法。';
+      r.fix='这一关过了，可第一关过不去。';
+    } else {
+      r.lock.push({s:1,e:11,who:'A'}); r.lock.push({s:11,e:19,who:'B'});
+      seg('A',1,2,'run',''); seg('A',2,17,'pause','停顿 15 秒'); seg('A',17,18,'run','写');
+      r.marks.push({t:18,row:'A',kind: v===2?'bad':'fail', text: v===2?'DEL 删了 B 的锁':'令牌不对，没删'});
+      if(v===4) r.marks.push({t:4.3,row:'L',kind:'rfail',text:'该续期，但看门狗也停着'});
+      seg('B',3,11,'wait','等'); seg('B',11,19,'run','临界区');
+      r.overlap=[{s:17,e:18,t:'A 和 B'}];
+      r.verdict='bad';
+      r.text='A 以为自己还拿着锁：停顿期间所有线程都停了，'+(v===4?'看门狗也没法续期，':'')+'锁在第 11 秒过期，B 进来了。A 第 17 秒醒来，接着按“我有锁”写数据。';
+      r.fix='锁本身管不住“醒来后还以为有锁”的人：用 fencing token，让存储拒绝号码更小的写入。';
+    }
+  }
+  return r;
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var v=2, s='slow';
+  var VN={1:'SETNX，不设过期',2:'SET NX PX + DEL',3:'+ 令牌 + Lua 解锁',4:'+ 看门狗续期'};
+  var SN={crash:'A 崩了',slow:'业务 15 秒',failover:'主从切换',gc:'停顿 15 秒'};
+  function draw(){
+    var r=scenario(v,s), W=640, L=78, R=12, T=30, X=function(t){ return L+t/30*(W-L-R); };
+    var rows=['L','A','B'].concat(r.rows.C?['C']:[]), RY={}, rh=34, y0=34;
+    rows.forEach(function(k,i){ RY[k]=y0+i*rh+(i>0?14:0); });
+    var nOv=r.overlap.length, LAST=RY[rows[rows.length-1]], H=LAST+50+14*Math.max(0,nOv-1)+30;
+    var svg=$('tl'); svg.setAttribute('viewBox','0 0 640 '+H);
+    var h='';
+    for(var t=0;t<=30;t+=5){ h+='<line class="tl-gl" x1="'+X(t)+'" y1="20" x2="'+X(t)+'" y2="'+(H-22)+'"/><text class="tl-ax" x="'+X(t)+'" y="'+(H-8)+'" text-anchor="middle">'+t+' s</text>'; }
+    r.overlap.forEach(function(o,i){ h+='<rect class="ov" x="'+X(o.s).toFixed(1)+'" y="'+(RY.A-4)+'" width="'+(X(o.e)-X(o.s)).toFixed(1)+'" height="'+(LAST+26-RY.A+4)+'"/><text class="ovl" x="'+X(o.s).toFixed(1)+'" y="'+(LAST+50+i*14)+'">▲ 第 '+o.s+'～'+o.e+' 秒：'+o.t+' 同时在里面</text>'; });
+    r.vlines.forEach(function(vl,i){ h+='<line class="mk-v" x1="'+X(vl.t)+'" y1="14" x2="'+X(vl.t)+'" y2="'+(H-22)+'"/><text class="mk-t" x="'+(X(vl.t)+3)+'" y="'+(12+i*12)+'" style="fill:var(--bad);font-weight:700">'+vl.text+'</text>'; });
+    var lbl={L:'Redis 里的锁',A:'客户端 A',B:'客户端 B',C:'客户端 C'};
+    rows.forEach(function(k){ h+='<text class="tl-rl" x="4" y="'+(RY[k]+16)+'">'+lbl[k]+'</text>'; });
+    r.lock.forEach(function(sg){
+      var x=X(sg.s), w=X(sg.e)-X(sg.s), y=RY.L+2;
+      if(sg.who==='lost'){ h+='<rect class="s-lost" x="'+x.toFixed(1)+'" y="'+y+'" width="'+w.toFixed(1)+'" height="22" rx="4"/><text class="s-txtd" x="'+(x+4).toFixed(1)+'" y="'+(y+15)+'">没有锁</text>'; return; }
+      h+='<rect class="s-'+sg.who+'" x="'+x.toFixed(1)+'" y="'+y+'" width="'+w.toFixed(1)+'" height="22" rx="4"/><text class="s-txt" x="'+(x+5).toFixed(1)+'" y="'+(y+15)+'">'+sg.who+' 持有</text>';
+      (sg.renew||[]).forEach(function(rt){ var rx=X(rt); h+='<path class="mk-rn" d="M'+rx.toFixed(1)+' '+(y-2)+'l5 -8h-10z"/>'; });
+    });
+    if(r.lock.some(function(x){return x.renew;})) h+='<text class="mk-t" x="'+(W-R)+'" y="'+(RY.L-4)+'" text-anchor="end" style="fill:var(--good)">▼ 看门狗续期</text>';
+    ['A','B','C'].forEach(function(k){
+      (r.rows[k]||[]).forEach(function(sg){
+        var x=X(sg.s), w=X(sg.e)-X(sg.s), y=RY[k]+2, cls= sg.kind==='run'?'s-'+k : (sg.kind==='wait'?'s-wait':'s-pause');
+        h+='<rect class="'+cls+'" x="'+x.toFixed(1)+'" y="'+y+'" width="'+w.toFixed(1)+'" height="22" rx="4"/>';
+        if(sg.label && w>40) h+='<text class="'+(sg.kind==='run'?'s-txt':'s-txtd')+'" x="'+(x+5).toFixed(1)+'" y="'+(y+15)+'">'+esc(sg.label)+'</text>';
+      });
+    });
+    r.marks.forEach(function(m){
+      var x=X(m.t), y=(m.row==='L'?RY.L:RY[m.row])+13;
+      if(m.kind==='x'){ h+='<path class="mk-x" d="M'+(x-6)+' '+(y-6)+'l12 12M'+(x+6)+' '+(y-6)+'l-12 12"/><text class="mk-t" x="'+(x+9)+'" y="'+(y+4)+'" style="fill:var(--bad);font-weight:700">'+m.text+'</text>'; return; }
+      if(m.kind==='rfail'){ h+='<path class="mk-rf" d="M'+x.toFixed(1)+' '+(RY.L)+'l5 -8h-10z"/><text class="mk-t" x="'+(W-R)+'" y="'+(RY.L-4)+'" text-anchor="end" style="fill:var(--bad)">▼ '+m.text+'</text>'; return; }
+      var col = m.kind==='bad'?'var(--bad)':(m.kind==='fail'?'var(--warn)':'var(--good)');
+      var right = x>W-150;
+      h+='<circle cx="'+x.toFixed(1)+'" cy="'+y+'" r="5" style="fill:'+col+'"/><text class="mk-t" x="'+(x+(right?-8:8)).toFixed(1)+'" y="'+(y+21)+'" text-anchor="'+(right?'end':'start')+'" style="fill:'+col+';font-weight:700">'+m.text+'</text>';
+    });
+    svg.innerHTML=h;
+    var vEl=$('labV'); vEl.setAttribute('data-role', r.verdict==='safe'?'done':'bad');
+    vEl.textContent=(r.verdict==='safe'?'✓ ':(r.verdict==='dead'?'✗ 死锁 · ':'✗ ')) + r.text;
+    $('labFix').textContent=r.fix;
+    drawMatrix();
+  }
+  function drawMatrix(){
+    var h='<thead><tr><th></th>'+Object.keys(SN).map(function(k){ return '<th scope="col">'+SN[k]+'</th>'; }).join('')+'</tr></thead><tbody>';
+    [1,2,3,4].forEach(function(vv){
+      h+='<tr><th scope="row" style="text-align:left">'+VN[vv]+'</th>';
+      Object.keys(SN).forEach(function(ss){
+        var r=scenario(vv,ss), cls=r.verdict, txt= cls==='safe'?'✓ 安全':(cls==='dead'?'✗ 死锁':'✗ 两人同时');
+        h+='<td class="'+cls+(vv===v&&ss===s?' cur':'')+'"><button data-mv="'+vv+'" data-ms="'+ss+'">'+txt+'</button></td>';
+      });
+      h+='</tr>';
+    });
+    $('mx').innerHTML=h+'</tbody>';
+    document.querySelectorAll('[data-mv]').forEach(function(b){ b.addEventListener('click',function(){ setSel(parseInt(b.getAttribute('data-mv'),10), b.getAttribute('data-ms')); }); });
+  }
+  function setSel(nv,ns){
+    v=nv; s=ns;
+    document.querySelectorAll('[data-v]').forEach(function(x){ x.setAttribute('aria-pressed',String(parseInt(x.getAttribute('data-v'),10)===v)); });
+    document.querySelectorAll('[data-s]').forEach(function(x){ x.setAttribute('aria-pressed',String(x.getAttribute('data-s')===s)); });
+    draw();
+  }
+  document.querySelectorAll('[data-v]').forEach(function(b){ b.addEventListener('click',function(){ setSel(parseInt(b.getAttribute('data-v'),10), s); }); });
+  document.querySelectorAll('[data-s]').forEach(function(b){ b.addEventListener('click',function(){ setSel(v, b.getAttribute('data-s')); }); });
+  draw();
+})();
+</script>
+
+</body>
+</html>
