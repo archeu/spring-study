@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>系统压测</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: a request flows through a chain of pipes; the narrowest pipe sets the flow. Load generator blue, system teal, monitoring purple, bottleneck orange. Two interactives: the load curve lab and the bottleneck pipeline. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --lg:#3150C4; --lg-tint:#E2E7FA;
+  --sys:#0D7A69; --sys-tint:#DCF0EB;
+  --mon:#6A3FC0; --mon-tint:#ECE5FA;
+  --bn:#C2410C; --bn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --lg:#90A4FF; --lg-tint:#1D2650;
+    --sys:#40C6B0; --sys-tint:#12352F;
+    --mon:#B9A0FF; --mon-tint:#2A2148;
+    --bn:#FB923C; --bn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --lg:#90A4FF; --lg-tint:#1D2650;
+  --sys:#40C6B0; --sys-tint:#12352F;
+  --mon:#B9A0FF; --mon-tint:#2A2148;
+  --bn:#FB923C; --bn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--lg)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--lg);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="lg"]{--rc:var(--lg);--rt:var(--lg-tint)}
+[data-role="sys"]{--rc:var(--sys);--rt:var(--sys-tint)}
+[data-role="mon"]{--rc:var(--mon);--rt:var(--mon-tint)}
+[data-role="bn"]{--rc:var(--bn);--rt:var(--bn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.chartbox{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;min-width:0}
+.chartbox svg{display:block;width:100%;height:auto;touch-action:pan-y}
+.cv-ax{font-family:var(--font-mono);font-size:10.5px;fill:var(--muted)}
+.cv-t{font-size:12.5px;fill:var(--muted);font-weight:500}
+.cv-zl{font-size:12px;font-weight:700;fill:var(--ink)}
+.cv-gl{stroke:var(--line);stroke-width:1}
+.cv-base{stroke:var(--line-strong);stroke-width:1}
+.cv-q{fill:none;stroke:var(--sys);stroke-width:2;stroke-linejoin:round}
+.cv-qa{fill:var(--sys-tint)}
+.cv-r{fill:none;stroke:var(--bn);stroke-width:2;stroke-linejoin:round}
+.cv-z1{fill:var(--good-tint)} .cv-z2{fill:var(--warn-tint)} .cv-z3{fill:var(--bad-tint)}
+.cv-pk{fill:var(--sys);stroke:var(--card);stroke-width:2}
+.cv-pkl{font-size:11.5px;font-weight:700;fill:var(--ink)}
+.cv-x{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+.cv-dq{fill:var(--sys);stroke:var(--card);stroke-width:2}
+.cv-dr{fill:var(--bn);stroke:var(--card);stroke-width:2}
+.cv-tipb{fill:var(--card);stroke:var(--line-strong);stroke-width:1}
+.cv-tipt{font-size:11.5px;fill:var(--ink)}
+.cv-hit{fill:transparent;cursor:crosshair}
+.zones-key{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+.zk{border-radius:12px;padding:8px 12px;background:var(--rt);border-left:0;display:flex;flex-direction:column;min-width:0}
+.zk b{font-size:14.5px}
+.zk span{font-size:13px;color:var(--muted)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .pro{color:var(--good);font-weight:700}
+.t .con{color:var(--bad);font-weight:700}
+.seg-btns{display:inline-flex;border:1.5px solid var(--line-strong);border-radius:999px;overflow:hidden;flex:none}
+.seg-btns button{border:0;background:var(--card);padding:5px 12px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.tog{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.tog::before{content:"";width:14px;height:14px;border-radius:4px;border:2px solid var(--line-strong);flex:none}
+.tog[aria-pressed="true"]{border-color:var(--sys);background:var(--sys-tint)}
+.tog[aria-pressed="true"]::before{background:var(--sys);border-color:var(--sys)}
+.hbars{display:flex;flex-direction:column;gap:6px}
+.hb{display:grid;grid-template-columns:7.5em minmax(0,1fr) 4.5em;gap:10px;align-items:center;font-size:13px}
+.hb > span:first-child{color:var(--muted)}
+.hb .trk{height:18px;border-radius:0 4px 4px 0;background:var(--neutral-tint);position:relative;overflow:hidden}
+.hb .fill{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--rc)}
+.hb b{font-family:var(--font-mono);font-size:12.5px;font-variant-numeric:tabular-nums}
+
+/* ---------- metrics ---------- */
+.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.mt{border:2px solid var(--rc);border-radius:14px;background:var(--rt);padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.mt small{font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--rc)}
+.mt b{font-size:17px}
+.mt span{font-size:13px}
+.little{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:stretch}
+.eq{font-family:var(--font-mono);font-size:15px;font-weight:600;padding:8px 12px;border-radius:10px;background:var(--lg-tint);overflow-wrap:anywhere}
+.strip{display:grid;grid-template-columns:repeat(25,minmax(0,1fr));gap:3px;max-width:420px}
+.strip i{aspect-ratio:1;border-radius:3px;background:var(--good)}
+.strip i.s1{background:var(--warn)}
+.strip i.s2{background:var(--bad)}
+.stats3{display:flex;flex-wrap:wrap;gap:8px}
+.stats3 span{font-size:13px;padding:3px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc)}
+.stats3 b{font-family:var(--font-mono)}
+
+/* ---------- kinds ---------- */
+.kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.kd{border:1.5px solid var(--line);border-radius:14px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.kd svg{width:100%;height:auto;display:block;color:var(--rc)}
+.kd b{font-size:16px}
+.kd b small{font-size:12.5px;color:var(--muted);font-weight:500;margin-left:6px}
+.kd p{font-size:13.5px}
+.kd .q{font-size:12.5px;color:var(--muted)}
+.sh-l{fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round}
+.sh-a{fill:var(--rt)}
+.sh-t{stroke:var(--muted);stroke-width:1;stroke-dasharray:4 3}
+.sh-tl{font-size:9px;fill:var(--muted)}
+.sh-x{stroke:var(--bad);stroke-width:2.5;stroke-linecap:round}
+.sh-base{fill:none;stroke:var(--neutral);stroke-width:2}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.lab-ctl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.ctl{display:flex;flex-direction:column;gap:6px;min-width:0}
+.ctl > b{font-size:14.5px}
+.ctl > span{font-size:12.5px;color:var(--muted)}
+.formula{font-family:var(--font-mono);font-size:13.5px;padding:8px 12px;border-radius:10px;background:var(--code-bg);border:1.5px solid var(--line);overflow-x:auto;white-space:nowrap}
+.lab-out{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;color:var(--ink);line-height:1.15;font-variant-numeric:tabular-nums}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.why3{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.co{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.cob{border:2px solid var(--rc);border-radius:14px;padding:10px 12px;background:var(--card);display:flex;flex-direction:column;gap:6px;min-width:0}
+.cob b{color:var(--rc);font-size:15px}
+.cob p{font-size:13px}
+.dots{display:flex;flex-wrap:wrap;gap:3px}
+.dots i{width:9px;height:9px;border-radius:50%;background:var(--bad)}
+
+/* ---------- pipeline ---------- */
+.pipe{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.pipe-ctl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.pc{border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.pc > b{font-size:14px}
+.pc .pcon{font-size:12px;color:var(--muted)}
+.pc .pcon em{font-style:normal;font-weight:700;color:var(--good)}
+.pc .pcon i{font-style:normal;font-weight:700;color:var(--bad)}
+.headline{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.big{font-family:var(--font-display);font-size:30px;line-height:1.1}
+.big small{font-family:var(--font-body);font-size:14px;color:var(--muted);margin-left:6px}
+.pass{font-size:13.5px;font-weight:700;padding:3px 12px;border-radius:999px;background:var(--rc);color:var(--on-accent)}
+.stages{display:flex;flex-direction:column;gap:6px}
+.stg{display:grid;grid-template-columns:7.2em minmax(0,1fr);gap:4px 12px;align-items:center}
+.stg-n{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600}
+.stg-n svg{width:22px;height:22px;flex:none;color:var(--sys)}
+.stg.bott .stg-n svg{color:var(--bn)}
+.stg-b{position:relative;height:26px;border-radius:0 6px 6px 0;background:var(--neutral-tint)}
+.stg-f{position:absolute;left:0;top:0;bottom:0;border-radius:0 6px 6px 0;background:var(--sys);opacity:.85}
+.stg.bott .stg-f{background:var(--bn);opacity:1}
+.stg.off .stg-b{background:transparent;border:1.5px dashed var(--line-strong)}
+.stg-v{position:absolute;top:50%;transform:translateY(-50%);font-family:var(--font-mono);font-size:12px;font-weight:600;white-space:nowrap;color:var(--ink);padding:0 6px}
+.stg-w{grid-column:2;font-size:12px;color:var(--muted)}
+.stg-tgt{position:absolute;top:-4px;bottom:-4px;width:0;border-left:2px dashed var(--ink);pointer-events:none}
+.axis{display:grid;grid-template-columns:7.2em minmax(0,1fr);gap:12px}
+.axis div{position:relative;height:16px;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.axis div span{position:absolute;transform:translateX(-50%)}
+.axis div span:first-child{transform:none}
+.axis div span:last-child{transform:translateX(-100%)}
+.hint{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--bn-tint);border:2px solid var(--bn)}
+.hist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:13px}
+.hist li{display:flex;gap:8px;flex-wrap:wrap}
+.hist li b{font-weight:600}
+.hist li span{color:var(--muted)}
+
+/* ---------- bottleneck cards ---------- */
+.bns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.bn{border:1.5px solid var(--line);border-radius:16px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.bn-h{display:flex;align-items:center;gap:10px}
+.bn-h svg{width:40px;height:40px;flex:none;color:var(--rc)}
+.bn-h b{font-family:var(--font-display);font-weight:400;font-size:22px}
+.bn dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:6px 10px;font-size:13.5px}
+.bn dt{font-weight:700;color:var(--rc);font-size:12.5px;padding-top:1px}
+.bn dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.bn dd code{font-size:11.5px;padding:1px 5px;border-radius:5px;background:var(--code-bg);border:1px solid var(--line)}
+
+/* ---------- process / tools ---------- */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.sp{border:2px solid var(--rc);border-radius:12px;padding:8px 10px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.sp small{font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--rc)}
+.sp b{font-size:14px}
+.sp span{font-size:12.5px;color:var(--muted)}
+.mons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chips code{font-size:11.5px;padding:2px 7px;border-radius:6px;background:var(--rt);border:1px solid var(--rc);color:var(--ink)}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mons{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lab-out{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .little,.why3,.bns,.eras,.lab-ctl{grid-template-columns:1fr}
+  .kinds,.pipe-ctl{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .zones-key{grid-template-columns:1fr}
+  .stg,.axis{grid-template-columns:5.6em minmax(0,1fr)}
+}
+@media (max-width:520px){
+  .kinds,.pipe-ctl,.co,.mons,.metrics{grid-template-columns:1fr}
+  .hb{grid-template-columns:5.5em minmax(0,1fr) 4em}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-gen" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="3" y="12" width="30" height="40" rx="4"/>
+    <rect class="k-paper" x="9" y="18" width="18" height="11" rx="2"/>
+    <circle class="k-gold" cx="12" cy="43" r="3.5"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M38 20h14M38 32h18M38 44h14"/>
+    <path fill="currentColor" d="M52 14l9 6-9 6zM56 26l8 6-8 6zM52 38l9 6-9 6z"/>
+  </symbol>
+  <symbol id="i-server" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="9" y="5" width="46" height="16" rx="3"/>
+    <rect fill="currentColor" x="9" y="24" width="46" height="16" rx="3"/>
+    <rect fill="currentColor" x="9" y="43" width="46" height="16" rx="3"/>
+    <circle class="k-gold" cx="17" cy="13" r="3"/><circle class="k-gold" cx="17" cy="32" r="3"/><circle class="k-gold" cx="17" cy="51" r="3"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M30 13h18M30 32h18M30 51h18"/>
+  </symbol>
+  <symbol id="i-mon" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="7" width="56" height="40" rx="4"/>
+    <rect class="k-paper" x="9" y="12" width="46" height="30" rx="2"/>
+    <path class="ks-cur" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" d="M13 36l9-9 8 5 10-13 11 8"/>
+    <rect fill="currentColor" x="27" y="47" width="10" height="8"/>
+    <rect fill="currentColor" x="18" y="54" width="28" height="5" rx="2"/>
+  </symbol>
+  <symbol id="i-neck" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M2 16h18l8 12h8l8-12h18v32H44l-8-12h-8l-8 12H2z"/>
+    <rect class="k-gold" x="28" y="29" width="8" height="6" rx="1.5"/>
+  </symbol>
+  <symbol id="i-cpu" viewBox="0 0 64 64">
+    <path class="ks-cur" stroke-width="3.5" stroke-linecap="round" d="M23 4v9M32 4v9M41 4v9M23 51v9M32 51v9M41 51v9M4 23h9M4 32h9M4 41h9M51 23h9M51 32h9M51 41h9"/>
+    <rect fill="currentColor" x="13" y="13" width="38" height="38" rx="5"/>
+    <rect class="k-paper" x="22" y="22" width="20" height="20" rx="2"/>
+    <rect class="k-gold" x="27" y="27" width="10" height="10" rx="1.5"/>
+  </symbol>
+  <symbol id="i-trash" viewBox="0 0 64 64">
+    <rect class="k-ink" x="25" y="3" width="14" height="7" rx="2"/>
+    <rect fill="currentColor" x="8" y="9" width="48" height="7" rx="2"/>
+    <path fill="currentColor" d="M13 19h38l-3 38a4 4 0 0 1-4 4H20a4 4 0 0 1-4-4z"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M25 28v24M32 28v24M39 28v24"/>
+  </symbol>
+  <symbol id="i-queue" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="22" width="14" height="20" rx="2.5"/>
+    <rect fill="currentColor" x="22" y="22" width="14" height="20" rx="2.5"/>
+    <rect fill="currentColor" opacity=".5" x="40" y="22" width="14" height="20" rx="2.5"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M56 32h6M58 28l4 4-4 4"/>
+    <rect class="k-gold" x="8" y="27" width="6" height="4" rx="1"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 14v36c0 5 9.8 9 22 9s22-4 22-9V14z"/>
+    <ellipse fill="currentColor" cx="32" cy="14" rx="22" ry="9"/>
+    <ellipse class="k-paper" opacity=".3" cx="32" cy="14" rx="22" ry="9"/>
+    <path class="ks-paper" opacity=".6" stroke-width="2" d="M10 27c0 5 9.8 9 22 9s22-4 22-9M10 39c0 5 9.8 9 22 9s22-4 22-9"/>
+  </symbol>
+  <symbol id="i-bolt" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M38 2L10 36h19l-5 26 30-38H35z"/>
+  </symbol>
+  <symbol id="i-cloud" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M18 52a13 13 0 0 1-2-26 17 17 0 0 1 32-4 14 14 0 0 1 1 30z"/>
+    <path class="ks-paper" stroke-width="3.5" stroke-linecap="round" d="M24 40h16M34 34l6 6-6 6"/>
+  </symbol>
+  <symbol id="i-net" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="27"/>
+    <path class="ks-paper" stroke-width="3" d="M5 32h54M32 5c-11 13-11 41 0 54M32 5c11 13 11 41 0 54M10 18h44M10 46h44"/>
+  </symbol>
+  <symbol id="i-lock" viewBox="0 0 64 64">
+    <path stroke="var(--ink)" fill="none" stroke-width="5" d="M20 29v-8a12 12 0 0 1 24 0v8"/>
+    <rect fill="currentColor" x="10" y="27" width="44" height="33" rx="5"/>
+    <circle class="k-gold" cx="32" cy="42" r="5"/>
+    <rect class="k-gold" x="30" y="44" width="4" height="9" rx="1.5"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>性能</span><span aria-hidden="true">/</span><span class="tb-here">系统压测</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">LOAD TESTING · QPS · P99 · LITTLE'S LAW · USL · BOTTLENECK</p>
+  <h1>一点点加人，看系统在哪儿喘不过气</h1>
+  <p class="lead">压测就是用工具假装成很多用户，同时请求你的系统，然后一点点加压。要回答三个问题：最多能扛多少？哪里最先撑不住？撑不住的时候是什么样子？几乎所有系统，压出来都是下面这个形状。</p>
+
+  <div class="chartbox">
+    <svg id="heroSvg" viewBox="0 0 640 352" role="img" aria-label="并发数从 1 加到 200 时，吞吐量先线性上涨再到顶后下降，响应时间先平稳再快速上升"></svg>
+    <div class="zones-key">
+      <div class="zk" data-role="done"><b>轻松区</b><span>加人，吞吐跟着涨；响应时间几乎不变</span></div>
+      <div class="zk" data-role="warn"><b>饱和区</b><span>吞吐到顶了；多出来的请求在排队，响应时间开始涨</span></div>
+      <div class="zk" data-role="bad"><b>下滑区</b><span>互相抢、互相等，吞吐反而下降，响应时间飙升</span></div>
+    </div>
+  </div>
+  <p class="tip">示意数据：每个用户不停发请求、没有思考时间，系统有中等程度的争用和协调开销（参数见下面的实验台）。鼠标移到图上看每个点的数值。</p>
+
+  <div class="cast">
+    <div class="who" data-role="lg">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gen"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">压测机<code>JMeter · Gatling · k6 · wrk</code></div>
+        <p>假装成成百上千个用户，<b>按设定的节奏发请求</b>，记下每个请求花了多久。</p>
+        <span class="belong">它自己也会累，也要盯着</span>
+      </div>
+    </div>
+    <div class="who" data-role="sys">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-server"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">被测系统<code>应用 · 数据库 · 缓存 · 下游</code></div>
+        <p>一个请求要依次穿过好几道关，<b>哪一道都可能先满</b>。</p>
+        <span class="belong">环境越像生产，结论越可信</span>
+      </div>
+    </div>
+    <div class="who" data-role="mon">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mon"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">监控<code>Prometheus · Grafana · APM</code></div>
+        <p>压测时同时看 CPU、GC、线程、连接池、慢 SQL，<b>找到最先变红的那个</b>。</p>
+        <span class="belong">没有监控，压测只得到一个数</span>
+      </div>
+    </div>
+    <div class="who" data-role="bn">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-neck"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">瓶颈<code>最窄的那段水管</code></div>
+        <p>整条链路的上限由<b>最慢的一环</b>决定。修好它，下一个就会冒出来。</p>
+        <span class="belong">压测的真正目标是找到它</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= WHAT ================= -->
+<section id="what">
+  <div>
+    <h2>压什么：盯住五个数</h2>
+    <p class="lead">一次压测的报告，核心就是这五个数。只看其中一个，很容易得出错误的结论。</p>
+  </div>
+  <div class="metrics">
+    <div class="mt" data-role="sys"><small>QPS / TPS</small><b>吞吐量</b><span>每秒处理多少个请求（或事务）。系统能干多少活。</span></div>
+    <div class="mt" data-role="bn"><small>RT · P99</small><b>响应时间</b><span>用户等了多久。看 P99：100 个请求里最慢的那 1 个也不超过它。</span></div>
+    <div class="mt" data-role="lg"><small>Concurrency</small><b>并发数</b><span>同一时刻正在处理中的请求有多少个。</span></div>
+    <div class="mt" data-role="bad"><small>Error rate</small><b>错误率</b><span>超时、报错、被限流的比例。通常要求低于 0.1%。</span></div>
+    <div class="mt" data-role="mon"><small>Utilization</small><b>资源利用率</b><span>CPU、内存、磁盘、网络、连接池用了几成。一般别超过 70%～80%。</span></div>
+  </div>
+  <div class="little">
+    <div class="mini">
+      <b>前三个数绑在一起：利特尔法则</b>
+      <div class="eq">并发数 = 吞吐量 × 响应时间</div>
+      <p>1000 QPS × 0.2 秒 = 200 个请求同时在处理，正好是 Tomcat 默认的 200 个线程。响应时间一变慢，同样的吞吐就要更多并发，线程很快就不够用。</p>
+    </div>
+    <div class="mini" data-role="bn">
+      <b>为什么不看平均值</b>
+      <div class="strip" role="img" aria-label="100 个请求：98 个 50 毫秒，1 个 500 毫秒，1 个 3 秒">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="s1"></i><i class="s2"></i>
+      </div>
+      <div class="stats3"><span data-role="done">98 个 <b>50 ms</b></span><span data-role="warn">1 个 <b>500 ms</b></span><span data-role="bad">1 个 <b>3000 ms</b></span></div>
+      <p>平均 84 ms，看着很好；P99 是 500 ms，最慢的用户等了 3 秒。用户量一大，这 1% 就是成千上万个人。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= KINDS ================= -->
+<section id="kinds">
+  <div>
+    <h2>六种压测，加压的方式不一样</h2>
+    <p class="lead">小图是示意：横轴是时间，纵轴是压力，虚线是业务目标。</p>
+  </div>
+  <div class="kinds">
+    <div class="kd" data-role="lg">
+      <svg viewBox="0 0 120 50" aria-hidden="true"><line class="sh-t" x1="2" y1="22" x2="118" y2="22"/><polygon class="sh-a" points="4,48 4,42 116,42 116,48"/><polyline class="sh-l" points="4,42 116,42"/></svg>
+      <b>基准测试<small>Benchmark</small></b><p>单个接口、很小的压力，量出“正常时有多快”，作为以后对比的基线。</p><span class="q">回答：改代码后变快还是变慢了？</span>
+    </div>
+    <div class="kd" data-role="sys">
+      <svg viewBox="0 0 120 50" aria-hidden="true"><line class="sh-t" x1="2" y1="22" x2="118" y2="22"/><polygon class="sh-a" points="4,48 4,46 24,46 24,38 44,38 44,30 64,30 64,22 116,22 116,48"/><polyline class="sh-l" points="4,46 24,46 24,38 44,38 44,30 64,30 64,22 116,22"/></svg>
+      <b>负载测试<small>Load</small></b><p>一级一级加到目标压力，每级停几分钟，看各项指标是否达标。</p><span class="q">回答：大促那天的量扛得住吗？</span>
+    </div>
+    <div class="kd" data-role="bn">
+      <svg viewBox="0 0 120 50" aria-hidden="true"><line class="sh-t" x1="2" y1="22" x2="118" y2="22"/><polygon class="sh-a" points="4,48 4,46 20,46 20,38 36,38 36,30 52,30 52,22 68,22 68,14 84,14 84,6 98,6 98,48"/><polyline class="sh-l" points="4,46 20,46 20,38 36,38 36,30 52,30 52,22 68,22 68,14 84,14 84,6 98,6"/><path class="sh-x" d="M104 2l10 10M114 2l-10 10"/></svg>
+      <b>压力测试<small>Stress</small></b><p>超过目标继续加，直到系统崩溃，找到极限，也看它怎么崩、能不能自己恢复。</p><span class="q">回答：极限在哪？崩了以后会怎样？</span>
+    </div>
+    <div class="kd" data-role="mon">
+      <svg viewBox="0 0 120 50" aria-hidden="true"><line class="sh-t" x1="2" y1="22" x2="118" y2="22"/><polygon class="sh-a" points="4,48 14,28 116,28 116,48"/><polyline class="sh-l" points="4,48 14,28 116,28"/><text class="sh-tl" x="60" y="42" text-anchor="middle">8～24 小时</text></svg>
+      <b>稳定性测试<small>Soak</small></b><p>用接近峰值的压力连续跑几个小时，看内存、连接、磁盘会不会慢慢漏光。</p><span class="q">回答：能一直这样跑下去吗？</span>
+    </div>
+    <div class="kd" data-role="bad">
+      <svg viewBox="0 0 120 50" aria-hidden="true"><line class="sh-t" x1="2" y1="22" x2="118" y2="22"/><polygon class="sh-a" points="4,48 4,42 50,42 54,6 66,6 70,42 116,42 116,48"/><polyline class="sh-l" points="4,42 50,42 54,6 66,6 70,42 116,42"/></svg>
+      <b>尖峰测试<small>Spike</small></b><p>流量瞬间翻好几倍再落回来，看限流、扩容、排队能不能接住，过后能不能恢复。</p><span class="q">回答：秒杀开始那一秒会怎样？</span>
+    </div>
+    <div class="kd" data-role="warn">
+      <svg viewBox="0 0 120 50" aria-hidden="true"><polyline class="sh-base" points="4,44 20,40 36,32 52,36 68,28 84,34 100,38 116,42"/><polygon class="sh-a" points="4,44 20,40 36,32 52,36 68,28 84,34 100,38 116,42 116,26 100,22 84,16 68,8 52,18 36,14 20,24 4,30"/><polyline class="sh-l" points="4,30 20,24 36,14 52,18 68,8 84,16 100,22 116,26"/></svg>
+      <b>全链路压测<small>Production</small></b><p>直接在生产环境，在真实流量（灰线）上叠加打了标记的压测流量，写进影子表，不影响真实数据。</p><span class="q">回答：整条链路，真实环境下行不行？</span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= WHY ================= -->
+<section id="why">
+  <div>
+    <h2>为什么吞吐会到顶，甚至往下掉</h2>
+    <p class="lead">通用扩展定律（USL）把原因归成两种：大家抢同一样东西（争用），以及大家要互相同步（协调）。调一调，看曲线怎么变。</p>
+  </div>
+  <div class="lab" id="lab">
+    <div class="formula">吞吐(N) = λ·N / ( 1 + σ·(N−1) + κ·N·(N−1) )　　N = 并发数，λ = 一个用户单独用时的吞吐（这里是 100 QPS）</div>
+    <div class="lab-ctl">
+      <div class="ctl">
+        <b>σ 争用：只能一个一个来的部分</b>
+        <div class="seg-btns" role="group" aria-label="争用程度">
+          <button data-sg="0" aria-pressed="false">没有</button>
+          <button data-sg="0.01" aria-pressed="false">少量</button>
+          <button data-sg="0.03" aria-pressed="false">中等</button>
+          <button data-sg="0.08" aria-pressed="true">严重</button>
+        </div>
+        <span>比如一把全局锁、大家改同一行库存、单线程的 Redis。加再多人，这部分也只能排队，吞吐有上限。</span>
+      </div>
+      <div class="ctl">
+        <b>κ 协调：人越多，互相同步越多</b>
+        <div class="seg-btns" role="group" aria-label="协调开销">
+          <button data-kp="0" aria-pressed="true">没有</button>
+          <button data-kp="0.0001" aria-pressed="false">少量</button>
+          <button data-kp="0.0005" aria-pressed="false">中等</button>
+          <button data-kp="0.002" aria-pressed="false">严重</button>
+        </div>
+        <span>比如缓存要保持一致、分布式锁来回通信、节点间同步数据。开销按人数的平方涨，会让吞吐过了峰值往下掉。</span>
+      </div>
+    </div>
+    <div class="chartbox"><svg id="labSvg" viewBox="0 0 640 352" role="img" aria-label="按当前参数算出的吞吐量和响应时间曲线"></svg></div>
+    <div class="lab-out" id="labOut"></div>
+    <p class="verdict" id="labVerdict" data-role="warn"></p>
+  </div>
+
+  <div class="why3">
+    <div class="mini">
+      <b>利用率越高，排队越长</b>
+      <div class="hbars" data-role="bn">
+        <div class="hb" title="利用率 50%：排队时间约等于处理时间"><span>利用率 50%</span><div class="trk"><div class="fill" style="width:5.26%"></div></div><b>1 倍</b></div>
+        <div class="hb" title="利用率 70%：排队时间约是处理时间的 2.3 倍"><span>利用率 70%</span><div class="trk"><div class="fill" style="width:12.28%"></div></div><b>2.3 倍</b></div>
+        <div class="hb" title="利用率 80%：排队时间是处理时间的 4 倍"><span>利用率 80%</span><div class="trk"><div class="fill" style="width:21.05%"></div></div><b>4 倍</b></div>
+        <div class="hb" title="利用率 90%：排队时间是处理时间的 9 倍"><span>利用率 90%</span><div class="trk"><div class="fill" style="width:47.37%"></div></div><b>9 倍</b></div>
+        <div class="hb" title="利用率 95%：排队时间是处理时间的 19 倍"><span>利用率 95%</span><div class="trk"><div class="fill" style="width:100%"></div></div><b>19 倍</b></div>
+      </div>
+      <p>排队时间是处理时间的几倍（单队列模型：利用率 ÷ (1 − 利用率)）。80% 以后曲线就竖起来了，所以容量规划一般只用到 70%～80%。</p>
+    </div>
+    <div class="mini">
+      <b>调用的服务越多，越容易碰上慢的</b>
+      <div class="hbars" data-role="bad">
+        <div class="hb" title="调 1 个服务：1% 的请求会碰上 P99 慢请求"><span>调 1 个</span><div class="trk"><div class="fill" style="width:1%"></div></div><b>1%</b></div>
+        <div class="hb" title="调 10 个服务：9.6% 的请求至少碰上一个"><span>调 10 个</span><div class="trk"><div class="fill" style="width:9.6%"></div></div><b>9.6%</b></div>
+        <div class="hb" title="调 50 个服务：39.5% 的请求至少碰上一个"><span>调 50 个</span><div class="trk"><div class="fill" style="width:39.5%"></div></div><b>39.5%</b></div>
+        <div class="hb" title="调 100 个服务：63.4% 的请求至少碰上一个"><span>调 100 个</span><div class="trk"><div class="fill" style="width:63.4%"></div></div><b>63.4%</b></div>
+      </div>
+      <p>一个请求要并行调 N 个服务、全部返回才算完。每个服务都有 1% 的慢请求，那么至少碰上一个慢的概率是 1 − 0.99<sup>N</sup>。下游各自的 P99 会变成你的 P50。</p>
+    </div>
+  </div>
+  <div class="mini">
+    <b>压测机怎么发请求，会改变你看到的结果</b>
+    <div class="co">
+      <div class="cob" data-role="lg"><b>闭环：等回来再发下一个</b><div class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><p>10 个虚拟用户。系统卡住 1 秒，只有 10 个请求挨了这 1 秒，压测机也跟着停下不发了，报告里的 P99 看着还行。JMeter 线程组、wrk 默认这样。</p></div>
+      <div class="cob" data-role="bn"><b>开环：按固定速度发，不管回没回来</b><div class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><p>每秒 100 个。同样卡 1 秒，这 1 秒里来的 100 个请求全部挨等，P99 立刻暴露。真实用户就是这样来的。k6 的 constant-arrival-rate、Gatling 开环注入、wrk2 是这种。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= PIPE ================= -->
+<section id="pipe">
+  <div>
+    <h2>瓶颈实验台：最窄的那段水管</h2>
+    <p class="lead">一个“查商品详情”接口，请求要依次穿过下面几道关。每道关能扛的 QPS 不一样，系统的上限就是最小的那个。目标是扛住 10,000 QPS。打开右边的优化，看瓶颈怎么一个接一个地换地方。</p>
+  </div>
+  <div class="pipe" id="pipeBox">
+    <div class="pipe-ctl">
+      <div class="pc"><b>应用实例（加机器）</b><div class="seg-btns" role="group" aria-label="应用实例数"><button data-inst="2" aria-pressed="true">2 台</button><button data-inst="4" aria-pressed="false">4 台</button><button data-inst="8" aria-pressed="false">8 台</button></div><span class="pcon"><em>优</em> 不改代码 · <i>代</i> 花钱，数据库扛不住时没用</span></div>
+      <div class="pc"><b>给查询加索引</b><button class="tog" id="tgIndex" aria-pressed="false">加索引</button><span class="pcon"><em>优</em> 几乎零成本 · <i>代</i> 写入稍慢，占磁盘</span></div>
+      <div class="pc"><b>加 Redis 缓存（命中 90%）</b><button class="tog" id="tgCache" aria-pressed="false">加缓存</button><span class="pcon"><em>优</em> 挡住九成查询 · <i>代</i> 数据可能不一致，要防击穿和雪崩</span></div>
+      <div class="pc"><b>只读从库（读写分离）</b><div class="seg-btns" role="group" aria-label="从库数量"><button data-rep="0" aria-pressed="true">0 个</button><button data-rep="1" aria-pressed="false">1 个</button><button data-rep="2" aria-pressed="false">2 个</button></div><span class="pcon"><em>优</em> 读能力成倍涨 · <i>代</i> 主从延迟，刚写完可能读不到</span></div>
+      <div class="pc"><b>连接池大小</b><div class="seg-btns" role="group" aria-label="连接池大小"><button data-pool="10" aria-pressed="true">10</button><button data-pool="20" aria-pressed="false">20</button><button data-pool="50" aria-pressed="false">50</button></div><span class="pcon"><em>优</em> 改个配置 · <i>代</i> 数据库压力跟着变大</span></div>
+      <div class="pc"><b>响应开 gzip 压缩</b><button class="tog" id="tgGzip" aria-pressed="false">开压缩</button><span class="pcon"><em>优</em> 响应小 4 倍 · <i>代</i> 每个请求多花 CPU</span></div>
+    </div>
+    <div class="headline" id="pipeHead"></div>
+    <div class="stages" id="stages"></div>
+    <div class="axis" aria-hidden="true"><span></span><div><span style="left:0">100</span><span style="left:33.33%">1k</span><span style="left:66.67%">10k</span><span style="left:100%">100k QPS</span></div></div>
+    <p class="tip">横轴是对数刻度，每一格差 10 倍；虚线是目标 10,000。数字是示意，每台 4 核、每次查库占连接 5 ms（全表扫描 50 ms）、每个响应 20 KB、带宽 1 Gbps。</p>
+    <p class="hint" id="pipeHint"></p>
+    <div class="mini"><b>改动记录</b><ol class="hist" id="pipeHist"></ol></div>
+  </div>
+</section>
+
+<!-- ================= BOTTLENECKS ================= -->
+<section id="bn">
+  <div>
+    <h2>常见瓶颈速查</h2>
+    <p class="lead">压测时最先变红的，一般是下面八个之一。每个都写了：你会看到什么、为什么、用什么查、怎么解。</p>
+  </div>
+  <div class="bns">
+    <div class="bn" data-role="bn">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cpu"/></svg><b>应用 CPU 打满</b></div>
+      <dl>
+        <dt>看到</dt><dd>CPU 90% 以上，QPS 上不去，响应时间跟着涨</dd>
+        <dt>原理</dt><dd>每个请求要花固定的 CPU 时间，上限 ≈ 核数 × 1000 ÷ 每个请求的 CPU 毫秒数。线程太多还会频繁切换，白白耗 CPU</dd>
+        <dt>定位</dt><dd><code>top -H</code> 找最忙的线程，<code>async-profiler</code> 画火焰图，看是 JSON 序列化、正则、加解密还是打日志</dd>
+        <dt>解法</dt><dd>优化热点代码（最省钱）；结果能复用的加缓存；加机器（最快，但花钱）</dd>
+      </dl>
+    </div>
+    <div class="bn" data-role="mon">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-trash"/></svg><b>GC 频繁、停顿长</b></div>
+      <dl>
+        <dt>看到</dt><dd>P99 一阵一阵地抖，CPU 有一块花在 GC 上，严重时 OOM</dd>
+        <dt>原理</dt><dd>请求越多，临时对象产生越快，Young GC 越频繁；对象活得久就进老年代，Full GC 时所有线程停下来等</dd>
+        <dt>定位</dt><dd>GC 日志、<code>jstat -gcutil</code>、JFR 录一段；内存泄漏用 <code>jmap</code> 导出堆再分析</dd>
+        <dt>解法</dt><dd>少造临时对象、别一次查太多数据；调堆大小；换 G1 或 ZGC（停顿短，但多占 CPU 和内存）</dd>
+      </dl>
+    </div>
+    <div class="bn" data-role="lg">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-queue"/></svg><b>线程池、连接池排队</b></div>
+      <dl>
+        <dt>看到</dt><dd>CPU 不高，响应时间却很高；连接池等待数不为 0；Tomcat 忙线程到 200</dd>
+        <dt>原理</dt><dd>利特尔法则：每个请求占得越久，需要的线程和连接越多；池子满了就排队（<a href="../database/db-pool-tx-perf.html">数据库第 01 篇</a>）</dd>
+        <dt>定位</dt><dd>Actuator 指标 <code>hikaricp.connections.pending</code>、<code>tomcat.threads.busy</code>，<code>jstack</code> 看线程卡在哪</dd>
+        <dt>解法</dt><dd>缩短占用时间（最好，比如把外部调用挪出事务）；适当调大池子（只是把压力挪到下游）</dd>
+      </dl>
+    </div>
+    <div class="bn" data-role="sys">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>数据库</b></div>
+      <dl>
+        <dt>看到</dt><dd>慢查询变多，数据库 CPU 或磁盘 IO 很高，等锁超时</dd>
+        <dt>原理</dt><dd>没索引就全表扫描；大家改同一行要排队等行锁（<a href="../database/mysql-mvcc-lock.html">数据库第 02 篇</a>）；数据库连接数有上限</dd>
+        <dt>定位</dt><dd>慢查询日志、<code>EXPLAIN</code>、<code>performance_schema.data_locks</code></dd>
+        <dt>解法</dt><dd>加索引、改 SQL；加缓存挡读；读写分离；最后才是分库分表</dd>
+      </dl>
+    </div>
+    <div class="bn" data-role="warn">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bolt"/></svg><b>缓存</b></div>
+      <dl>
+        <dt>看到</dt><dd>Redis 某一个节点 CPU 100% 或带宽打满；或者缓存一过期，数据库瞬间被打爆</dd>
+        <dt>原理</dt><dd>Redis 用一个线程执行命令，热门 key 全落在同一个分片；大 key 一次传很多数据；同一批 key 同时过期，请求全涌向数据库</dd>
+        <dt>定位</dt><dd><code>redis-cli --hotkeys</code>、<code>--bigkeys</code>、<code>SLOWLOG GET</code>、命中率监控</dd>
+        <dt>解法</dt><dd>热 key 加一层本地缓存（<a href="../mybatis/mybatis-cache.html">Caffeine</a>）；拆大 key；过期时间加随机数；缓存重建加互斥锁</dd>
+      </dl>
+    </div>
+    <div class="bn" data-role="other">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cloud"/></svg><b>下游依赖</b></div>
+      <dl>
+        <dt>看到</dt><dd>自己 CPU 很闲，线程却全卡在 HTTP 调用上</dd>
+        <dt>原理</dt><dd>等下游的时间也占着自己的线程；下游一慢，自己的线程很快被占满，接着整条链路一起慢</dd>
+        <dt>定位</dt><dd>链路追踪（SkyWalking 等）看每一段耗时；<code>jstack</code> 里大量线程停在 <code>socketRead</code></dd>
+        <dt>解法</dt><dd>设超时；熔断降级；不需要马上要结果的改成异步（<a href="../spring/spring-async-pool.html">@Async</a>）；给慢下游单独一个线程池，隔离开</dd>
+      </dl>
+    </div>
+    <div class="bn" data-role="lg">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-net"/></svg><b>网络</b></div>
+      <dl>
+        <dt>看到</dt><dd>带宽曲线顶平；或者大量 TIME_WAIT，新连接建不上</dd>
+        <dt>原理</dt><dd>1 Gbps ≈ 125 MB/s，20 KB 的响应最多约 6000 QPS。短连接每次都要握手，主动关闭的一方留 TIME_WAIT 60 秒，本机可用端口默认只有约 2.8 万个</dd>
+        <dt>定位</dt><dd><code>sar -n DEV 1</code> 看带宽，<code>ss -s</code> 看连接状态</dd>
+        <dt>解法</dt><dd>响应压缩、少返回无用字段；HTTP keep-alive 和连接池复用连接；静态资源放 CDN</dd>
+      </dl>
+    </div>
+    <div class="bn" data-role="bad">
+      <div class="bn-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>锁和热点数据</b></div>
+      <dl>
+        <dt>看到</dt><dd>加机器 QPS 不涨，甚至下降；某一行数据（比如秒杀库存）的更新特别慢</dd>
+        <dt>原理</dt><dd>大家抢同一把锁或同一行，只能一个一个来，就是上面 USL 里的 σ</dd>
+        <dt>定位</dt><dd><code>jstack</code> 里大量 BLOCKED 线程；数据库 <code>sys.innodb_lock_waits</code></dd>
+        <dt>解法</dt><dd>缩小加锁范围；库存拆成多段分别扣；Redis 预扣 + 消息队列异步落库</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FIX ================= -->
+<section id="fix">
+  <div>
+    <h2>常见解决方案，各有代价</h2>
+    <p class="lead">没有白给的优化。大致按“先便宜后昂贵”排列：先查代码和 SQL，再加缓存，最后才动架构。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">方案</th><th scope="col">解决哪类瓶颈</th><th scope="col">好处</th><th scope="col">代价</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">优化代码</th><td>CPU、GC</td><td><span class="pro">+</span> 最省钱，一直有效</td><td><span class="con">−</span> 要先定位清楚，花人力</td></tr>
+        <tr><th scope="row">加索引、改 SQL</th><td>数据库</td><td><span class="pro">+</span> 成本最低，效果常常最大</td><td><span class="con">−</span> 写入变慢一点；要会看执行计划</td></tr>
+        <tr><th scope="row">调大线程池、连接池</th><td>排队</td><td><span class="pro">+</span> 改个配置就行</td><td><span class="con">−</span> 只是把压力挪到下游；池子太大互相抢 CPU 和锁</td></tr>
+        <tr><th scope="row">加缓存（本地、Redis）</th><td>读多写少</td><td><span class="pro">+</span> 快几十倍，挡住大部分数据库流量</td><td><span class="con">−</span> 数据一致性；穿透、击穿、雪崩；占内存</td></tr>
+        <tr><th scope="row">加机器（水平扩容）</th><td>应用 CPU、线程</td><td><span class="pro">+</span> 不改代码，见效最快</td><td><span class="con">−</span> 花钱；只对无状态服务有效；下游扛不住时反而压得更狠</td></tr>
+        <tr><th scope="row">读写分离</th><td>读多</td><td><span class="pro">+</span> 读能力随从库数量增加</td><td><span class="con">−</span> 主从延迟，刚写完可能读不到</td></tr>
+        <tr><th scope="row">异步化、消息队列削峰</th><td>突发流量、慢操作</td><td><span class="pro">+</span> 尖峰被摊平，主流程变快</td><td><span class="con">−</span> 结果不是马上可见；消息丢失、重复、乱序都要处理</td></tr>
+        <tr><th scope="row">限流</th><td>超过承载的流量</td><td><span class="pro">+</span> 系统不会被打垮</td><td><span class="con">−</span> 一部分用户直接被拒绝</td></tr>
+        <tr><th scope="row">熔断降级</th><td>下游变慢或挂掉</td><td><span class="pro">+</span> 一个下游出事不会拖垮全部</td><td><span class="con">−</span> 功能打折，只能返回兜底数据</td></tr>
+        <tr><th scope="row">分库分表</th><td>写多、数据量大</td><td><span class="pro">+</span> 写能力和存储都能扩</td><td><span class="con">−</span> 复杂度最高：跨库查询、分布式事务、扩容迁移</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= HOW ================= -->
+<section id="how">
+  <div>
+    <h2>一次压测怎么做</h2>
+    <p class="lead">压测不是“跑一下看个数”。前面的准备决定结论能不能信，后面的监控决定能不能找到瓶颈。</p>
+  </div>
+  <div class="steps">
+    <div class="sp" data-role="lg"><small>1</small><b>定目标</b><span>峰值 QPS（比如日常峰值 × 3）、P99 &lt; 200 ms、错误率 &lt; 0.1%</span></div>
+    <div class="sp" data-role="lg"><small>2</small><b>备环境和数据</b><span>机器规格、配置、数据量尽量像生产</span></div>
+    <div class="sp" data-role="lg"><small>3</small><b>写脚本</b><span>按真实比例混合接口，参数随机化，下游用挡板</span></div>
+    <div class="sp" data-role="sys"><small>4</small><b>预热</b><span>低压跑几分钟，让 JIT、缓存、连接池就位</span></div>
+    <div class="sp" data-role="sys"><small>5</small><b>阶梯加压</b><span>每级停 3～5 分钟，等指标稳定再加</span></div>
+    <div class="sp" data-role="mon"><small>6</small><b>盯监控找瓶颈</b><span>应用、JVM、中间件、系统、压测机一起看</span></div>
+    <div class="sp" data-role="bn"><small>7</small><b>优化后再压</b><span>改一处压一次，写下容量结论</span></div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">工具</th><th scope="col">脚本</th><th scope="col">发请求方式</th><th scope="col">好处</th><th scope="col">不足</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">JMeter</th><td>图形界面配置（.jmx）</td><td>默认闭环（线程组）</td><td>生态最全，HTTP、JDBC、MQ 都能压，上手快</td><td>一个线程一个用户，单机并发有限；正式压测要用命令行模式</td></tr>
+        <tr><th scope="row">Gatling</th><td>Java / Kotlin / Scala 代码</td><td>开环、闭环都支持</td><td>异步发请求，单机能压很高；报告好看</td><td>要写代码</td></tr>
+        <tr><th scope="row">k6</th><td>JavaScript</td><td>开环、闭环都支持</td><td>脚本轻，适合放进 CI 每次跑</td><td>不是 Node.js，npm 包不能直接用；以 HTTP 为主</td></tr>
+        <tr><th scope="row">wrk / wrk2</th><td>命令行 + Lua</td><td>wrk 闭环，wrk2 固定速率</td><td>极轻，单机就能打出很高 QPS；wrk2 修正了延迟统计</td><td>只适合单个 HTTP 接口，做不了复杂业务流程</td></tr>
+        <tr><th scope="row">Locust</th><td>Python</td><td>以闭环为主</td><td>Python 写脚本灵活，分布式简单</td><td>单进程性能一般，要多开 worker</td></tr>
+        <tr><th scope="row">云压测服务（如阿里云 PTS）</th><td>控制台配置</td><td>都支持</td><td>不用自己准备压测机，能从多个地域打出很大流量</td><td>花钱；压内网服务要先打通网络</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="mons">
+    <div class="mini" data-role="other"><b>系统</b><div class="chips"><code>top / htop</code><code>vmstat 1</code><code>iostat -x 1</code><code>sar -n DEV 1</code><code>ss -s</code></div></div>
+    <div class="mini" data-role="mon"><b>JVM</b><div class="chips"><code>jstat -gcutil</code><code>jstack</code><code>JFR</code><code>Arthas</code><code>async-profiler</code></div></div>
+    <div class="mini" data-role="sys"><b>应用</b><div class="chips"><code>Actuator + Micrometer</code><code>Prometheus</code><code>Grafana</code><code>SkyWalking</code></div></div>
+    <div class="mini" data-role="warn"><b>中间件</b><div class="chips"><code>MySQL 慢查询日志</code><code>Redis INFO / SLOWLOG</code><code>MQ 消费堆积</code></div></div>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17</h2>
+    <p class="lead">压测的方法两边一样。不同的是默认 GC、自带的诊断工具，以及 Spring Boot 的观测方式。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>JDK 8 · Boot 2</h3><span class="jdk">JDK 8</span></div>
+      <ul>
+        <li>默认 GC 是 Parallel，吞吐优先、停顿较长，压测时 P99 容易抖；很多项目手动换成 G1</li>
+        <li>JFR 在 OpenJDK 8u262 之后才有，之前多靠 jstack、jstat、Arthas</li>
+        <li>8u191 之前识别不了容器的 CPU 和内存限制，放进 Docker 里堆和线程数可能算错</li>
+        <li>Actuator + Micrometer 出指标，链路追踪多用 Spring Cloud Sleuth 或 SkyWalking 探针</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>JDK 17 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>默认 G1；ZGC 可用于生产，停顿通常不到 1 毫秒，P99 更稳，代价是多占一些 CPU 和内存</li>
+        <li>JFR 内置，<code>-XX:StartFlightRecording</code> 打开，压测时录一段，开销很小</li>
+        <li>Boot 3 用 Micrometer Observation 和 Micrometer Tracing，替代了 Sleuth</li>
+        <li>JDK 21 + Boot 3.2 开虚拟线程后，Tomcat 线程不再是瓶颈，但连接池、数据库、下游照样是</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>利特尔法则</span><span>上限由最窄的一环决定</span><span>看 P99 和错误率</span><span>利用率 80% 以后排队陡增</span><span>压测机也要监控</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">压测最怕的不是压不上去，而是压出一个好看但不真实的数。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="lg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gen"/></svg><b>压测机自己先累趴了</b><p>压测机的 CPU、带宽或本地端口先到顶，测出来的是压测机的上限。同时监控压测机，不够就多台分布式压。</p></div>
+    <div class="pit" data-role="bn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>只看平均响应时间</b><p>平均 50 ms 可能藏着 1% 的 3 秒。报告里一定要有 P95、P99，最好还有 P999 和最大值。</p></div>
+    <div class="pit" data-role="bn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>闭环压测把卡顿藏起来了</b><p>系统一卡，压测机也停下来等，慢请求被少算了。模拟互联网流量用固定到达速率：k6 constant-arrival-rate、Gatling 开环、wrk2。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bolt"/></svg><b>结果好得不真实</b><p>所有请求都用同一个用户、同一个商品 ID，全命中缓存；数据库里只有几千行。参数要随机，数据量要接近生产。</p></div>
+    <div class="pit" data-role="mon"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-trash"/></svg><b>刚开始几分钟数据特别差</b><p>没预热：JIT 还没编译热点代码，缓存是空的，连接池还在建连接。先低压跑几分钟，这段不计入结果。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-neck"/></svg><b>QPS 很高，其实一半是报错</b><p>被限流、500 错误返回得特别快，把 QPS 撑高了。吞吐量一定要和错误率一起看，只算成功的请求。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cloud"/></svg><b>压测真的发了短信、扣了钱</b><p>短信、支付这类下游没挡住。测试环境用挡板（模拟服务）；生产压测要给流量打标记，写影子表，在出口拦住。</p></div>
+    <div class="pit" data-role="sys"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>单接口压得很好，一上线就挂</b><p>多个接口抢同一个连接池、同一个数据库，只有混在一起压才暴露。按线上真实比例做混合场景压测。</p></div>
+    <div class="pit" data-role="mon"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-trash"/></svg><b>压 10 分钟没事，跑一晚上就 OOM</b><p>内存泄漏、连接泄漏、日志写满磁盘，要跑久了才出现。上线前做几个小时以上的稳定性压测。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-server"/></svg><b>测试环境的结论直接套到生产</b><p>机器规格、配置、数据量、网络都不一样。尽量同规格；按比例折算时留足余量，比如只用到压测上限的 70%。</p></div>
+  </div>
+</section>
+
+<footer>
+  数字均为示意。相关：<a href="../database/db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a> · <a href="../database/mysql-mvcc-lock.html">MySQL MVCC 与锁</a> · <a href="../mybatis/mybatis-cache.html">MyBatis 缓存与 Caffeine</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var LAM=100, MAXN=200, TARGET=10000;
+function uslX(n,s,k){ return LAM*n/(1+s*(n-1)+k*n*(n-1)); }
+function curve(s,k){ var pts=[]; for(var n=1;n<=MAXN;n++){ var x=uslX(n,s,k); pts.push({n:n,x:x,rt:1000*n/x}); } return pts; }
+function peakOf(pts){ var b=pts[0]; pts.forEach(function(p){ if(p.x>b.x) b=p; }); return b; }
+function zonesOf(pts){
+  var pk=peakOf(pts), z1=pts.length, z2=pts.length;
+  for(var i=0;i<pts.length;i++){ if(pts[i].x>=0.8*pk.x){ z1=pts[i].n; break; } }
+  for(var j=pk.n-1;j<pts.length;j++){ if(pts[j].x<=0.9*pk.x){ z2=pts[j].n; break; } }
+  return {z1:z1, z2:z2, peak:pk};
+}
+function pipeModel(c){
+  var cpuMs=2+(c.gzip?0.5:0), dbMs=c.index?5:50, hit=c.cache?0.9:0, miss=1-hit, kb=c.gzip?5:20;
+  var dbBase=(c.index?3000:300)*(1+c.rep), thrMs=cpuMs+hit*1+miss*dbMs;
+  var st=[
+    {k:'net', name:'网络带宽', cap:125000/kb, why:'1 Gbps ≈ 125 MB/s，每个响应 '+kb+' KB'},
+    {k:'cpu', name:'应用 CPU', cap:c.inst*4*1000/cpuMs, why:c.inst+' 台 × 4 核，每个请求花 '+cpuMs+' ms CPU'},
+    {k:'thr', name:'Tomcat 线程', cap:c.inst*200*1000/thrMs, why:c.inst+' 台 × 200 个线程，每个请求平均占线程 '+(Math.round(thrMs*10)/10)+' ms'},
+    {k:'redis', name:'Redis', cap:c.cache?80000:null, why:c.cache?'单个实例约 8 万 QPS，每个请求都先查它':'没用缓存，请求不经过这里'},
+    {k:'pool', name:'连接池', cap:c.inst*c.pool*1000/dbMs/miss, why:c.inst+' 台 × '+c.pool+' 个连接，每次查库占 '+dbMs+' ms'+(c.cache?'；只有 10% 的请求要查库':'')},
+    {k:'db', name:'数据库', cap:dbBase/miss, why:'这条查询'+(c.index?'走索引':'全表扫描')+(c.rep?'，主库 + '+c.rep+' 个从库一起分担读':'')+'，每秒最多 '+dbBase+' 次'+(c.cache?'；只有 10% 的请求到这里':'')}
+  ];
+  var b=null; st.forEach(function(s){ if(s.cap!==null && (b===null || s.cap<b.cap)) b=s; });
+  return {stages:st, bott:b, max:b.cap};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function fmt(v){ return Math.round(v).toLocaleString('en-US'); }
+  function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), m=v/p; return (m<=1?1:m<=2?2:m<=2.5?2.5:m<=5?5:10)*p; }
+  var NS='http://www.w3.org/2000/svg';
+
+  /* ---------- curve chart (two stacked panels, one y-axis each) ---------- */
+  function drawCurve(svg, s, k, opt){
+    var W=640, L=58, R=16, P1={t:22,h:140}, P2={t:212,h:96}, XB=P2.t+P2.h;
+    var pts=curve(s,k), pk=peakOf(pts);
+    var qMax=niceMax(Math.max.apply(null,pts.map(function(p){return p.x;}))*1.05);
+    var rMax=niceMax(Math.max.apply(null,pts.map(function(p){return p.rt;}))*1.05);
+    function X(n){ return L+(n-1)/(MAXN-1)*(W-L-R); }
+    function YQ(v){ return P1.t+P1.h-v/qMax*P1.h; }
+    function YR(v){ return P2.t+P2.h-v/rMax*P2.h; }
+    var h='';
+    if(opt.zones){
+      var z=zonesOf(pts);
+      [[1,z.z1,'cv-z1','轻松'],[z.z1,z.z2,'cv-z2','饱和'],[z.z2,MAXN,'cv-z3','下滑']].forEach(function(b){
+        if(b[1]<=b[0]) return;
+        h+='<rect class="'+b[2]+'" x="'+X(b[0]).toFixed(1)+'" y="'+P1.t+'" width="'+(X(b[1])-X(b[0])).toFixed(1)+'" height="'+(XB-P1.t)+'"/>';
+        h+='<text class="cv-zl" x="'+((X(b[0])+X(b[1]))/2).toFixed(1)+'" y="'+(P1.t-6)+'" text-anchor="middle">'+b[3]+'</text>';
+      });
+    }
+    // grid + axes
+    [[P1,qMax,YQ],[P2,rMax,YR]].forEach(function(a){
+      [0,0.5,1].forEach(function(f){ var v=a[1]*f, y=a[2](v);
+        h+='<line class="'+(f===0?'cv-base':'cv-gl')+'" x1="'+L+'" y1="'+y.toFixed(1)+'" x2="'+(W-R)+'" y2="'+y.toFixed(1)+'"/>';
+        h+='<text class="cv-ax" x="'+(L-6)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="end">'+fmt(v)+'</text>';
+      });
+    });
+    h+='<text class="cv-t" x="'+(L+4)+'" y="'+(P1.t+13)+'">吞吐量（QPS）</text>';
+    h+='<text class="cv-t" x="'+(L+4)+'" y="'+(P2.t+13)+'">响应时间（ms）</text>';
+    [1,50,100,150,200].forEach(function(n){ h+='<text class="cv-ax" x="'+X(n).toFixed(1)+'" y="'+(XB+15)+'" text-anchor="middle">'+n+'</text>'; });
+    h+='<text class="cv-ax" x="'+(W-R)+'" y="'+(XB+30)+'" text-anchor="end">并发数（同时在发请求的用户）</text>';
+    // lines
+    var q=pts.map(function(p){return X(p.n).toFixed(1)+','+YQ(p.x).toFixed(1);});
+    var r=pts.map(function(p){return X(p.n).toFixed(1)+','+YR(p.rt).toFixed(1);});
+    h+='<path class="cv-qa" d="M'+X(1)+','+YQ(0)+' L'+q.join(' L')+' L'+X(MAXN)+','+YQ(0)+' Z" opacity=".6"/>';
+    h+='<polyline class="cv-q" points="'+q.join(' ')+'"/>';
+    h+='<polyline class="cv-r" points="'+r.join(' ')+'"/>';
+    if(opt.peak && pk.n<MAXN){
+      var px=X(pk.n), py=YQ(pk.x), anchor=px>W-180?'end':'start', dx=anchor==='end'?-8:8;
+      h+='<circle class="cv-pk" cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="5"/>';
+      h+='<text class="cv-pkl" x="'+(px+dx).toFixed(1)+'" y="'+(py-8).toFixed(1)+'" text-anchor="'+anchor+'">峰值 '+fmt(pk.x)+' QPS，并发 '+pk.n+'</text>';
+    }
+    // hover layer
+    h+='<g class="cv-hov" visibility="hidden"><line class="cv-x" y1="'+P1.t+'" y2="'+XB+'"/><circle class="cv-dq" r="4.5"/><circle class="cv-dr" r="4.5"/><g class="cv-tip"><rect class="cv-tipb" width="150" height="54" rx="6"/><text class="cv-tipt" x="10" y="17"></text><text class="cv-tipt" x="10" y="32"></text><text class="cv-tipt" x="10" y="47"></text></g></g>';
+    h+='<rect class="cv-hit" x="'+L+'" y="'+P1.t+'" width="'+(W-L-R)+'" height="'+(XB-P1.t)+'"/>';
+    svg.innerHTML=h;
+    var g=svg.querySelector('.cv-hov'), ln=g.querySelector('.cv-x'), dq=g.querySelector('.cv-dq'), dr=g.querySelector('.cv-dr'), tip=g.querySelector('.cv-tip'), tt=tip.querySelectorAll('text');
+    function show(evt){
+      var pt=svg.createSVGPoint(); pt.x=evt.clientX; pt.y=evt.clientY;
+      var m=svg.getScreenCTM(); if(!m) return; var loc=pt.matrixTransform(m.inverse());
+      var n=Math.max(1,Math.min(MAXN,Math.round((loc.x-L)/(W-L-R)*(MAXN-1)+1))), p=pts[n-1], x=X(n);
+      ln.setAttribute('x1',x); ln.setAttribute('x2',x);
+      dq.setAttribute('cx',x); dq.setAttribute('cy',YQ(p.x)); dr.setAttribute('cx',x); dr.setAttribute('cy',YR(p.rt));
+      tt[0].textContent='并发 '+n; tt[1].textContent='吞吐 '+fmt(p.x)+' QPS'; tt[2].textContent='响应 '+fmt(p.rt)+' ms';
+      var tx = x+12+150>W-R ? x-12-150 : x+12;
+      tip.setAttribute('transform','translate('+tx.toFixed(1)+','+(P1.t+28)+')');
+      g.setAttribute('visibility','visible');
+    }
+    var hit=svg.querySelector('.cv-hit');
+    hit.addEventListener('pointermove',show); hit.addEventListener('pointerdown',show);
+    hit.addEventListener('pointerleave',function(){ g.setAttribute('visibility','hidden'); });
+    return pts;
+  }
+  drawCurve($('heroSvg'),0.03,0.0005,{zones:true,peak:true});
+
+  /* ---------- USL lab ---------- */
+  var sg=0.08, kp=0;
+  function renderLab(){
+    var pts=drawCurve($('labSvg'),sg,kp,{peak:true}), pk=peakOf(pts), last=pts[MAXN-1], p100=pts[99];
+    var tiles=[
+      ['sys','最高吞吐',fmt(pk.x)+' QPS'],
+      ['lg','出现在并发',pk.n>=MAXN?'200 还在涨':String(pk.n)],
+      ['sys','并发 200 时的吞吐',fmt(last.x)+' QPS'],
+      ['bn','并发 200 时的响应',fmt(last.rt)+' ms']
+    ];
+    $('labOut').innerHTML=tiles.map(function(t){ return '<div class="tile" data-role="'+t[0]+'"><small>'+t[1]+'</small><b>'+t[2]+'</b></div>'; }).join('');
+    var v=$('labVerdict');
+    if(sg===0 && kp===0){ v.setAttribute('data-role','done'); v.textContent='没有争用也没有协调：吞吐随并发一直线性增长，响应时间始终 10 ms。这是理想情况，现实里不存在。'; }
+    else if(kp===0){ v.setAttribute('data-role','warn'); v.textContent='只有争用：吞吐越来越接近上限 λ ÷ σ = '+fmt(LAM/sg)+' QPS，再加人也只是排队，响应时间一直往上涨。这时加机器没用，要减少大家抢的那部分。'; }
+    else { v.setAttribute('data-role','bad'); v.textContent='有协调开销：吞吐在并发 '+pk.n+' 时到顶，之后再加人反而下降（并发 200 时只剩峰值的 '+Math.round(last.x/pk.x*100)+'%）。并发 100 时响应时间 '+fmt(p100.rt)+' ms。压测时看到“加压后 QPS 下降”，就是这种情况。'; }
+  }
+  document.querySelectorAll('[data-sg]').forEach(function(b){ b.addEventListener('click',function(){
+    sg=parseFloat(b.getAttribute('data-sg'));
+    document.querySelectorAll('[data-sg]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+    renderLab();
+  }); });
+  document.querySelectorAll('[data-kp]').forEach(function(b){ b.addEventListener('click',function(){
+    kp=parseFloat(b.getAttribute('data-kp'));
+    document.querySelectorAll('[data-kp]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+    renderLab();
+  }); });
+  renderLab();
+
+  /* ---------- pipeline ---------- */
+  var cfg={inst:2,index:false,cache:false,rep:0,pool:10,gzip:false}, hist=[], prev=null;
+  var ICON={net:'i-net',cpu:'i-cpu',thr:'i-queue',redis:'i-bolt',pool:'i-queue',db:'i-db'};
+  function pos(v){ return Math.max(0,Math.min(100,(Math.log10(v)-2)/3*100)); }
+  function hintOf(m){
+    switch(m.bott.k){
+      case 'db': return !cfg.index ? '数据库在全表扫描，每秒只能查 300 次。先加索引：成本最低、效果最大。'
+        : (!cfg.cache ? '数据库到顶了。这是读多写少的接口，加一层缓存能挡住大部分查询；加从库也行，但要多花机器。' : '数据库还是不够：再加从库分担读。');
+      case 'pool': return '连接池不够用：每台只有 '+cfg.pool+' 个连接。可以调大池子，但更好的办法是让每次占用更短，比如先加索引。';
+      case 'cpu': return '应用 CPU 到顶了：加机器最快；长期看要用火焰图找热点代码。';
+      case 'net': return '带宽跑满了：响应太大。开 gzip 压缩，或者少返回用不到的字段、静态内容放 CDN。';
+      case 'thr': return 'Tomcat 线程都在等：缩短每个请求占线程的时间。';
+      case 'redis': return 'Redis 单个实例到顶：换成集群分片，或者在应用里加本地缓存扛热 key。';
+    }
+    return '';
+  }
+  function label(){
+    return '实例 '+cfg.inst+' 台'+(cfg.index?' · 索引':'')+(cfg.cache?' · 缓存':'')+(cfg.rep?' · 从库 '+cfg.rep:'')+' · 连接池 '+cfg.pool+(cfg.gzip?' · gzip':'');
+  }
+  function renderPipe(change){
+    var m=pipeModel(cfg), ok=m.max>=TARGET;
+    $('pipeHead').innerHTML='<span class="big">'+fmt(m.max)+'<small>QPS 是这套配置的上限</small></span><span class="pass" data-role="'+(ok?'done':'bad')+'">'+(ok?'达到目标 10,000':'离目标 10,000 还差 '+fmt(TARGET-m.max))+'</span>';
+    $('stages').innerHTML=m.stages.map(function(s){
+      var bott=s===m.bott, off=s.cap===null;
+      var w=off?0:pos(s.cap), valTxt=off?'—':(s.cap>100000?'> 100,000':fmt(s.cap))+(bott?'　瓶颈':'');
+      var vpos = off ? 'left:0' : (w>60 ? 'right:'+(100-w)+'%;color:var(--on-accent)' : 'left:'+w+'%');
+      return '<div class="stg'+(bott?' bott':'')+(off?' off':'')+'" title="'+s.name+'：'+(off?'没用上':fmt(s.cap)+' QPS')+'"><span class="stg-n"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#'+ICON[s.k]+'"/></svg>'+s.name+'</span>'+
+        '<div class="stg-b">'+(off?'':'<div class="stg-f" style="width:'+w+'%"></div>')+'<span class="stg-v" style="'+vpos+'">'+valTxt+'</span><span class="stg-tgt" style="left:'+pos(TARGET)+'%"></span></div>'+
+        '<span class="stg-w">'+s.why+'</span></div>';
+    }).join('');
+    $('pipeHint').textContent = ok ? '达标了。瓶颈现在是“'+m.bott.name+'”，上限 '+fmt(m.max)+' QPS，比目标多 '+Math.round((m.max/TARGET-1)*100)+'% 余量。'+(m.max/TARGET<1.3?'余量不到 30%，大促时最好再留一些。':'') : hintOf(m);
+    if(change){
+      hist.unshift({what:change, from:prev, to:{name:m.bott.name,max:m.max}, cfg:label()});
+      if(hist.length>6) hist.pop();
+    }
+    $('pipeHist').innerHTML = hist.map(function(h){
+      return '<li><b>'+h.what+'</b><span>'+(h.from?'瓶颈 '+h.from.name+' '+fmt(h.from.max)+' → ':'')+h.to.name+' '+fmt(h.to.max)+' QPS</span></li>';
+    }).join('');
+    prev={name:m.bott.name,max:m.max};
+  }
+  function bindSeg(attr,key,name){
+    document.querySelectorAll('['+attr+']').forEach(function(b){ b.addEventListener('click',function(){
+      var v=parseInt(b.getAttribute(attr),10); if(cfg[key]===v) return;
+      cfg[key]=v;
+      document.querySelectorAll('['+attr+']').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+      renderPipe(name(v));
+    }); });
+  }
+  bindSeg('data-inst','inst',function(v){return '实例改成 '+v+' 台';});
+  bindSeg('data-rep','rep',function(v){return '从库改成 '+v+' 个';});
+  bindSeg('data-pool','pool',function(v){return '连接池改成 '+v;});
+  [['tgIndex','index','索引'],['tgCache','cache','缓存'],['tgGzip','gzip','gzip']].forEach(function(t){
+    $(t[0]).addEventListener('click',function(){
+      cfg[t[1]]=!cfg[t[1]]; this.setAttribute('aria-pressed',String(cfg[t[1]]));
+      renderPipe((cfg[t[1]]?'打开':'关掉')+t[2]);
+    });
+  });
+  renderPipe('起点');
+})();
+</script>
+
+</body>
+</html>
