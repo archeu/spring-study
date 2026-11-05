@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring Boot 启动流程</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other Spring pages. Four phases of run(): SpringApplication (blue), environment (teal), container / refresh (purple), web server (orange); events are amber. Anchor = the startup timeline with live state board and log. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --app:#3150C4; --app-tint:#E2E7FA;
+  --env:#0D7A69; --env-tint:#DCF0EB;
+  --ctx:#6A3FC0; --ctx-tint:#ECE5FA;
+  --web:#B85F0C; --web-tint:#FBE9D5;
+  --ev:#9A6B00; --ev-tint:#FBF0CF;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hl:#F2C94C; --console-err:#FF8A85;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --app:#90A4FF; --app-tint:#1D2650;
+    --env:#40C6B0; --env-tint:#12352F;
+    --ctx:#B9A0FF; --ctx-tint:#2A2148;
+    --web:#F4A651; --web-tint:#3A2812;
+    --ev:#F2C94C; --ev-tint:#3A3212;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hl:#F2C94C; --console-err:#FF8A85;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --app:#90A4FF; --app-tint:#1D2650;
+  --env:#40C6B0; --env-tint:#12352F;
+  --ctx:#B9A0FF; --ctx-tint:#2A2148;
+  --web:#F4A651; --web-tint:#3A2812;
+  --ev:#F2C94C; --ev-tint:#3A3212;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hl:#F2C94C; --console-err:#FF8A85;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--app)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--app);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="app"]{--rc:var(--app);--rt:var(--app-tint)}
+[data-role="env"]{--rc:var(--env);--rt:var(--env-tint)}
+[data-role="ctx"]{--rc:var(--ctx);--rt:var(--ctx-tint)}
+[data-role="web"]{--rc:var(--web);--rt:var(--web-tint)}
+[data-role="ev"]{--rc:var(--ev);--rt:var(--ev-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)} .k-line{fill:var(--line-strong)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.call{margin-top:20px;align-self:flex-start;font-family:var(--font-mono);font-size:15px;padding:10px 16px;border-radius:12px;background:var(--console-bg);color:var(--console-fg);max-width:100%;overflow-wrap:anywhere}
+.call b{color:var(--console-hl);font-weight:600}
+.phases{margin-top:14px;display:grid;grid-template-columns:minmax(0,.8fr) auto minmax(0,1.1fr) auto minmax(0,1.6fr) auto minmax(0,.9fr);gap:10px;align-items:stretch}
+.ph{border:2px solid var(--rc);background:var(--rt);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.ph-h{display:flex;align-items:center;gap:8px}
+.ph-h svg{width:32px;height:32px;color:var(--rc);flex:none}
+.ph-h b{font-family:var(--font-display);font-weight:400;font-size:21px;color:var(--rc);line-height:1.15}
+.ph ul{margin:0;padding-left:1.1em;font-size:13px;display:flex;flex-direction:column;gap:2px}
+.ph code{font-size:11.5px;overflow-wrap:anywhere}
+.parr{align-self:center;color:var(--line-strong);font-size:22px;line-height:1}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--ctx)} .kw{color:var(--web)} .st-s{color:var(--env)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--ctx-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:700px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap;font-family:var(--font-mono);font-size:12.5px}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.when{display:inline-block;font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--rc);color:var(--on-accent);white-space:nowrap}
+
+/* ---------- walk-through ---------- */
+.sim{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:16px;align-items:start}
+.track{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.grp{font-size:12px;font-weight:700;color:var(--rc);letter-spacing:.04em;padding:6px 10px 2px;border-top:1.5px dashed var(--line)}
+.grp:first-child{border-top:0;padding-top:0}
+.gs{display:grid;grid-template-columns:26px minmax(0,1fr) 20px;gap:0 10px;align-items:center;padding:5px 10px;border-radius:10px;border:1.5px solid transparent;transition:background .25s,border-color .25s,opacity .25s}
+.gs .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.gs-t{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 8px;min-width:0}
+.gs-t b{font-size:14px;font-weight:500}
+.gs-t code{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.mk{font-weight:700;text-align:center;font-size:14px}
+.gs.passed{opacity:.7}
+.gs.passed .mk::before{content:"✓";color:var(--good)}
+.gs.on{border-color:var(--rc);background:var(--rt)}
+.gs.on .n{background:var(--rc);color:var(--on-accent)}
+.gs.on .mk::before{content:"◀";color:var(--rc)}
+.gs.bad{border-color:var(--bad);background:var(--bad-tint)}
+.gs.bad .n{background:var(--bad);color:var(--on-accent)}
+.gs.bad .mk::before{content:"✕";color:var(--bad)}
+.gs.skip{opacity:.35}
+.gs.skip .gs-t b{text-decoration:line-through}
+.side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.box{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.box h3{font-family:var(--font-body);font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.board{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:5px 10px;font-size:13px;align-items:center}
+.board > span:nth-child(odd){color:var(--muted)}
+.val{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:7px;background:var(--rt);border:1.5px solid var(--rc);font-weight:500;min-width:0;overflow-wrap:anywhere;justify-self:start;transition:background .25s,border-color .25s}
+.val.none{background:transparent;border-style:dashed;border-color:var(--line-strong);color:var(--muted);font-weight:400}
+.val .num{font-family:var(--font-mono);font-weight:700;font-variant-numeric:tabular-nums}
+.evhook{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.evc{border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:3px;min-width:0;background:var(--rt);border:1.5px solid var(--rc)}
+.evc small{font-size:12px;color:var(--muted)}
+.evc code{font-size:12px;font-weight:600;overflow-wrap:anywhere}
+.evc span{font-size:12.5px;overflow-wrap:anywhere}
+.evc.none{background:transparent;border-style:dashed;border-color:var(--line-strong)}
+.console{background:var(--console-bg);color:var(--console-fg);border-radius:16px;padding:12px 14px;font-family:var(--font-mono);font-size:11.5px;line-height:1.6;min-width:0}
+.console-h{display:flex;justify-content:space-between;gap:10px;color:var(--console-dim);font-size:12px;margin-bottom:6px;font-family:var(--font-body)}
+.logs{max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:1px}
+.logs div{overflow-wrap:anywhere;color:var(--console-dim);white-space:pre-wrap}
+.logs div.new{color:var(--console-hl)}
+.logs div.err{color:var(--console-err)}
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,20px);font-weight:500;line-height:1.5;min-width:0;overflow-wrap:anywhere}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+
+/* ---------- refresh ---------- */
+.r12{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.r{border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;background:var(--card);display:grid;grid-template-columns:24px minmax(0,1fr);gap:0 8px;align-items:start;min-width:0}
+.r .n{grid-row:span 2;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:11px;font-weight:700}
+.r code{font-size:11.5px;overflow-wrap:anywhere;font-weight:600}
+.r span{font-size:12.5px;color:var(--muted)}
+.r.k{border:2px solid var(--rc);background:var(--rt)}
+.r.k .n{background:var(--rc);color:var(--on-accent)}
+.r.k span{color:var(--ink)}
+
+/* ---------- events ---------- */
+.evline{display:flex;flex-direction:column;gap:6px;position:relative;padding-left:22px}
+.evline::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:var(--line-strong)}
+.ev{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 12px;border-radius:12px;background:var(--card);border:1.5px solid var(--line);position:relative}
+.ev::before{content:"";position:absolute;left:-19px;top:50%;width:12px;height:12px;margin-top:-6px;border-radius:50%;background:var(--rc);border:2px solid var(--paper)}
+.ev code{font-size:12.5px;font-weight:600;overflow-wrap:anywhere}
+.ev span{font-size:13px;color:var(--muted)}
+.ev .can{font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;white-space:nowrap}
+.ev .can.y{background:var(--good-tint);color:var(--good)}
+.ev .can.n{background:var(--bad-tint);color:var(--bad)}
+.ev.fail{border-style:dashed}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .r12{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .phases{grid-template-columns:1fr}
+  .parr{transform:rotate(90deg)}
+  .sim,.eras{grid-template-columns:1fr}
+  .r12{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .ev{grid-template-columns:minmax(0,1fr) auto}
+  .ev span.d{grid-column:1 / -1;grid-row:2}
+}
+@media (max-width:600px){
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+  .evhook{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .r12{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  .gs,.cap,.val{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-rocket" viewBox="0 0 64 64">
+    <path class="k-gold" d="M25 42h14l-3 9-4 11-4-11z"/>
+    <path fill="currentColor" opacity=".75" d="M21 28 11 40l1 9 10-7zM43 28l10 12-1 9-10-7z"/>
+    <path fill="currentColor" d="M32 3c10 8 14 21 11 39H21C18 24 22 11 32 3z"/>
+    <circle class="k-paper" cx="32" cy="21" r="5.5"/>
+  </symbol>
+  <symbol id="i-sliders" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="8" width="52" height="48" rx="6"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M15 20h34M15 32h34M15 44h34"/>
+    <circle class="k-gold" cx="24" cy="20" r="5"/>
+    <circle class="k-gold" cx="41" cy="32" r="5"/>
+    <circle class="k-gold" cx="30" cy="44" r="5"/>
+  </symbol>
+  <symbol id="i-bldg" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="6" width="40" height="54" rx="2"/>
+    <rect class="k-paper" x="18" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="28.5" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="18" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="28.5" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="18" y="37" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="37" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="27" y="47" width="10" height="13" rx="1"/>
+  </symbol>
+  <symbol id="i-server" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="8" y="6" width="48" height="15" rx="3"/>
+    <rect fill="currentColor" x="8" y="24.5" width="48" height="15" rx="3"/>
+    <rect fill="currentColor" x="8" y="43" width="48" height="15" rx="3"/>
+    <circle class="k-gold" cx="16" cy="13.5" r="2.6"/>
+    <circle class="k-gold" cx="16" cy="32" r="2.6"/>
+    <circle class="k-gold" cx="16" cy="50.5" r="2.6"/>
+    <rect class="k-paper" opacity=".5" x="26" y="12" width="22" height="3" rx="1.5"/>
+    <rect class="k-paper" opacity=".5" x="26" y="30.5" width="22" height="3" rx="1.5"/>
+    <rect class="k-paper" opacity=".5" x="26" y="49" width="22" height="3" rx="1.5"/>
+  </symbol>
+  <symbol id="i-mega" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M8 25h10l26-14v42L18 39H8z"/>
+    <path class="k-ink" d="M18 39l4 16h8l-4-16z"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M50 24c4 4 4 12 0 16M55 18c7 7 7 21 0 28"/>
+  </symbol>
+  <symbol id="i-aid" viewBox="0 0 64 64">
+    <path class="ks-cur" stroke-width="3.5" d="M24 18v-5h16v5"/>
+    <rect fill="currentColor" x="6" y="17" width="52" height="40" rx="5"/>
+    <path class="k-paper" d="M28 25h8v8h8v8h-8v8h-8v-8h-8v-8h8z"/>
+  </symbol>
+  <symbol id="i-flag" viewBox="0 0 64 64">
+    <rect class="k-ink" x="10" y="4" width="4" height="56" rx="2"/>
+    <path fill="currentColor" d="M14 6h38l-8 12 8 12H14z"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Spring</span><span aria-hidden="true">/</span><span class="tb-here">Spring Boot 启动流程</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING BOOT · SPRINGAPPLICATION.RUN · REFRESH</p>
+  <h1>一行 run，背后走了四段路</h1>
+  <p class="lead">从 main 方法到“Started … in 2.3 seconds”，Spring Boot 先认清自己是什么应用，再读配置、建容器，然后在 refresh 里把所有 Bean 和 Tomcat 都造出来，最后跑 Runner、宣布就绪。</p>
+  <div class="call"><b>SpringApplication.run</b>(ShopApplication.class, args);</div>
+
+  <div class="phases">
+    <div class="ph" data-role="app">
+      <div class="ph-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-rocket"/></svg><b>① 造 SpringApplication</b></div>
+      <ul><li>判断是不是 Web 应用</li><li>读扩展名单（spring.factories）</li></ul>
+    </div>
+    <span class="parr" aria-hidden="true">→</span>
+    <div class="ph" data-role="env">
+      <div class="ph-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sliders"/></svg><b>② 准备环境和空容器</b></div>
+      <ul><li>读命令行、环境变量、application.yml</li><li>打 banner，建一个空容器，放进主类</li></ul>
+    </div>
+    <span class="parr" aria-hidden="true">→</span>
+    <div class="ph" data-role="ctx">
+      <div class="ph-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg><b>③ refresh：最重的一段</b></div>
+      <ul><li>扫描 + 自动配置，得到几百张 Bean 图纸</li><li>建 Tomcat（先不开门）</li><li>造出所有单例 Bean，最后打开端口</li></ul>
+    </div>
+    <span class="parr" aria-hidden="true">→</span>
+    <div class="ph" data-role="done">
+      <div class="ph-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-flag"/></svg><b>④ 收尾</b></div>
+      <ul><li>打印 Started</li><li>跑 Runner</li><li>宣布就绪</li></ul>
+    </div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="app">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-rocket"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">总指挥<code>SpringApplication</code></div>
+        <p>run() 就是它的一张<b>启动清单</b>，按顺序一步步做。</p>
+        <span class="belong">Spring Boot 独有</span>
+      </div>
+    </div>
+    <div class="who" data-role="env">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sliders"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">环境<code>Environment</code></div>
+        <p>所有配置排好<b>优先级</b>放在一起：命令行压过环境变量，环境变量压过 yml。</p>
+        <span class="belong">建容器之前就准备好</span>
+      </div>
+    </div>
+    <div class="who" data-role="ctx">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">容器<code>ApplicationContext</code></div>
+        <p>装所有 Bean 的工厂。<b>refresh()</b> 这一步把它从空壳变成能用。</p>
+        <span class="belong">Web 应用用 ServletWebServer 版本</span>
+      </div>
+    </div>
+    <div class="who" data-role="web">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-server"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">内嵌 Tomcat<code>WebServer</code></div>
+        <p>refresh 中途就建好了，但要等 <b>所有 Bean 造完</b>才绑定端口。</p>
+        <span class="belong">不用再单独部署 war 包</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="ev"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mega"/></svg><span><b>广播员</b> 每到一个节点就发一个事件</span></span>
+    <span class="ex" data-role="bad"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-aid"/></svg><span><b>医生</b> FailureAnalyzer，启动失败时写诊断报告</span></span>
+    <span class="ex" data-role="done"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-flag"/></svg><span><b>Runner</b> ApplicationRunner、CommandLineRunner，启动完跑一次</span></span>
+  </div>
+</header>
+
+<!-- ================= RUN SOURCE ================= -->
+<section id="run">
+  <div>
+    <h2>run() 的骨架</h2>
+    <p class="lead">Spring Boot 3 的源码去掉计时和细节后，就剩下面这些。注释里的编号，对应下面时间线上的步骤。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><code>SpringApplication</code><span>简化版</span></div>
+<pre><code><span class="kw">new</span> SpringApplication(ShopApplication.<span class="kw">class</span>)          <span class="cm">// 1 判断应用类型，读 spring.factories 里的扩展</span>
+        .run(args);
+
+<span class="kw">public</span> ConfigurableApplicationContext run(String... args) {
+    SpringApplicationRunListeners listeners = getRunListeners(args);
+    listeners.starting(bootstrapContext, mainApplicationClass);              <span class="cm">// 2 ApplicationStartingEvent</span>
+    <span class="kw">try</span> {
+        ConfigurableEnvironment env = prepareEnvironment(listeners, …);   <span class="cm">// 3 读配置</span>
+        Banner banner = printBanner(env);                                   <span class="cm">// 4</span>
+        context = createApplicationContext();                               <span class="cm">// 5 一个空容器</span>
+        prepareContext(bootstrapContext, context, env, listeners, …);       <span class="cm">// 6 跑 Initializer，放进主类</span>
+        refreshContext(context);                                            <span class="cm">// 7 ~ 11 都在这一行里</span>
+        afterRefresh(context, arguments);                                   <span class="cm">// 空方法，留给子类</span>
+        <span class="cm">// 12 打印 "Started ShopApplication in … seconds"</span>
+        listeners.started(context, timeTakenToStartup);                     <span class="cm">// 12 ApplicationStartedEvent</span>
+        callRunners(context, arguments);                                    <span class="cm">// 13 ApplicationRunner / CommandLineRunner</span>
+    } <span class="kw">catch</span> (Throwable ex) {
+        <span class="kw">throw</span> handleRunFailure(context, ex, listeners);   <span class="cm">// 失败：发 ApplicationFailedEvent，FailureAnalyzer 写报告</span>
+    }
+    listeners.ready(context, timeTakenToReady);                             <span class="cm">// 14 ApplicationReadyEvent</span>
+    <span class="kw">return</span> context;
+}</code></pre>
+  </div>
+</section>
+
+<!-- ================= WALK ================= -->
+<section id="walk">
+  <div>
+    <h2>跟着一次启动走一遍</h2>
+    <p class="lead">一个普通的 Web 项目。每一步看：这时已经有了什么，发了哪个事件，你能在这里插手做什么，日志里多了哪几行。也可以看看启动失败时，卡在了哪一步。</p>
+  </div>
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-ok" data-scene="ok" aria-pressed="true">正常启动</button>
+    <button class="tab" id="sc-bean" data-scene="bean" aria-pressed="false">少了一个 Bean</button>
+    <button class="tab" id="sc-port" data-scene="port" aria-pressed="false">端口被占</button>
+  </div>
+  <div class="sim">
+    <div class="track" id="track"></div>
+    <div class="side">
+      <div class="box"><h3>这时已经有了什么</h3><div class="board" id="board"></div></div>
+      <div class="evhook">
+        <div class="evc" id="evBox" data-role="ev"><small>这一步发出的事件</small><code id="evName"></code></div>
+        <div class="evc" id="hookBox" data-role="ctx"><small>你能在这里插手</small><span id="hookTxt"></span></div>
+      </div>
+      <div class="console" aria-label="启动日志">
+        <div class="console-h"><span>控制台（INFO 级别，省略了时间和类名）</span><span>黄色是这一步新打的</span></div>
+        <div class="logs" id="logs"></div>
+      </div>
+    </div>
+  </div>
+  <div class="cap" id="cap" data-role="app" aria-live="polite">
+    <div class="cap-n" id="capN">1/14</div>
+    <div class="cap-who"><code id="capCall"></code></div>
+    <div class="cap-say" id="capSay"></div>
+  </div>
+  <div class="ctrl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+  <p class="tip">表里 Bean 的个数是一个普通示例项目里的量级，不同项目差别很大。</p>
+</section>
+
+<!-- ================= REFRESH ================= -->
+<section id="refresh">
+  <div>
+    <h2>refresh() 的十二步</h2>
+    <p class="lead">这是 Spring 框架本身的方法，不是 Boot 加的。Boot 只是选了一个能内嵌 Tomcat 的容器，再在第 9 步里把 Tomcat 建出来。标了颜色的五步最值得记。</p>
+  </div>
+  <div class="r12">
+    <div class="r"><span class="n">1</span><code>prepareRefresh</code><span>记下启动时间，检查必填配置</span></div>
+    <div class="r"><span class="n">2</span><code>obtainFreshBeanFactory</code><span>拿到真正装 Bean 的 BeanFactory</span></div>
+    <div class="r"><span class="n">3</span><code>prepareBeanFactory</code><span>放进类加载器、几个内置 Bean</span></div>
+    <div class="r"><span class="n">4</span><code>postProcessBeanFactory</code><span>Web 容器在这里加点自己的东西</span></div>
+    <div class="r k" data-role="ctx"><span class="n">5</span><code>invokeBeanFactoryPostProcessors</code><span>扫描 @Component、解析 @Configuration、跑自动配置，得到所有图纸（<a href="spring-boot-autoconfig.html">第 03 篇</a>）</span></div>
+    <div class="r k" data-role="ctx"><span class="n">6</span><code>registerBeanPostProcessors</code><span>先把改装师们造出来，后面每个 Bean 都要过他们的手</span></div>
+    <div class="r"><span class="n">7</span><code>initMessageSource</code><span>国际化消息</span></div>
+    <div class="r"><span class="n">8</span><code>initApplicationEventMulticaster</code><span>事件广播器</span></div>
+    <div class="r k" data-role="web"><span class="n">9</span><code>onRefresh</code><span>Boot 在这里建 Tomcat，装好 Filter 和 DispatcherServlet，但先不绑定端口</span></div>
+    <div class="r"><span class="n">10</span><code>registerListeners</code><span>登记监听器</span></div>
+    <div class="r k" data-role="ctx"><span class="n">11</span><code>finishBeanFactoryInitialization</code><span>造出所有非懒加载的单例，每个都走一遍生命周期（<a href="spring-bean-lifecycle.html">第 04 篇</a>）</span></div>
+    <div class="r k" data-role="web"><span class="n">12</span><code>finishRefresh</code><span>启动 SmartLifecycle，Tomcat 在这里绑定端口，发 ContextRefreshedEvent</span></div>
+  </div>
+  <div class="note-box"><b>为什么端口最后才开</b><span>如果 Tomcat 一建好就接请求，请求可能打到还没造完的 Bean 上。所以 Boot 在 refresh 的第 9 步只建好 Tomcat，把连接器摘下来，等到第 12 步所有 Bean 都好了，再装回去开始监听。</span></div>
+</section>
+
+<!-- ================= EVENTS ================= -->
+<section id="events">
+  <div>
+    <h2>启动过程中的事件，按顺序</h2>
+    <p class="lead">前四个事件发出时，容器里的 Bean 还没造出来，写在 Bean 上的 <code>@EventListener</code> 根本收不到。</p>
+  </div>
+  <div class="evline">
+    <div class="ev" data-role="app"><code>ApplicationStartingEvent</code><span class="d">run() 刚开始，什么都还没有</span><span class="can n">@EventListener 收不到</span></div>
+    <div class="ev" data-role="env"><code>ApplicationEnvironmentPreparedEvent</code><span class="d">配置读完了，容器还没建</span><span class="can n">收不到</span></div>
+    <div class="ev" data-role="env"><code>ApplicationContextInitializedEvent</code><span class="d">空容器建好，Initializer 跑完</span><span class="can n">收不到</span></div>
+    <div class="ev" data-role="env"><code>ApplicationPreparedEvent</code><span class="d">主类的图纸放进去了，refresh 之前</span><span class="can n">收不到</span></div>
+    <div class="ev" data-role="web"><code>WebServerInitializedEvent</code><span class="d">refresh 最后一步，端口刚绑定</span><span class="can y">收得到</span></div>
+    <div class="ev" data-role="ctx"><code>ContextRefreshedEvent</code><span class="d">refresh 完成</span><span class="can y">收得到</span></div>
+    <div class="ev" data-role="done"><code>ApplicationStartedEvent</code><span class="d">打印 Started 之后，Runner 之前；同时存活状态变成 CORRECT</span><span class="can y">收得到</span></div>
+    <div class="ev" data-role="done"><code>ApplicationReadyEvent</code><span class="d">Runner 跑完；同时就绪状态变成 ACCEPTING_TRAFFIC</span><span class="can y">收得到</span></div>
+    <div class="ev fail" data-role="bad"><code>ApplicationFailedEvent</code><span class="d">任何一步抛异常都会发这个，代替后面的事件</span><span class="can y">要早早登记才收得到</span></div>
+  </div>
+  <p class="tip">想收前四个事件：把监听器写进 <code>META-INF/spring.factories</code> 的 <code>org.springframework.context.ApplicationListener</code> 下，或者在 main 方法里 <code>application.addListeners(…)</code>。</p>
+</section>
+
+<!-- ================= HOOKS ================= -->
+<section id="hooks">
+  <div>
+    <h2>扩展点地图：想在启动时做点事，放在哪</h2>
+    <p class="lead">越往上越早，能碰到的东西越少；越往下越晚，所有 Bean 都在，但应用也越接近对外服务了。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">扩展点</th><th scope="col">时间线上第几步</th><th scope="col">典型用途</th><th scope="col">怎么登记</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">EnvironmentPostProcessor</th><td><span class="when" data-role="env">3 读配置时</span></td><td>从配置中心拉配置，解密密码</td><td>spring.factories</td></tr>
+        <tr><th scope="row">ApplicationContextInitializer</th><td><span class="when" data-role="env">6 容器建好、Bean 还没登记</span></td><td>改容器设置，加属性源</td><td>spring.factories，或 <code>addInitializers</code></td></tr>
+        <tr><th scope="row">BeanFactoryPostProcessor</th><td><span class="when" data-role="ctx">7 读图纸时</span></td><td>改 Bean 定义，动态注册 Bean</td><td><code>static @Bean</code> 或 @Component</td></tr>
+        <tr><th scope="row">BeanPostProcessor</th><td><span class="when" data-role="ctx">8 造出来，10 每个 Bean 都过一遍</span></td><td>套代理、统一注入</td><td>@Component</td></tr>
+        <tr><th scope="row">@PostConstruct</th><td><span class="when" data-role="ctx">10 这个 Bean 刚造好</span></td><td>初始化自己的字段</td><td>方法上加注解</td></tr>
+        <tr><th scope="row">SmartInitializingSingleton</th><td><span class="when" data-role="ctx">10 结束时，所有单例都造完</span></td><td>需要别的 Bean 都在的初始化</td><td>实现接口</td></tr>
+        <tr><th scope="row">SmartLifecycle</th><td><span class="when" data-role="web">11 和 Tomcat 一起启动</span></td><td>启停后台组件，比如 MQ 消费者</td><td>实现接口</td></tr>
+        <tr><th scope="row">ApplicationRunner<br>CommandLineRunner</th><td><span class="when" data-role="done">13 Started 之后、就绪之前</span></td><td>预热缓存，检查数据</td><td>@Component</td></tr>
+        <tr><th scope="row">@EventListener(ApplicationReadyEvent)</th><td><span class="when" data-role="done">14 一切就绪</span></td><td>注册到注册中心，发通知</td><td>方法上加注解</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：Boot 2 和 Boot 3</h2>
+    <p class="lead">run() 的步骤、refresh 十二步、事件顺序，两边都一样。变的是登记方式、一些日志，以及 Boot 3 多出来的提前编译。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>自动配置登记在 <code>spring.factories</code>（2.7 起也认 AutoConfiguration.imports）</li>
+        <li>2.4 起，application.yml 改由 ConfigData 机制读取，多 profile 的写法变成 <code>spring.config.activate.on-profile</code></li>
+        <li>启动日志：<code>Started ShopApplication in 2.3 seconds (JVM running for 2.7)</code></li>
+        <li>内嵌 Tomcat 9，<code>javax.servlet</code></li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>自动配置只认 <code>AutoConfiguration.imports</code>；EnvironmentPostProcessor、ApplicationListener、FailureAnalyzer 这些还是写在 <code>spring.factories</code></li>
+        <li>启动日志改成：<code>Started ShopApplication in 2.3 seconds (process running for 2.7)</code></li>
+        <li>内嵌 Tomcat 10，<code>jakarta.servlet</code></li>
+        <li>可以提前编译（AOT）：第 7 步读图纸的活放到构建时做，配合 GraalVM 打成原生程序，启动只要几十毫秒</li>
+        <li>3.2 起配 <code>spring.threads.virtual.enabled=true</code>，Tomcat 用虚拟线程处理请求（要 JDK 21）</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>run() 的四段路</span><span>refresh 十二步</span><span>Tomcat 最后才开端口</span><span>事件顺序</span><span>FailureAnalyzer 报告</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">先在时间线上找到出问题的那一步，再看那一刻什么已经有了、什么还没有。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="ev"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mega"/></svg><b>@EventListener 收不到 ApplicationStartingEvent</b><p>那时容器还没建，你的 Bean 不存在。登记在 spring.factories 里，或者用 <code>addListeners</code>。</p></div>
+    <div class="pit" data-role="web"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-server"/></svg><b>Web server failed to start. Port 8080 was already in use.</b><p>端口要到最后一步才绑定，所以所有 Bean 都造完了才失败。换 <code>server.port</code>，或者停掉占端口的进程。</p></div>
+    <div class="pit" data-role="ctx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg><b>… required a bean of type '…' that could not be found.</b><p>第 10 步造 Bean 时缺了依赖。看那个类有没有被扫描到，或者对应的自动配置是不是被条件挡掉了，用 <code>debug=true</code> 看条件报告。</p></div>
+    <div class="pit" data-role="env"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sliders"/></svg><b>Could not resolve placeholder 'pay.url' in value "${pay.url}"</b><p>第 3 步没读到这个配置，第 10 步注入时才报错。检查 profile 有没有激活、配置文件名和位置对不对。</p></div>
+    <div class="pit" data-role="ctx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg><b>The bean '…' could not be registered … overriding is disabled.</b><p>两个地方定义了同名的 Bean。Boot 2.1 起默认不许覆盖。改名，或者确认要覆盖再配 <code>spring.main.allow-bean-definition-overriding=true</code>。</p></div>
+    <div class="pit" data-role="ctx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg><b>@PostConstruct 里调自己的 HTTP 接口，连接被拒</b><p>@PostConstruct 在第 10 步，端口第 11 步才开。要等应用能对外服务，放到 <code>ApplicationReadyEvent</code> 里。</p></div>
+    <div class="pit" data-role="done"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-flag"/></svg><b>CommandLineRunner 里抛了异常，整个应用退出了</b><p>Runner 在 run() 的 try 里面，异常会让启动失败（Failed to execute CommandLineRunner）。可以失败的任务自己 catch 住。</p></div>
+    <div class="pit" data-role="done"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-flag"/></svg><b>Runner 里预热了五分钟，K8s 的就绪探针一直不过</b><p>Runner 跑完才发 ApplicationReadyEvent，就绪状态才变成 ACCEPTING_TRAFFIC。耗时的预热放到异步线程。</p></div>
+    <div class="pit" data-role="app"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-rocket"/></svg><b>启动太慢，不知道慢在哪</b><p>用 <code>BufferingApplicationStartup</code> 记录每一步耗时，配合 Actuator 的 <code>/actuator/startup</code> 查看。<code>spring.main.lazy-initialization=true</code> 能变快，但错误会推迟到第一次调用才暴露。</p></div>
+    <div class="pit" data-role="app"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-rocket"/></svg><b>Controller 写好了，访问却 404</b><p>扫描默认只扫主类所在的包和子包。主类放到最外层包，或者在 <code>@SpringBootApplication</code> 上指定 scanBasePackages。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Spring Boot 2.7 / 3.3 为例。同系列：<a href="spring-boot-autoconfig.html">Spring Boot 自动配置</a> · <a href="spring-bean-lifecycle.html">Bean 生命周期与循环依赖</a> · <a href="spring-mvc-flow.html">Spring MVC 请求处理流程</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  var ST=[
+    {g:'① 造 SpringApplication', r:'app'},
+    {t:'判断应用类型、读扩展名单', c:'new SpringApplication(…)', r:'app'},
+    {g:'② 准备环境和空容器', r:'env'},
+    {t:'发出“开始启动”', c:'listeners.starting()', r:'env'},
+    {t:'准备环境：读配置', c:'prepareEnvironment()', r:'env'},
+    {t:'打印 banner', c:'printBanner()', r:'env'},
+    {t:'建一个空容器', c:'createApplicationContext()', r:'env'},
+    {t:'准备容器：放进主类', c:'prepareContext()', r:'env'},
+    {g:'③ refresh()', r:'ctx'},
+    {t:'读图纸：扫描 + 自动配置', c:'invokeBeanFactoryPostProcessors', r:'ctx'},
+    {t:'先造改装师', c:'registerBeanPostProcessors', r:'ctx'},
+    {t:'建 Tomcat，先不开门', c:'onRefresh → createWebServer', r:'web'},
+    {t:'造出所有单例', c:'finishBeanFactoryInitialization', r:'ctx'},
+    {t:'开门：绑定端口', c:'finishRefresh', r:'web'},
+    {g:'④ 收尾', r:'done'},
+    {t:'打印 Started', c:'listeners.started()', r:'done'},
+    {t:'跑 Runner', c:'callRunners()', r:'done'},
+    {t:'宣布就绪', c:'listeners.ready()', r:'done'}
+  ];
+  var N=14;
+  // build track once
+  (function(){
+    var h='', i=0;
+    ST.forEach(function(s){
+      if(s.g){ h+='<div class="grp" data-role="'+s.r+'">'+esc(s.g)+'</div>'; return; }
+      h+='<div class="gs" id="g'+i+'" data-role="'+s.r+'"><span class="n">'+(i+1)+'</span><span class="gs-t"><b>'+esc(s.t)+'</b><code>'+esc(s.c)+'</code></span><span class="mk" aria-hidden="true"></span></div>';
+      i++;
+    });
+    $('track').innerHTML=h;
+  })();
+
+  var NONE={env:null,ctx:null,defs:0,beans:0,web:null,avail:null};
+  var NORMAL=[
+    {at:0, r:'app', st:{}, ev:null, hook:'这时还没有容器。只有登记在 spring.factories 里的 ApplicationContextInitializer、ApplicationListener 会被读出来备用。', call:'new SpringApplication(ShopApplication.class)', say:'看 classpath 里有没有 Servlet 和 DispatcherServlet 的类：有，所以是 SERVLET 类型的 Web 应用。再从 spring.factories 读出各种扩展的名单，找到 main 方法所在的类。'},
+    {at:1, r:'env', ev:'ApplicationStartingEvent', hook:'只有登记在 spring.factories 里的 ApplicationListener 能收到这个事件。', call:'listeners.starting()', say:'run() 开始。广播员发出第一个事件：要开始启动了。这时连配置都还没读。'},
+    {at:2, r:'env', st:{env:'已就绪：命令行 > 环境变量 > application.yml'}, ev:'ApplicationEnvironmentPreparedEvent', hook:'EnvironmentPostProcessor：往配置里加东西，比如从配置中心拉、给密码解密。', call:'prepareEnvironment()', say:'把命令行参数、系统属性、环境变量、application.yml（按激活的 profile）按优先级排好，装进 Environment。日志系统也是这时按配置初始化的。'},
+    {at:3, r:'env', log:[' :: Spring Boot ::                (v3.3.5)'], hook:'放一个 banner.txt 换图案；spring.main.banner-mode=off 关掉。', call:'printBanner()', say:'打印那个 Spring 字样的 banner。'},
+    {at:4, r:'env', st:{ctx:'空容器：AnnotationConfigServletWebServerApplicationContext', defs:5}, hook:'这一步没有扩展点。', call:'createApplicationContext()', say:'按应用类型建容器：Web 应用用能内嵌服务器的那一种。构造时顺手登记了 5 个内置处理器，比如负责解析 @Configuration 的 ConfigurationClassPostProcessor。'},
+    {at:5, r:'env', st:{ctx:'已放进主类，还没 refresh', defs:6}, ev:'ApplicationContextInitializedEvent → ApplicationPreparedEvent', hook:'ApplicationContextInitializer 在这里执行，能改容器设置、加属性源。', log:['Starting ShopApplication using Java 17.0.12 with PID 4242','The following 1 profile is active: "dev"'], call:'prepareContext()', say:'把 Environment 交给容器，跑一遍 Initializer，再把主类 ShopApplication 登记成第一张自己的图纸。日志里打出用的 Java 版本和激活的 profile。'},
+    {at:6, r:'ctx', st:{ctx:'refresh 中', defs:312}, hook:'BeanFactoryPostProcessor：改图纸、动态注册 Bean。@Conditional 也是在这里判断的。', call:'invokeBeanFactoryPostProcessors', say:'ConfigurationClassPostProcessor 从主类出发：@ComponentScan 扫主类所在的包，@EnableAutoConfiguration 读出一百多个自动配置候选，按条件筛掉大半。图纸一下子变成三百多张，这时还一个 Bean 都没造。'},
+    {at:7, r:'ctx', st:{beans:18}, hook:'你写的 BeanPostProcessor 在这里被造出来。它依赖的 Bean 也会被提前造，可能错过别的改装师。', call:'registerBeanPostProcessors', say:'先把所有改装师（BeanPostProcessor）造出来：负责 @Autowired 的、负责 @PostConstruct 的、负责 AOP 代理的。后面每个 Bean 出厂都要过他们的手。'},
+    {at:8, r:'web', st:{beans:64, web:'已建好，还没绑定端口'}, hook:'WebServerFactoryCustomizer 改端口、线程数；FilterRegistrationBean 在这里装进 Tomcat。', log:['Tomcat initialized with port 8080 (http)','Starting service [Tomcat]','Starting Servlet engine: [Apache Tomcat/10.1.31]','Initializing Spring embedded WebApplicationContext','Root WebApplicationContext: initialization completed in 812 ms'], call:'onRefresh → createWebServer()', say:'Boot 在这一步建出内嵌 Tomcat，把 Filter、DispatcherServlet 注册进去（为此会提前造出它们）。Tomcat 启动了，但连接器先摘下来，还不监听 8080。'},
+    {at:9, r:'ctx', st:{beans:312}, hook:'@PostConstruct、InitializingBean；全部造完后，SmartInitializingSingleton 被调用。', call:'preInstantiateSingletons()', say:'按图纸把剩下的单例一个个造出来，每个都走一遍 Bean 的一生：实例化、注入、初始化、套代理。启动慢，多半慢在这一步。'},
+    {at:10, r:'web', st:{ctx:'已刷新', web:'监听 8080'}, ev:'WebServerInitializedEvent → ContextRefreshedEvent', hook:'SmartLifecycle.start() 在这里调用；@EventListener 从这里开始能收到事件。', log:["Tomcat started on port 8080 (http) with context path '/'"], call:'finishRefresh()', say:'所有 Bean 都好了，才把连接器装回去，绑定 8080，开始收请求。refresh 结束。'},
+    {at:11, r:'done', st:{avail:'存活 CORRECT · 就绪 还没'}, ev:'ApplicationStartedEvent', hook:'@EventListener(ApplicationStartedEvent.class)', log:['Started ShopApplication in 2.346 seconds (process running for 2.71)'], call:'listeners.started()', say:'打印那句熟悉的 Started。存活状态变成 CORRECT，就绪状态还没有。'},
+    {at:12, r:'done', hook:'ApplicationRunner、CommandLineRunner，按 @Order 排序执行。', call:'callRunners()', say:'执行所有 Runner，比如预热缓存。这一步慢，就绪就晚。Runner 抛异常，整个启动算失败。'},
+    {at:13, r:'done', st:{avail:'存活 CORRECT · 就绪 ACCEPTING_TRAFFIC'}, ev:'ApplicationReadyEvent', hook:'@EventListener(ApplicationReadyEvent.class)：注册到注册中心、发上线通知。', kind:'done', call:'listeners.ready()', say:'就绪状态变成 ACCEPTING_TRAFFIC，负载均衡和 K8s 可以放流量进来了。注意：DispatcherServlet 还要等第一个请求才初始化。'}
+  ];
+  var BAR='***************************';
+  var SC={
+    ok:NORMAL,
+    bean:NORMAL.slice(0,9).concat([
+      {at:9, r:'bad', bad:9, kind:'fail', hook:'—', log:["WARN  Exception encountered during context initialization - cancelling refresh attempt: org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'orderService' …"], err:1, call:'preInstantiateSingletons()', say:'造到 OrderService 时，它的构造器要一个 PayClient，可图纸里根本没有这种 Bean。抛异常，refresh 中止。'},
+      {at:9, r:'bad', bad:9, kind:'fail', st:{ctx:'已关闭', web:'已停止', beans:0}, ev:'ApplicationFailedEvent', hook:'FailureAnalyzer：把异常翻译成人话。你也可以写自己的，登记在 spring.factories。', log:['Stopping service [Tomcat]','',BAR,'APPLICATION FAILED TO START',BAR,'','Description:','',"Parameter 0 of constructor in com.shop.service.OrderService required a bean of type 'com.shop.client.PayClient' that could not be found.",'','Action:','',"Consider defining a bean of type 'com.shop.client.PayClient' in your configuration."], err:1, call:'handleRunFailure()', say:'关掉容器、停掉 Tomcat，发 ApplicationFailedEvent，FailureAnalyzer 写出诊断报告：缺什么、怎么办。后面的步骤都不会执行。'}
+    ]),
+    port:NORMAL.slice(0,10).concat([
+      {at:10, r:'bad', bad:10, kind:'fail', hook:'—', log:["WARN  Exception encountered during context initialization - cancelling refresh attempt: org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'"], err:1, call:'finishRefresh()', say:'所有 Bean 都造好了，最后去绑定 8080，发现已经被别的进程占了。前面几秒全白干。'},
+      {at:10, r:'bad', bad:10, kind:'fail', st:{ctx:'已关闭', web:'已停止', beans:0}, ev:'ApplicationFailedEvent', hook:'FailureAnalyzer 认出了端口冲突，给出建议。', log:['',BAR,'APPLICATION FAILED TO START',BAR,'','Description:','','Web server failed to start. Port 8080 was already in use.','','Action:','',"Identify and stop the process that's listening on port 8080 or configure this application to listen on another port."], err:1, call:'handleRunFailure()', say:'容器关闭，FailureAnalyzer 写出报告。改 server.port，或者找出占着 8080 的进程。'}
+    ])
+  };
+
+  function stateAt(steps,pos){
+    var st={}, k; for(k in NONE) st[k]=NONE[k];
+    var logs=[], fresh=0, freshErr=0;
+    for(var i=0;i<=pos;i++){
+      var s=steps[i];
+      if(s.st) for(k in s.st) st[k]=s.st[k];
+      if(s.log){ s.log.forEach(function(l){ logs.push({t:l, e:!!s.err}); }); if(i===pos) fresh=s.log.length; }
+    }
+    return {st:st, logs:logs, fresh:fresh};
+  }
+  function val(v, role, isNum){
+    if(v===null || v===0 && !isNum) return '<span class="val none">还没有</span>';
+    if(isNum) return '<span class="val" data-role="'+role+'"><span class="num">'+v+'</span></span>';
+    return '<span class="val" data-role="'+role+'">'+esc(v)+'</span>';
+  }
+  function boardHtml(st){
+    var webRole = st.web==='监听 8080' ? 'done' : (st.web==='已停止' ? 'bad' : 'web');
+    var ctxRole = st.ctx==='已关闭' ? 'bad' : 'ctx';
+    return '<span>配置</span>'+val(st.env,'env')+
+      '<span>容器</span>'+val(st.ctx,ctxRole)+
+      '<span>Bean 图纸</span>'+(st.defs?val(st.defs,'ctx',true):'<span class="val none">0</span>')+
+      '<span>Bean 实例</span>'+(st.beans?val(st.beans,'ctx',true):'<span class="val none">0</span>')+
+      '<span>Tomcat</span>'+val(st.web,webRole)+
+      '<span>健康状态</span>'+val(st.avail,'done');
+  }
+
+  var scene='ok', pos=0, timer=null;
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  function render(){
+    var steps=SC[scene], s=steps[pos], S=stateAt(steps,pos);
+    for(var i=0;i<N;i++){
+      var el=$('g'+i), cls='';
+      if(s.bad!==undefined){
+        if(i<s.bad) cls='passed'; else if(i===s.bad) cls='bad'; else cls='skip';
+      } else {
+        if(i<s.at) cls='passed'; else if(i===s.at) cls='on';
+      }
+      el.className='gs'+(cls?' '+cls:'');
+    }
+    $('board').innerHTML=boardHtml(S.st);
+    var evB=$('evBox'); evB.classList.toggle('none', !s.ev); evB.setAttribute('data-role', s.ev==='ApplicationFailedEvent'?'bad':'ev');
+    $('evName').textContent = s.ev || '这一步没有事件';
+    $('hookTxt').textContent = s.hook || '—';
+    var n=S.logs.length, lg=$('logs');
+    lg.innerHTML = n ? S.logs.map(function(l,i){ var c=[]; if(i>=n-S.fresh) c.push('new'); if(l.e) c.push('err'); return '<div'+(c.length?' class="'+c.join(' ')+'"':'')+'>'+(l.t?esc(l.t):'&nbsp;')+'</div>'; }).join('') : '<div>（还没有输出）</div>';
+    lg.scrollTop=lg.scrollHeight;
+    $('cap').setAttribute('data-role', s.kind==='fail' ? 'bad' : (s.kind==='done' ? 'done' : s.r));
+    $('capN').textContent=(pos+1)+'/'+steps.length;
+    $('capCall').textContent=s.call;
+    $('capSay').textContent=s.say;
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===steps.length-1;
+  }
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<SC[scene].length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=SC[scene].length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 2200);
+  });
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop(); scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+  $('walk').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+  render();
+})();
+</script>
+
+</body>
+</html>
