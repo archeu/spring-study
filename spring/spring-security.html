@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring Security 认证授权</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other Spring pages. Metaphor = office-building security: a row of guards, an ID desk, a badge, a door reader. Anchor = the request walk-through. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --guard:#3150C4; --guard-tint:#E2E7FA;
+  --desk:#B85F0C; --desk-tint:#FBE9D5;
+  --badge:#0D7A69; --badge-tint:#DCF0EB;
+  --gate:#6A3FC0; --gate-tint:#ECE5FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --skin:#F1C6A0; --gold:#E2B33C; --eye:#2A2320;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --guard:#90A4FF; --guard-tint:#1D2650;
+    --desk:#F4A651; --desk-tint:#3A2812;
+    --badge:#40C6B0; --badge-tint:#12352F;
+    --gate:#B9A0FF; --gate-tint:#2A2148;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --skin:#E2B188; --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --guard:#90A4FF; --guard-tint:#1D2650;
+  --desk:#F4A651; --desk-tint:#3A2812;
+  --badge:#40C6B0; --badge-tint:#12352F;
+  --gate:#B9A0FF; --gate-tint:#2A2148;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --skin:#E2B188; --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(38px,6.6vw,66px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--guard)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--guard);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="guard"]{--rc:var(--guard);--rt:var(--guard-tint)}
+[data-role="desk"]{--rc:var(--desk);--rt:var(--desk-tint)}
+[data-role="badge"]{--rc:var(--badge);--rt:var(--badge-tint)}
+[data-role="gate"]{--rc:var(--gate);--rt:var(--gate-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)}
+.k-gold{fill:var(--gold)} .k-eye{fill:var(--eye)} .k-good{fill:var(--good)}
+.ks-eye{stroke:var(--eye);fill:none} .ks-ink{stroke:var(--ink);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.q2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:22px}
+.q{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 18px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--rt)}
+.q-big{grid-row:span 2;font-family:var(--font-display);font-size:42px;line-height:1;color:var(--rc)}
+.q-ask{font-family:var(--font-display);font-size:26px;line-height:1.2}
+.q-no{font-size:14px;color:var(--muted)}
+.q-no b{font-family:var(--font-mono);color:var(--rc)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:128px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:32px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:13px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- shared blocks ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--guard)} .kw{color:var(--desk)} .st-s{color:var(--badge)}
+.console{background:var(--console-bg);color:var(--console-fg);border-radius:16px;padding:14px 16px;font-family:var(--font-mono);font-size:13px;line-height:1.55;min-width:0}
+.console-h{color:var(--console-dim);font-size:12px;margin-bottom:8px}
+.log{overflow-wrap:anywhere}
+.log.dim{color:var(--console-dim);font-size:12px;margin-top:6px}
+.pw{color:var(--gold);font-weight:600}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--desk-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:20px;line-height:1;text-align:center}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+
+/* ---------- default ---------- */
+.dstage{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:16px;align-items:start}
+.dleft{display:flex;flex-direction:column;gap:12px;min-width:0}
+.dtiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.dt{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.dt .ico{width:44px;height:44px}
+.dt b{font-size:17px}
+.dt p{font-size:14px;color:var(--muted)}
+.dt code{color:var(--ink)}
+
+/* ---------- where ---------- */
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.fn{display:inline-flex;align-items:center;padding:10px 14px;border-radius:12px;background:var(--card);border:1.5px solid var(--line);font-weight:500;font-size:15px;min-width:0;overflow-wrap:anywhere}
+.fn.sm{padding:6px 10px;font-size:12.5px;font-family:var(--font-mono);font-weight:400}
+.fn.hot{border:2px solid var(--guard);background:var(--guard-tint);font-weight:600}
+.fn.req{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.fgroup{display:flex;flex-direction:column;gap:6px;padding:8px 10px 10px;border:1.5px dashed var(--line-strong);border-radius:14px;min-width:0}
+.fgroup > small{font-size:12px;color:var(--muted)}
+.fg-in{display:flex;flex-wrap:wrap;gap:6px}
+.zoom{border:2px solid var(--guard);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px;background:var(--card)}
+.zoom-h{font-family:var(--font-display);font-size:22px;color:var(--guard)}
+.zrow{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1.35fr);gap:12px;align-items:center}
+.zn{padding:12px 14px;border-radius:12px;background:var(--guard-tint);display:flex;flex-direction:column;gap:4px;min-width:0}
+.zn b{font-family:var(--font-mono);font-size:14px;overflow-wrap:anywhere}
+.zn p{font-size:14px}
+.zn code{overflow-wrap:anywhere}
+.chains{display:flex;flex-direction:column;gap:8px;min-width:0}
+.ch{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;align-items:center;padding:8px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--card)}
+.ch.first{border:2px solid var(--guard)}
+.ch-m{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper);white-space:nowrap}
+.ch-f{font-size:12px;color:var(--muted);font-family:var(--font-mono);overflow-wrap:anywhere}
+.chains small{font-size:12.5px;color:var(--muted)}
+.why-proxy{font-size:14.5px;color:var(--muted);border-top:1.5px dashed var(--line);padding-top:12px}
+.why-proxy b{color:var(--ink)}
+
+/* ---------- lineup ---------- */
+.lanes{display:flex;flex-direction:column;gap:10px}
+.lane{display:grid;grid-template-columns:132px minmax(0,1fr);gap:12px;align-items:stretch}
+.lane-l{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 12px;border-radius:12px;background:var(--rt)}
+.lane-l b{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--rc);line-height:1.2}
+.lane-l small{font-size:12px;color:var(--muted)}
+.lane-s{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.stn{display:grid;grid-template-columns:26px minmax(0,1fr);gap:0 8px;align-items:start;background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;min-width:0;max-width:100%}
+.stn .n{grid-row:span 2;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:12px;font-weight:600}
+.stn b{font-size:15px;line-height:1.35}
+.stn code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.stn.k{border:2px solid var(--rc)}
+.stn.k .n{background:var(--rc);color:var(--on-accent)}
+.arr{color:var(--line-strong);font-size:18px;line-height:1}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- walk-through ---------- */
+.sim{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px;align-items:start}
+.track{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.reqline{font-family:var(--font-mono);font-size:13px;padding:8px 12px;border-radius:10px;background:var(--console-bg);color:var(--console-fg);overflow-wrap:anywhere}
+.gsl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.gs{display:grid;grid-template-columns:26px minmax(0,1fr) 20px;gap:0 10px;align-items:center;padding:6px 10px;border-radius:10px;border:1.5px solid transparent;transition:background .25s,border-color .25s,opacity .25s}
+.gs .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:12px;font-weight:600}
+.gs-t{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 8px;min-width:0}
+.gs-t b{font-size:14.5px;font-weight:500}
+.gs-t code{font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.gs .opt{font-style:normal;font-family:var(--font-mono);font-size:11px;padding:0 6px;border-radius:5px;background:var(--neutral-tint);color:var(--muted)}
+.gs .off{display:none;font-style:normal;font-size:11px;padding:0 6px;border-radius:5px;border:1px dashed var(--line-strong);color:var(--muted)}
+.mk{font-weight:700;text-align:center;font-size:14px}
+.gs.passed{opacity:.7}
+.gs.passed .mk::before{content:"✓";color:var(--good)}
+.gs.on{border-color:var(--guard);background:var(--guard-tint)}
+.gs.on .n{background:var(--guard);color:var(--on-accent)}
+.gs.on .mk::before{content:"◀";color:var(--guard)}
+.gs.bad{border-color:var(--bad);background:var(--bad-tint)}
+.gs.bad .n{background:var(--bad);color:var(--on-accent)}
+.gs.bad .mk::before{content:"✕";color:var(--bad)}
+.gs.done{border-color:var(--good);background:var(--good-tint)}
+.gs.done .n{background:var(--good);color:var(--on-accent)}
+.gs.done .mk::before{content:"✓";color:var(--good)}
+.gs.gone{opacity:.45}
+.gs.gone .gs-t b,.gs.gone .gs-t code{text-decoration:line-through}
+.gs.gone .off{display:inline}
+.gs.gone .opt{display:none}
+.gs-sep{font-size:12px;color:var(--muted);text-align:center;border-top:1.5px dashed var(--line-strong);padding-top:6px;margin-top:4px}
+.track-foot{font-size:12.5px;color:var(--muted)}
+.side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.box{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:background .25s,border-color .25s}
+.box.hl{border-color:var(--rc);background:var(--rt)}
+.box h3{font-family:var(--font-body);font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.empty{font-size:13.5px;color:var(--muted)}
+.bd{display:grid;grid-template-columns:44px minmax(0,1fr);gap:10px;align-items:center;animation:pop .35s ease}
+.bd svg{width:44px;height:44px;color:var(--badge)}
+.bd.anon svg{color:var(--neutral)}
+.bd-who{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.bd-who b{font-size:17px}
+.bd-st{font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--badge);color:var(--on-accent)}
+.bd.anon .bd-st{background:var(--neutral)}
+.bd-tx > code{display:block;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.bd-auth{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.bd-auth span{font-family:var(--font-mono);font-size:11.5px;padding:1px 7px;border-radius:5px;background:var(--neutral-tint)}
+.sess{font-size:13px;color:var(--muted);border-top:1px dashed var(--line);padding-top:6px}
+.sess b{color:var(--ink)}
+.dk{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.dk li{display:grid;grid-template-columns:minmax(0,1fr) 18px;gap:6px;align-items:center;padding:3px 8px;border-radius:6px;border-left:3px solid var(--line-strong);font-size:13px}
+.dk li b{font-family:var(--font-mono);font-weight:600;font-size:12.5px;overflow-wrap:anywhere}
+.dk li small{color:var(--muted);font-size:12px;margin-left:6px}
+.dk li.ok{opacity:.7}
+.dk li.ok::after{content:"✓";color:var(--good);font-weight:700}
+.dk li.on{border-left-color:var(--desk);background:var(--desk-tint)}
+.dk li.on::after{content:"◀";color:var(--desk);font-weight:700}
+.dk li.bad{border-left-color:var(--bad);background:var(--bad-tint)}
+.dk li.bad::after{content:"✕";color:var(--bad);font-weight:700}
+.dk li.idle{opacity:.5}
+.hand{font-size:13px}
+.hand code{font-weight:600;overflow-wrap:anywhere}
+.hand.ok{color:var(--good);font-weight:700}
+.hand.no{color:var(--bad);font-weight:700}
+.rs{display:flex;align-items:center;gap:12px;animation:pop .35s ease}
+.rs-c{font-family:var(--font-display);font-size:38px;line-height:1;color:var(--rc);font-variant-numeric:tabular-nums}
+.rs-t{font-size:14px;min-width:0}
+@keyframes pop{from{transform:scale(.85);opacity:.2}to{transform:none;opacity:1}}
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,20px);font-weight:500;line-height:1.5;min-width:0;overflow-wrap:anywhere}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+
+/* ---------- badge ---------- */
+.bstage{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.dl{border-radius:16px;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.d1{border:2px dashed var(--badge);background:var(--card)}
+.d2{border:2px solid var(--badge);background:var(--badge-tint)}
+.d3{border:2px solid var(--badge);background:var(--card)}
+.dl-l{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
+.dl-l b{font-family:var(--font-mono);font-size:14.5px;color:var(--badge);overflow-wrap:anywhere}
+.dl-l small{font-size:13px;color:var(--muted)}
+.fields{display:flex;flex-direction:column;gap:6px}
+.fd{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px;align-items:baseline;font-size:14px;padding:6px 10px;border-radius:10px;background:var(--paper)}
+.fd code{font-weight:600}
+.bright{display:flex;flex-direction:column;gap:12px;min-width:0}
+.facts{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.facts code{overflow-wrap:anywhere}
+
+/* ---------- desk ---------- */
+.dflow{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.45fr) auto minmax(0,1fr);gap:12px;align-items:center}
+.tk{border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.tk.pend{border:2px dashed var(--desk);background:var(--card)}
+.tk.ok{border:2px solid var(--badge);background:var(--badge-tint)}
+.tk small{font-size:12px;color:var(--muted)}
+.tk > b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.2}
+.tk > code{font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.tk dl{margin:4px 0 0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;font-size:12.5px}
+.tk dt{font-family:var(--font-mono);color:var(--muted)}
+.tk dd{margin:0;font-family:var(--font-mono);overflow-wrap:anywhere}
+.dkb{border:2px solid var(--desk);border-radius:16px;padding:14px;background:var(--card);display:flex;flex-direction:column;gap:10px;min-width:0}
+.dkb-h b{font-family:var(--font-mono);font-size:14.5px;color:var(--desk)}
+.dkb-h small{display:block;font-size:13px;color:var(--muted)}
+.prov{border-radius:12px;background:var(--desk-tint);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.prov > b{font-family:var(--font-mono);font-size:13.5px;overflow-wrap:anywhere}
+.pstep{display:grid;grid-template-columns:30px minmax(0,1fr);gap:8px;font-size:13.5px;align-items:center}
+.pstep svg{width:30px;height:30px;color:var(--desk)}
+.pstep code{overflow-wrap:anywhere}
+.prov.dim{background:var(--paper);color:var(--muted);font-size:13px;gap:2px}
+.prov.dim > b{color:var(--muted);font-size:12.5px}
+.dcode{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start}
+
+/* ---------- authz ---------- */
+.twin{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.tw{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;gap:14px;align-items:flex-start;min-width:0}
+.tw .ico{width:56px;height:56px;flex:none}
+.tw > div{display:flex;flex-direction:column;gap:6px;min-width:0}
+.tw h3{font-size:21px}
+.tw h3 code{display:block;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.tw p{font-size:14px}
+.tw p.dim{color:var(--muted)}
+.tw code{overflow-wrap:anywhere}
+.rt{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.rt-h{font-family:var(--font-display);font-size:22px}
+.seg{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.seg-l{font-size:13px;color:var(--muted);width:2.6em;flex:none}
+.rt .tab{font-size:13.5px;padding:5px 12px}
+.rt .tab code{font-size:12.5px}
+.rt-body{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:14px;align-items:stretch}
+.rules{display:flex;flex-direction:column;gap:3px;padding:10px;border-radius:12px;background:var(--code-bg);border:1.5px solid var(--line);font-family:var(--font-mono);font-size:12.5px;min-width:0}
+.rl-x{color:var(--muted);padding:2px 8px}
+.rl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 8px 6px 22px;border-radius:8px;border:1.5px solid transparent;transition:background .25s,border-color .25s,opacity .25s}
+.rl code{font-size:inherit;overflow-wrap:anywhere}
+.rl .rs-tag{font-family:var(--font-body);font-size:12px;padding:1px 8px;border-radius:999px;white-space:nowrap;background:var(--neutral-tint)}
+.rl.skip{opacity:.6}
+.rl.hit{border-color:var(--gate);background:var(--gate-tint)}
+.rl.hit .rs-tag{background:var(--gate);color:var(--on-accent);font-weight:700}
+.rl.rest{opacity:.35}
+.rt-res{border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:6px;justify-content:center;background:var(--rt);border:2px solid var(--rc);min-width:0;transition:background .25s,border-color .25s}
+.rt-code{font-family:var(--font-display);font-size:46px;line-height:1;color:var(--rc)}
+.rt-t{font-family:var(--font-display);font-size:24px;line-height:1.2}
+.rt-why{font-size:14px}
+.rt-why code{overflow-wrap:anywhere}
+.dec{display:flex;flex-direction:column;gap:10px}
+.dr{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.35fr) 96px;gap:12px;align-items:center;padding:12px 16px;background:var(--card);border:1.5px solid var(--line);border-left:6px solid var(--rc);border-radius:14px}
+.dr-a b{display:block;font-size:15.5px}
+.dr-a small{font-size:13px;color:var(--muted)}
+.dr-b{font-size:14px;min-width:0}
+.dr-b code{overflow-wrap:anywhere}
+.dr-c{font-family:var(--font-display);font-size:36px;color:var(--rc);text-align:center;line-height:1}
+.dr-c small{display:block;font-family:var(--font-body);font-size:12px;color:var(--muted);margin-top:4px}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.era .codebox{border-radius:12px}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .dstage,.sim,.bstage,.dcode,.twin,.eras,.rt-body{grid-template-columns:1fr}
+  .zrow,.dflow{grid-template-columns:1fr}
+  .zrow .fa,.dflow .fa{transform:rotate(90deg)}
+}
+@media (max-width:720px){
+  .q2,.cast{grid-template-columns:1fr}
+  .cast{gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:96px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:28px}
+  .pits,.minis{grid-template-columns:1fr}
+  .lane{grid-template-columns:1fr;gap:6px}
+  .lane-l{flex-direction:row;align-items:baseline;gap:10px}
+  .lane-s .arr{display:none}
+  .stn{flex:1 1 220px}
+  .flow{flex-direction:column;align-items:stretch}
+  .flow > .fa{transform:rotate(90deg)}
+  .dr{grid-template-columns:minmax(0,1fr) 76px}
+  .dr .fa{display:none}
+  .dr-b{grid-column:1}
+  .dr-c{grid-column:2;grid-row:1 / span 2;font-size:30px}
+}
+@media (max-width:600px){
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+  .q-big{font-size:34px}
+  .fd{grid-template-columns:1fr;gap:0}
+}
+@media (max-width:520px){
+  .dtiles{grid-template-columns:1fr}
+  .tw{flex-direction:column}
+}
+@media (prefers-reduced-motion:reduce){
+  .bd,.rs{animation:none}
+  .gs,.box,.cap,.rl,.rt-res{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-guard" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 63c0-15 9.8-24 22-24s22 9 22 24z"/>
+    <path class="k-paper" opacity=".4" d="M27 39h10l-5 9z"/>
+    <path class="k-gold" d="M38 48h9v5.5c0 3.3-2.2 5.6-4.5 6.5-2.3-.9-4.5-3.2-4.5-6.5z"/>
+    <circle class="k-skin" cx="32" cy="28" r="10.5"/>
+    <circle class="k-eye" cx="28" cy="29.5" r="1.4"/>
+    <circle class="k-eye" cx="36" cy="29.5" r="1.4"/>
+    <path class="ks-eye" stroke-width="1.6" stroke-linecap="round" d="M28.5 34.5h7"/>
+    <path fill="currentColor" d="M19 21.5c0-6.5 6-10.5 13-10.5s13 4 13 10.5z"/>
+    <rect class="k-ink" x="18" y="20" width="28" height="4.2" rx="2.1"/>
+    <circle class="k-gold" cx="32" cy="15.5" r="2.6"/>
+  </symbol>
+  <symbol id="i-desk" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="12" width="46" height="34" rx="4"/>
+    <circle class="k-paper" cx="17" cy="26" r="5"/>
+    <path class="k-paper" d="M9 39c0-5 3.6-7.5 8-7.5s8 2.5 8 7.5z"/>
+    <rect class="k-paper" opacity=".75" x="29" y="22" width="15" height="3.2" rx="1.6"/>
+    <rect class="k-paper" opacity=".75" x="29" y="29" width="11" height="3.2" rx="1.6"/>
+    <circle class="k-paper" opacity=".85" cx="44" cy="42" r="8"/>
+    <circle class="ks-ink" cx="44" cy="42" r="9" stroke-width="4"/>
+    <path class="ks-ink" stroke-width="6" stroke-linecap="round" d="M51 49l7 7"/>
+  </symbol>
+  <symbol id="i-badge" viewBox="0 0 64 64">
+    <path class="ks-ink" stroke-width="3" stroke-linejoin="round" d="M21 3l11 17 11-17"/>
+    <rect fill="currentColor" x="13" y="20" width="38" height="42" rx="5"/>
+    <rect class="k-ink" x="27" y="16" width="10" height="8" rx="2"/>
+    <circle class="k-paper" cx="32" cy="36.5" r="6"/>
+    <path class="k-paper" d="M22.5 51c0-5.5 4.2-8 9.5-8s9.5 2.5 9.5 8z"/>
+    <rect class="k-gold" x="20" y="54" width="24" height="4" rx="2"/>
+  </symbol>
+  <symbol id="i-gate" viewBox="0 0 64 64">
+    <rect class="k-ink" x="4" y="4" width="40" height="58" rx="3"/>
+    <rect fill="currentColor" x="8" y="8" width="32" height="54" rx="2"/>
+    <rect class="k-paper" opacity=".25" x="13" y="13" width="22" height="18" rx="2"/>
+    <circle class="k-gold" cx="34" cy="38" r="2.6"/>
+    <rect class="k-ink" x="48" y="24" width="12" height="19" rx="2.5"/>
+    <circle class="k-good" cx="54" cy="30" r="2.6"/>
+    <rect class="k-paper" x="51" y="36" width="6" height="2.2" rx="1.1"/>
+  </symbol>
+  <symbol id="i-files" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="4" width="40" height="58" rx="3"/>
+    <rect class="k-paper" opacity=".22" x="16" y="9" width="32" height="15" rx="2"/>
+    <rect class="k-paper" opacity=".22" x="16" y="26.5" width="32" height="15" rx="2"/>
+    <rect class="k-paper" opacity=".22" x="16" y="44" width="32" height="15" rx="2"/>
+    <rect class="k-paper" x="27" y="14.5" width="10" height="4" rx="2"/>
+    <rect class="k-paper" x="27" y="32" width="10" height="4" rx="2"/>
+    <rect class="k-paper" x="27" y="49.5" width="10" height="4" rx="2"/>
+  </symbol>
+  <symbol id="i-lock" viewBox="0 0 64 64">
+    <path class="ks-ink" stroke-width="5" d="M20 29v-8a12 12 0 0 1 24 0v8"/>
+    <rect fill="currentColor" x="10" y="27" width="44" height="33" rx="5"/>
+    <circle class="k-paper" cx="21" cy="43.5" r="3.2"/>
+    <circle class="k-paper" cx="32" cy="43.5" r="3.2"/>
+    <circle class="k-paper" cx="43" cy="43.5" r="3.2"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Spring</span><span aria-hidden="true">/</span><span class="tb-here">Spring Security 认证授权</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING SECURITY · AUTHENTICATION · AUTHORIZATION</p>
+  <h1>先认人，再放行</h1>
+  <p class="lead">Spring Security 是站在 Controller 前面的一排保安。每个请求都要先过这一关：先查清你是谁，再看你能进哪扇门。</p>
+
+  <div class="q2">
+    <div class="q" data-role="desk"><span class="q-big">认证</span><span class="q-ask">你是谁？</span><span class="q-no">Authentication · 认不出你，返回 <b>401</b></span></div>
+    <div class="q" data-role="gate"><span class="q-big">授权</span><span class="q-ask">你能干什么？</span><span class="q-no">Authorization · 认得你但不让进，返回 <b>403</b></span></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="guard">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">保安队<code>SecurityFilterChain</code></div>
+        <p>一排过滤器，每人只管一件事。请求<b>从头走到尾</b>。</p>
+        <span class="belong">本质是一个 Servlet Filter</span>
+      </div>
+    </div>
+    <div class="who" data-role="desk">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-desk"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">核验台<code>AuthenticationManager</code></div>
+        <p>核对身份：<b>查档案、比密码、验 token</b>。</p>
+        <span class="belong">认证：你是谁</span>
+      </div>
+    </div>
+    <div class="who" data-role="badge">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">工牌<code>Authentication</code></div>
+        <p>核验通过就发一张，挂在当前线程上，<b>后面谁都能看</b>。</p>
+        <span class="belong">放在 SecurityContextHolder 里</span>
+      </div>
+    </div>
+    <div class="who" data-role="gate">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gate"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">门禁<code>AuthorizationManager</code></div>
+        <p>看工牌上的权限，决定<b>这扇门让不让进</b>。</p>
+        <span class="belong">授权：你能干什么</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="desk"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><span><b>档案柜</b> UserDetailsService，按用户名查用户</span></span>
+    <span class="ex" data-role="desk"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><span><b>密码比对器</b> PasswordEncoder</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg><span><b>翻译官</b> ExceptionTranslationFilter，把拒绝翻成 401 或 403</span></span>
+  </div>
+</header>
+
+<!-- ================= DEFAULT ================= -->
+<section id="default">
+  <div>
+    <h2>只加一个依赖，会发生什么</h2>
+    <p class="lead">什么都不配，Spring Boot 也会先给你一套能用的默认值。</p>
+  </div>
+  <div class="dstage">
+    <div class="dleft">
+      <div class="codebox">
+        <div class="code-bar"><code>pom.xml</code></div>
+<pre><code>&lt;dependency&gt;
+    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+    &lt;artifactId&gt;spring-boot-starter-security&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+      </div>
+      <div class="console" aria-label="启动日志">
+        <div class="console-h">启动日志</div>
+        <div class="log">Using generated security password: <span class="pw">8e557245-73e2-4286-969a-ff57fe326336</span></div>
+        <div class="log dim">This generated password is for development use only. Your security configuration must be updated before running your application in production.</div>
+      </div>
+    </div>
+    <div class="dtiles">
+      <div class="dt" data-role="gate"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gate"/></svg><b>所有接口都要登录</b><p>访问任何地址，都先被带去登录页。</p></div>
+      <div class="dt" data-role="guard"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg><b>送一个登录页</b><p><code>/login</code> 表单、<code>/logout</code> 都是自动生成的，还支持 HTTP Basic。</p></div>
+      <div class="dt" data-role="desk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><b>送一个账号</b><p>用户名 <code>user</code>，密码每次启动随机生成，印在日志里。</p></div>
+      <div class="dt" data-role="badge"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>默认防护全开</b><p>CSRF 校验、安全响应头、登录后换一个新的 Session ID。</p></div>
+    </div>
+  </div>
+  <div class="note-box"><b>和第 03 篇的关系</b><span>这些都是自动配置给的默认值，带着 <code>@ConditionalOnMissingBean</code> 这类条件：你声明了自己的 <code>SecurityFilterChain</code>，默认的链就让位；声明了自己的 <code>UserDetailsService</code>，<code>user</code> 这个账号就消失。</span></div>
+</section>
+
+<!-- ================= WHERE ================= -->
+<section id="where">
+  <div>
+    <h2>保安站在哪</h2>
+    <p class="lead">Spring Security 整个就是一个 Servlet Filter，挂在 Tomcat 的过滤器链上，比 DispatcherServlet 还早。</p>
+  </div>
+  <div class="flow">
+    <span class="fn req">请求</span><span class="fa" aria-hidden="true">→</span>
+    <div class="fgroup"><small>Tomcat 的过滤器链</small><div class="fg-in"><span class="fn sm">CharacterEncodingFilter</span><span class="fn sm hot">DelegatingFilterProxy</span><span class="fn sm">你自己的 Filter</span></div></div><span class="fa" aria-hidden="true">→</span>
+    <span class="fn">DispatcherServlet</span><span class="fa" aria-hidden="true">→</span>
+    <span class="fn">拦截器</span><span class="fa" aria-hidden="true">→</span>
+    <span class="fn">Controller</span>
+  </div>
+  <div class="zoom">
+    <div class="zoom-h">放大看 DelegatingFilterProxy</div>
+    <div class="zrow">
+      <div class="zn"><b>DelegatingFilterProxy</b><p>登记在 Tomcat 里的普通 Filter。自己不干活，只转交。</p></div>
+      <span class="fa" aria-hidden="true">→</span>
+      <div class="zn"><b>FilterChainProxy</b><p>Spring 容器里的 Bean，名字叫 <code>springSecurityFilterChain</code>。按 URL 挑一条链。</p></div>
+      <span class="fa" aria-hidden="true">→</span>
+      <div class="chains">
+        <div class="ch first"><span class="ch-m">/api/**</span><span class="ch-f">BearerToken → Anonymous → ExceptionTranslation → Authorization</span></div>
+        <div class="ch"><span class="ch-m">/**</span><span class="ch-f">Csrf → Logout → UsernamePassword → … → Authorization</span></div>
+        <small>可以有多条 SecurityFilterChain，按 @Order 排队，只走第一条匹配的。GET /api/orders 走第一条，第二条不再看。</small>
+      </div>
+    </div>
+    <p class="why-proxy"><b>为什么要转一手？</b>Tomcat 启动时就要拿到所有 Filter，那时 Spring 的 Bean 不一定造好了。先放一个代理占位，等请求来了，再去容器里找这个 Bean。</p>
+  </div>
+  <div class="minis">
+    <div class="mini"><b>比拦截器、Controller 都早</b><p>没过门禁的请求，到不了 DispatcherServlet。</p></div>
+    <div class="mini"><b>@ControllerAdvice 管不到它</b><p>过滤器里抛的异常不经过 Spring MVC。<a href="spring-web-gates.html">第 01 篇</a>讲过。</p></div>
+    <div class="mini"><b>站位可以调</b><p>Boot 里由 <code>spring.security.filter.order</code> 决定，默认 -100。</p></div>
+  </div>
+</section>
+
+<!-- ================= LINEUP ================= -->
+<section id="lineup">
+  <div>
+    <h2>保安队名单</h2>
+    <p class="lead">按真实执行顺序排。每人只管一件事，不归自己管就放行。用了哪些功能，链上才有哪些人。</p>
+  </div>
+  <div class="lanes">
+    <div class="lane" data-role="other">
+      <div class="lane-l"><b>准备</b><small>先把场子收拾好</small></div>
+      <div class="lane-s">
+        <div class="stn k" data-role="badge"><span class="n">1</span><b>取工牌</b><code>SecurityContextHolderFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">2</span><b>加安全响应头</b><code>HeaderWriterFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">3</span><b>跨域</b><code>CorsFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">4</span><b>查 CSRF 令牌</b><code>CsrfFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">5</span><b>处理 /logout</b><code>LogoutFilter</code></div>
+      </div>
+    </div>
+    <div class="lane" data-role="desk">
+      <div class="lane-l"><b>认证</b><small>各认各的凭证</small></div>
+      <div class="lane-s">
+        <div class="stn k"><span class="n">6</span><b>表单 POST /login</b><code>UsernamePasswordAuthenticationFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn k"><span class="n">7</span><b>Bearer token</b><code>BearerTokenAuthenticationFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">8</span><b>Basic 请求头</b><code>BasicAuthenticationFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">9</span><b>记住我 Cookie</b><code>RememberMeAuthenticationFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">10</span><b>没工牌就发游客牌</b><code>AnonymousAuthenticationFilter</code></div>
+      </div>
+    </div>
+    <div class="lane" data-role="gate">
+      <div class="lane-l"><b>兜底 + 门禁</b><small>最后两关</small></div>
+      <div class="lane-s">
+        <div class="stn k" data-role="other"><span class="n">11</span><b>接住异常，翻成 401 / 403</b><code>ExceptionTranslationFilter</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn k"><span class="n">12</span><b>门禁：能不能进</b><code>AuthorizationFilter</code></div>
+      </div>
+    </div>
+  </div>
+  <p class="tip">想看自己项目的完整名单：配上 <code>logging.level.org.springframework.security=TRACE</code>，每个请求经过了哪几个过滤器，会逐个打印出来。</p>
+</section>
+
+<!-- ================= WALK ================= -->
+<section id="walk">
+  <div>
+    <h2>跟着一个请求走一遍</h2>
+    <p class="lead">选一个剧情，一步一步看：请求走到了哪个保安面前，核验台在干什么，工牌上写着什么，最后返回了什么。</p>
+  </div>
+
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-login" data-scene="login" aria-pressed="true">登录成功</button>
+    <button class="tab" id="sc-bad" data-scene="bad" aria-pressed="false">密码输错</button>
+    <button class="tab" id="sc-anon" data-scene="anon" aria-pressed="false">没登录就访问</button>
+    <button class="tab" id="sc-ok" data-scene="ok" aria-pressed="false">已登录访问</button>
+    <button class="tab" id="sc-deny" data-scene="deny" aria-pressed="false">权限不够</button>
+    <button class="tab" id="sc-jwt" data-scene="jwt" aria-pressed="false">带 JWT 访问</button>
+  </div>
+
+  <div class="sim">
+    <div class="track">
+      <div class="reqline" id="reqline">POST /login</div>
+      <ol class="gsl">
+        <li class="gs" id="g0"><span class="n">1</span><span class="gs-t"><b>取工牌</b><code>SecurityContextHolderFilter</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g1"><span class="n">2</span><span class="gs-t"><b>查 CSRF 令牌</b><code>CsrfFilter</code><i class="off">这条链关掉了</i></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g2"><span class="n">3</span><span class="gs-t"><b>处理 /logout</b><code>LogoutFilter</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g3"><span class="n">4</span><span class="gs-t"><b>表单登录</b><code>UsernamePasswordAuthenticationFilter</code><i class="opt">formLogin()</i><i class="off">这条链没配</i></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g4"><span class="n">5</span><span class="gs-t"><b>Bearer token</b><code>BearerTokenAuthenticationFilter</code><i class="opt">oauth2ResourceServer()</i><i class="off">这条链没配</i></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g5"><span class="n">6</span><span class="gs-t"><b>发游客牌</b><code>AnonymousAuthenticationFilter</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g6"><span class="n">7</span><span class="gs-t"><b>翻译官</b><code>ExceptionTranslationFilter</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g7"><span class="n">8</span><span class="gs-t"><b>门禁</b><code>AuthorizationFilter</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs-sep">Spring Security 到此为止</li>
+        <li class="gs" id="g8"><span class="n">→</span><span class="gs-t"><b>终点</b><code>DispatcherServlet → 拦截器 → Controller</code></span><span class="mk" aria-hidden="true"></span></li>
+      </ol>
+      <small class="track-foot">只列了和剧情有关的几位。Spring Security 5 里，第 1 位叫 SecurityContextPersistenceFilter，门禁叫 FilterSecurityInterceptor。</small>
+    </div>
+    <div class="side">
+      <div class="box" id="box-bdg" data-role="badge"><h3>工牌 · SecurityContextHolder</h3><div id="bdg"></div><div class="sess" id="sess"></div></div>
+      <div class="box" id="box-desk" data-role="desk"><h3>核验台 · AuthenticationManager</h3><div id="desk"></div></div>
+      <div class="box" id="box-resp" data-role="other"><h3>返回给浏览器</h3><div id="resp"></div></div>
+    </div>
+  </div>
+
+  <div class="cap" id="cap" data-role="guard" aria-live="polite">
+    <div class="cap-n" id="capN">1/9</div>
+    <div class="cap-who"><code id="capCall">SecurityContextHolderFilter</code></div>
+    <div class="cap-say" id="capSay"></div>
+  </div>
+  <div class="ctrl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+</section>
+
+<!-- ================= BADGE ================= -->
+<section id="badge">
+  <div>
+    <h2>工牌长什么样，怎么拿到</h2>
+    <p class="lead">三层套娃。最外层挂在当前线程上，所以同一个请求里，Controller、Service 哪儿都能取到。</p>
+  </div>
+  <div class="bstage">
+    <div class="dl d1">
+      <div class="dl-l"><b>SecurityContextHolder</b><small>挂在当前线程上（ThreadLocal）</small></div>
+      <div class="dl d2">
+        <div class="dl-l"><b>SecurityContext</b><small>工牌套</small></div>
+        <div class="dl d3">
+          <div class="dl-l"><b>Authentication</b><small>工牌本身</small></div>
+          <div class="fields">
+            <div class="fd"><code>principal</code><span>你是谁。登录后通常是一个 UserDetails</span></div>
+            <div class="fd"><code>credentials</code><span>凭证，比如密码。认证完就擦掉</span></div>
+            <div class="fd"><code>authorities</code><span>权限清单：<code>ROLE_USER</code>、<code>order:read</code> …</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="bright">
+      <div class="codebox">
+        <div class="code-bar"><span>在代码里拿当前用户</span></div>
+<pre><code><span class="cm">// 同一个请求线程里，哪儿都能取</span>
+Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+String name = auth.getName();                        <span class="cm">// "tom"</span>
+
+<span class="cm">// Controller 里更省事</span>
+<span class="an">@GetMapping</span>(<span class="st-s">"/me"</span>)
+<span class="kw">public</span> String me(<span class="an">@AuthenticationPrincipal</span> UserDetails user) {
+    <span class="kw">return</span> user.getUsername();
+}</code></pre>
+      </div>
+      <ul class="facts">
+        <li>请求结束就清空，线程要还给线程池。下一个请求靠 Session 或 token 重新找回来。</li>
+        <li>换了线程就没了：<code>@Async</code>、自己开的线程池里取到的是空的。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DESK ================= -->
+<section id="desk-in">
+  <div>
+    <h2>核验台里面</h2>
+    <p class="lead">进去一张“待核验单”，出来一张“正式工牌”。是同一个类，只是从“没认证”变成了“认证过”。</p>
+  </div>
+  <div class="dflow">
+    <div class="tk pend">
+      <small>进去的</small>
+      <b>待核验单</b>
+      <code>UsernamePasswordAuthenticationToken</code>
+      <dl><dt>principal</dt><dd>"tom"</dd><dt>credentials</dt><dd>"123456"</dd><dt>认证过</dt><dd>否</dd></dl>
+    </div>
+    <span class="fa" aria-hidden="true">→</span>
+    <div class="dkb">
+      <div class="dkb-h"><b>ProviderManager</b><small>AuthenticationManager 的默认实现。挨个问 Provider：这种单子你管吗？</small></div>
+      <div class="prov">
+        <b>DaoAuthenticationProvider</b>
+        <div class="pstep"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><span><code>UserDetailsService</code> 按用户名查出 <code>UserDetails</code>：密文密码、权限、账号有没有被锁</span></div>
+        <div class="pstep"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><span><code>PasswordEncoder</code> 比对 "123456" 和 <code>{bcrypt}$2a$10$…</code></span></div>
+      </div>
+      <div class="prov dim"><b>其他 Provider</b><span>管 JWT、LDAP、记住我……这次轮不到</span></div>
+    </div>
+    <span class="fa" aria-hidden="true">→</span>
+    <div class="tk ok">
+      <small>出来的</small>
+      <b>正式工牌</b>
+      <code>UsernamePasswordAuthenticationToken</code>
+      <dl><dt>principal</dt><dd>UserDetails(tom)</dd><dt>credentials</dt><dd>null，擦掉了</dd><dt>authorities</dt><dd>[ROLE_USER]</dd><dt>认证过</dt><dd>是</dd></dl>
+    </div>
+  </div>
+  <div class="dcode">
+    <div class="codebox">
+      <div class="code-bar"><span>你要写的，通常只有这两个 Bean</span></div>
+<pre><code><span class="an">@Bean</span>
+UserDetailsService userDetailsService(UserMapper mapper) {
+    <span class="kw">return</span> username -&gt; {
+        UserEntity u = mapper.findByUsername(username);
+        <span class="kw">if</span> (u == <span class="kw">null</span>) <span class="kw">throw new</span> UsernameNotFoundException(username);
+        <span class="kw">return</span> User.withUsername(u.getUsername())
+                .password(u.getPassword())   <span class="cm">// 库里存的是 {bcrypt}$2a$10$…</span>
+                .roles(u.getRole())          <span class="cm">// "USER" 会变成 ROLE_USER</span>
+                .build();
+    };
+}
+
+<span class="an">@Bean</span>
+PasswordEncoder passwordEncoder() {
+    <span class="kw">return</span> PasswordEncoderFactories.createDelegatingPasswordEncoder();  <span class="cm">// 默认 bcrypt</span>
+}</code></pre>
+    </div>
+    <ul class="facts">
+      <li>声明了这两个 Bean，Spring Security 会自己把 DaoAuthenticationProvider 装好。</li>
+      <li>用户不存在，也只说“用户名或密码错误”。默认把 <code>UsernameNotFoundException</code> 换成 <code>BadCredentialsException</code>，免得被人试出哪些账号存在。</li>
+      <li><code>{bcrypt}</code> 前缀决定用哪种算法。以后换算法，老用户的密码照样能比对。</li>
+      <li>JWT、LDAP、记住我，用的是同一个总管，只是换了一个 Provider。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= AUTHZ ================= -->
+<section id="authz">
+  <div>
+    <h2>授权：两道门</h2>
+    <p class="lead">第一道门在过滤器链的最后一关，按 URL 管；第二道门在方法外面，按方法管。</p>
+  </div>
+  <div class="twin">
+    <div class="tw" data-role="gate">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gate"/></svg>
+      <div>
+        <h3>第一道门：按 URL<code>authorizeHttpRequests → AuthorizationFilter</code></h3>
+        <p>看请求的地址和方法。粗粒度，一整片 URL 一起管。</p>
+      </div>
+    </div>
+    <div class="tw" data-role="gate">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg>
+      <div>
+        <h3>第二道门：按方法<code>@PreAuthorize → AOP 代理</code></h3>
+        <p>进了 Controller 之后，在 Service 方法外面再查一次。细粒度，能拿参数、返回值来判断。</p>
+        <p class="dim">靠 AOP 代理实现，所以<a href="spring-aop-tx.html">第 02 篇</a>说的“自己调自己不生效”，这里一样。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="rt">
+    <div class="rt-h">第一道门的规则，试一试</div>
+    <div class="seg" role="group" aria-label="谁来访问"><span class="seg-l">谁</span>
+      <button class="tab" id="w-anon" data-who="anon" aria-pressed="false">游客</button>
+      <button class="tab" id="w-tom" data-who="tom" aria-pressed="true">tom · ROLE_USER</button>
+      <button class="tab" id="w-amy" data-who="amy" aria-pressed="false">amy · ROLE_ADMIN、order:delete</button>
+    </div>
+    <div class="seg" role="group" aria-label="请求"><span class="seg-l">请求</span>
+      <button class="tab" id="q-pub" data-req="pub" aria-pressed="false"><code>GET /public/hello</code></button>
+      <button class="tab" id="q-get" data-req="get" aria-pressed="false"><code>GET /orders/7</code></button>
+      <button class="tab" id="q-del" data-req="del" aria-pressed="true"><code>DELETE /orders/7</code></button>
+      <button class="tab" id="q-adm" data-req="adm" aria-pressed="false"><code>GET /admin/users</code></button>
+    </div>
+    <div class="rt-body">
+      <div class="rules">
+        <div class="rl-x">http.authorizeHttpRequests(a -&gt; a</div>
+        <div class="rl" id="r0"><code>.requestMatchers("/login", "/public/**").permitAll()</code><span class="rs-tag"></span></div>
+        <div class="rl" id="r1"><code>.requestMatchers("/admin/**").hasRole("ADMIN")</code><span class="rs-tag"></span></div>
+        <div class="rl" id="r2"><code>.requestMatchers(HttpMethod.DELETE, "/orders/**").hasAuthority("order:delete")</code><span class="rs-tag"></span></div>
+        <div class="rl" id="r3"><code>.anyRequest().authenticated()</code><span class="rs-tag"></span></div>
+        <div class="rl-x">);</div>
+      </div>
+      <div class="rt-res" id="rtRes" data-role="gate" aria-live="polite">
+        <span class="rt-code" id="rtCode">403</span>
+        <span class="rt-t" id="rtT">不让进</span>
+        <span class="rt-why" id="rtWhy"></span>
+      </div>
+    </div>
+  </div>
+  <div class="note-box"><b>两条规矩</b><span>从上往下，第一条命中的说了算，后面的不再看，所以越具体的越要往上写；<code>anyRequest()</code> 只能放最后，写在它后面启动就报错。另外 <code>hasRole("ADMIN")</code> 就是 <code>hasAuthority("ROLE_ADMIN")</code>，角色只是带 <code>ROLE_</code> 前缀的权限。</span></div>
+
+  <div class="codebox">
+    <div class="code-bar"><span>第二道门：写在方法上</span></div>
+<pre><code><span class="an">@Service</span>
+<span class="kw">public class</span> OrderService {
+
+    <span class="an">@PreAuthorize</span>(<span class="st-s">"hasAuthority('order:delete')"</span>)
+    <span class="kw">public void</span> delete(Long id) { … }
+
+    <span class="an">@PreAuthorize</span>(<span class="st-s">"#username == authentication.name"</span>)          <span class="cm">// 只能查自己的</span>
+    <span class="kw">public</span> List&lt;Order&gt; listOf(String username) { … }
+
+    <span class="an">@PostAuthorize</span>(<span class="st-s">"returnObject.owner == authentication.name"</span>)  <span class="cm">// 先执行，再看结果给不给</span>
+    <span class="kw">public</span> Order get(Long id) { … }
+}</code></pre>
+  </div>
+
+  <div>
+    <h3>401 还是 403，谁说了算</h3>
+    <p class="lead">被拒绝之后，ExceptionTranslationFilter 看你手里拿的是什么牌，再决定交给谁。</p>
+  </div>
+  <div class="dec">
+    <div class="dr" data-role="desk">
+      <div class="dr-a"><b>认证失败</b><small>密码错、token 过期或被改过</small></div>
+      <span class="fa" aria-hidden="true">→</span>
+      <div class="dr-b">认证过滤器当场处理：表单登录跳回 <code>/login?error</code>，Bearer token 交给 <code>AuthenticationEntryPoint</code></div>
+      <div class="dr-c">401<small>或回登录页</small></div>
+    </div>
+    <div class="dr" data-role="desk">
+      <div class="dr-a"><b>不让进 · 手里是游客牌</b><small>还没登录</small></div>
+      <span class="fa" aria-hidden="true">→</span>
+      <div class="dr-b"><code>AuthenticationEntryPoint</code>：先记下这次请求，登录后跳回来</div>
+      <div class="dr-c">401<small>或去登录页</small></div>
+    </div>
+    <div class="dr" data-role="gate">
+      <div class="dr-a"><b>不让进 · 手里是正式工牌</b><small>登录了，权限不够</small></div>
+      <span class="fa" aria-hidden="true">→</span>
+      <div class="dr-b"><code>AccessDeniedHandler</code>：再登录一次也没用</div>
+      <div class="dr-c">403<small>Forbidden</small></div>
+    </div>
+  </div>
+  <p class="tip"><code>@PreAuthorize</code> 抛出的 <code>AccessDeniedException</code> 也会一路冒泡到 ExceptionTranslationFilter，按上表分拣。前提是中途没被你的 <code>@ControllerAdvice</code> 接走。</p>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：流程没变，写法变了</h2>
+    <p class="lead">Boot 2 配 Spring Security 5，Boot 3 配 Spring Security 6。保安队、核验台、工牌、门禁这套模型没变。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Security 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <div class="codebox">
+<pre><code><span class="an">@EnableWebSecurity</span>
+<span class="kw">public class</span> SecurityConfig <span class="kw">extends</span> WebSecurityConfigurerAdapter {
+    <span class="an">@Override</span>
+    <span class="kw">protected void</span> configure(HttpSecurity http) <span class="kw">throws</span> Exception {
+        http.authorizeRequests()
+                .antMatchers(<span class="st-s">"/public/**"</span>).permitAll()
+                .antMatchers(<span class="st-s">"/admin/**"</span>).hasRole(<span class="st-s">"ADMIN"</span>)
+                .anyRequest().authenticated()
+            .and()
+            .formLogin();
+    }
+}</code></pre>
+      </div>
+      <ul>
+        <li>继承 <code>WebSecurityConfigurerAdapter</code>，重写 <code>configure</code>。5.7 起标记过时</li>
+        <li><code>authorizeRequests()</code> + <code>antMatchers</code>，门禁叫 <code>FilterSecurityInterceptor</code></li>
+        <li>方法注解要手动打开：<code>@EnableGlobalMethodSecurity(prePostEnabled = true)</code></li>
+        <li>请求结束时，<code>SecurityContextPersistenceFilter</code> 自动把工牌存回 Session</li>
+        <li><code>javax.servlet</code> 包。Boot 2.7（Security 5.7、5.8）已经能用右边的新写法，升级前先在这一步改</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Security 6 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <div class="codebox">
+<pre><code><span class="an">@Configuration</span>
+<span class="an">@EnableWebSecurity</span>
+<span class="an">@EnableMethodSecurity</span>
+<span class="kw">public class</span> SecurityConfig {
+    <span class="an">@Bean</span>
+    SecurityFilterChain web(HttpSecurity http) <span class="kw">throws</span> Exception {
+        http.authorizeHttpRequests(a -&gt; a
+                .requestMatchers(<span class="st-s">"/public/**"</span>).permitAll()
+                .requestMatchers(<span class="st-s">"/admin/**"</span>).hasRole(<span class="st-s">"ADMIN"</span>)
+                .anyRequest().authenticated())
+            .formLogin(Customizer.withDefaults());
+        <span class="kw">return</span> http.build();
+    }
+}</code></pre>
+      </div>
+      <ul>
+        <li><code>WebSecurityConfigurerAdapter</code> 删除，只能声明 <code>SecurityFilterChain</code> Bean</li>
+        <li><code>authorizeHttpRequests()</code> + <code>requestMatchers</code>，门禁换成 <code>AuthorizationFilter</code>；<code>antMatchers</code>、<code>mvcMatchers</code> 删除</li>
+        <li><code>@EnableMethodSecurity</code>，<code>@PreAuthorize</code> 默认就开；<code>@EnableWebSecurity</code> 不再自带 <code>@Configuration</code>，要自己加</li>
+        <li><code>SecurityContextHolderFilter</code> 只取不存：自己写的登录接口，要手动保存工牌</li>
+        <li>门禁对每次派发都检查，转发到 <code>/error</code> 也要过</li>
+        <li><code>jakarta.servlet</code> 包；<code>.and()</code> 写法 6.1 起标记过时，统一用 lambda</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>过滤器链模型</span><span>认证三件套</span><span>工牌放在 SecurityContextHolder</span><span>401 / 403 的分工</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">多数是没想清楚：这一刻请求走到了哪个保安面前，手里拿的是什么牌。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="guard"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg><b>用 Postman 发 POST，一律 403</b><p>CSRF 默认开着，没带令牌就拒。用 Session 登录的页面要带上 <code>_csrf</code>；纯 token 的 API 可以 <code>csrf(c -&gt; c.disable())</code>。</p></div>
+    <div class="pit" data-role="gate"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gate"/></svg><b>hasRole("ADMIN") 一直 403</b><p>库里存的权限是 <code>ADMIN</code>，hasRole 查的却是 <code>ROLE_ADMIN</code>。存成 ROLE_ADMIN，或者改用 <code>hasAuthority("ADMIN")</code>。</p></div>
+    <div class="pit" data-role="desk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>There is no PasswordEncoder mapped for the id "null"</b><p>库里的密码是明文，或者没有 <code>{bcrypt}</code> 这样的前缀。用 PasswordEncoder 加密后再存。</p></div>
+    <div class="pit" data-role="guard"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg><b>自己写的 JWT 过滤器，一个请求执行两次</b><p>标了 <code>@Component</code>，Boot 又把它注册成了普通 Filter。去掉 @Component 直接 new，或者用 <code>FilterRegistrationBean</code> 关掉自动注册。</p></div>
+    <div class="pit" data-role="guard"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg><b>token 过期的异常，@ControllerAdvice 接不到</b><p>是过滤器里抛的，不经过 Spring MVC。用 <code>AuthenticationEntryPoint</code> 统一返回 401 JSON。</p></div>
+    <div class="pit" data-role="gate"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gate"/></svg><b>@PreAuthorize 拒绝后，前端拿到的是 500</b><p>全局 <code>@ExceptionHandler(Exception.class)</code> 先把 <code>AccessDeniedException</code> 吃掉了。单独接住它再抛出去，交还给 Spring Security。</p></div>
+    <div class="pit" data-role="gate"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gate"/></svg><b>permitAll 的接口一报错，返回的却是 401</b><p>出错后会转发到 <code>/error</code>，而 /error 没放行。把 <code>"/error"</code> 也加进 permitAll。</p></div>
+    <div class="pit" data-role="badge"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg><b>@Async、线程池里拿不到当前用户</b><p>工牌挂在 ThreadLocal 上，换了线程就没了。用 <code>DelegatingSecurityContextExecutor</code> 包一下线程池。</p></div>
+    <div class="pit" data-role="badge"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg><b>判断“登录了没有”，游客也算登录了</b><p>游客牌的 <code>isAuthenticated()</code> 也返回 true。要排除 <code>AnonymousAuthenticationToken</code>，或者用 <code>AuthenticationTrustResolver.isAnonymous(…)</code>。</p></div>
+    <div class="pit" data-role="badge"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg><b>Security 6 自己写登录接口，下一个请求又成了游客</b><p>6 里工牌不会自动存回 Session。认证成功后要调用 <code>securityContextRepository.saveContext(…)</code>。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Spring Security 5 / 6、Spring Boot 2 / 3 为例。同系列：<a href="spring-web-gates.html">Spring MVC 请求关卡</a> · <a href="spring-aop-tx.html">Spring AOP 与事务</a> · <a href="spring-boot-autoconfig.html">Spring Boot 自动配置</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- walk-through ---------- */
+  var N=9;
+  var BDG={
+    anon:{who:'anonymousUser',type:'AnonymousAuthenticationToken',st:'游客牌',auth:['ROLE_ANONYMOUS']},
+    user:{who:'tom',type:'UsernamePasswordAuthenticationToken',st:'正式工牌',auth:['ROLE_USER']},
+    jwt:{who:'tom',type:'JwtAuthenticationToken',st:'正式工牌',auth:['SCOPE_order:read']}
+  };
+  var DESK={
+    form:[['ProviderManager','总管'],['DaoAuthenticationProvider','管用户名密码'],['UserDetailsService','查档案'],['PasswordEncoder','比密码']],
+    jwt:[['ProviderManager','总管'],['JwtAuthenticationProvider','管 JWT'],['JwtDecoder','验签名、看过期']]
+  };
+  var SESS=['Session 里：<b>没有</b>','Session 里：<b>存着一份</b>','<b>不建 Session</b>，每次都带 token'];
+  var GO_BACK={code:'302',t:'跳回登录前想去的页面，没有就回首页',ok:1};
+
+  function login(ok){
+    var pw = ok ? '123456' : '654321', hand='tom / '+pw;
+    var s=[
+      {at:0, bdg:'', sess:0, hl:'bdg', call:'SecurityContextHolderFilter', say:'请求进门。先去 Session 里找上次存的工牌：没有，手里空着。'},
+      {at:1, bdg:'', sess:0, call:'CsrfFilter', say:'POST 请求要查 CSRF 令牌。登录表单里藏着一个 _csrf，对得上，放行。'},
+      {at:3, bdg:'', sess:0, hl:'desk', desk:{c:'form',on:0,hand:hand}, call:'UsernamePasswordAuthenticationFilter', say:'认出这是 POST /login。把用户名和密码包成一张“待核验”单，交给核验台。'},
+      {at:3, bdg:'', sess:0, hl:'desk', desk:{c:'form',on:1,hand:hand}, call:'providerManager.authenticate(token)', say:'总管挨个问 Provider：这种单子谁管？DaoAuthenticationProvider 接了。'},
+      {at:3, bdg:'', sess:0, hl:'desk', desk:{c:'form',on:2,hand:hand}, call:'userDetailsService.loadUserByUsername("tom")', say:'按用户名查档案：找到 tom，库里的密码是 {bcrypt}$2a$10$…，角色 USER。'}
+    ];
+    if(ok){
+      s.push({at:3, bdg:'', sess:0, hl:'desk', desk:{c:'form',on:3,hand:hand}, call:'passwordEncoder.matches("123456", "{bcrypt}…")', say:'用库里密文带的盐，把 123456 算一遍再比：对上了。'});
+      s.push({at:3, bdg:'user', sess:1, hl:'bdg', desk:{c:'form',on:4}, call:'SecurityContextHolder.setContext(…)', say:'核验通过，换发正式工牌：tom，ROLE_USER，密码已经擦掉。放进 SecurityContextHolder，再往 Session 里存一份。'});
+      s.push({at:3, bdg:'user', sess:1, hl:'resp', desk:{c:'form',on:4}, marks:{3:'done'}, resp:GO_BACK, kind:'done', call:'AuthenticationSuccessHandler', say:'登录请求到这里就结束了，不往下走，也不进 Controller。成功处理器让浏览器跳回原来想去的页面。'});
+      s.push({at:0, reach:3, bdg:'', sess:1, hl:'bdg', desk:{c:'form',on:4}, marks:{3:'done'}, resp:GO_BACK, kind:'done', call:'SecurityContextHolder.clearContext()', say:'响应返回时，SecurityContextHolderFilter 把当前线程上的工牌清掉，线程要还给线程池。下一个请求，再从 Session 里把工牌找回来。'});
+    } else {
+      s.push({at:3, bdg:'', sess:0, hl:'desk', desk:{c:'form',on:3,bad:1,hand:hand}, kind:'fail', call:'passwordEncoder.matches("654321", "{bcrypt}…")', say:'把 654321 算一遍，和库里的密文对不上，抛出 BadCredentialsException。'});
+      s.push({at:3, bdg:'', sess:0, hl:'resp', desk:{c:'form',on:3,bad:1,hand:hand}, marks:{3:'bad'}, resp:{code:'302',t:'跳回 /login?error',ok:0}, kind:'fail', call:'AuthenticationFailureHandler', say:'不发工牌，交给失败处理器：跳回 /login?error，页面提示“用户名或密码错误”。前后端分离的项目，一般改成返回 401 JSON。'});
+    }
+    return s;
+  }
+
+  var SC={
+    login:{req:'POST /login   username=tom&password=123456&_csrf=…', gone:[4], steps:login(true)},
+    bad:{req:'POST /login   username=tom&password=654321&_csrf=…', gone:[4], steps:login(false)},
+    anon:{req:'GET /orders   （没带 Cookie）', gone:[4], steps:[
+      {at:0, bdg:'', sess:0, hl:'bdg', call:'SecurityContextHolderFilter', say:'Session 里没有工牌，手里空着。'},
+      {at:5, bdg:'anon', sess:0, hl:'bdg', call:'AnonymousAuthenticationFilter', say:'前面几位都说“不归我管”，走到这里还是没有工牌。发一张游客牌：anonymousUser，权限 ROLE_ANONYMOUS。'},
+      {at:6, bdg:'anon', sess:0, call:'ExceptionTranslationFilter', say:'这一位不拦人，只在后面兜着：后面谁抛出安全异常，由它来接。'},
+      {at:7, bdg:'anon', sess:0, marks:{7:'bad'}, kind:'fail', call:'AuthorizationFilter', say:'规则说 /orders 要 authenticated()。游客牌不算登录，拒绝，抛出 AccessDeniedException。'},
+      {at:6, reach:7, bdg:'anon', sess:0, marks:{7:'bad'}, kind:'fail', call:'ExceptionTranslationFilter 接住异常', say:'一看手里是游客牌，说明还没登录。先把这次请求记下来，登录成功后好跳回来。'},
+      {at:6, reach:7, bdg:'anon', sess:0, hl:'resp', marks:{7:'bad'}, resp:{code:'302',t:'跳到 /login。纯 API 项目返回 401',ok:0}, kind:'fail', call:'AuthenticationEntryPoint', say:'交给 AuthenticationEntryPoint：表单登录就跳到登录页；纯 API 项目返回 401 Unauthorized。'}
+    ]},
+    ok:{req:'GET /orders   Cookie: JSESSIONID=…', gone:[4], steps:[
+      {at:0, bdg:'user', sess:1, hl:'bdg', call:'SecurityContextHolderFilter', say:'带着 Cookie 来的。从 Session 里取出上次登录存的工牌：tom，ROLE_USER，放进 SecurityContextHolder。'},
+      {at:5, bdg:'user', sess:1, call:'AnonymousAuthenticationFilter', say:'已经有正式工牌，认证过滤器没事可做，游客牌也不用发，一路放行。'},
+      {at:7, bdg:'user', sess:1, marks:{7:'done'}, call:'AuthorizationFilter', say:'规则说 /orders 要 authenticated()。tom 拿的是正式工牌，放行。'},
+      {at:8, bdg:'user', sess:1, hl:'resp', marks:{7:'done'}, resp:{code:'200',t:'OK，返回订单列表',ok:1}, kind:'done', call:'OrderController.list()', say:'过了门禁，才轮到 DispatcherServlet、拦截器和 Controller。Controller 里用 @AuthenticationPrincipal 就能拿到 tom。'}
+    ]},
+    deny:{req:'GET /admin/users   Cookie: JSESSIONID=…（tom）', gone:[4], steps:[
+      {at:0, bdg:'user', sess:1, hl:'bdg', call:'SecurityContextHolderFilter', say:'从 Session 里取出 tom 的工牌，权限只有 ROLE_USER。'},
+      {at:7, bdg:'user', sess:1, marks:{7:'bad'}, kind:'fail', call:'AuthorizationFilter', say:'规则说 /admin/** 要 hasRole("ADMIN")，也就是要有 ROLE_ADMIN。tom 没有，拒绝，抛出 AccessDeniedException。'},
+      {at:6, reach:7, bdg:'user', sess:1, marks:{7:'bad'}, kind:'fail', call:'ExceptionTranslationFilter 接住异常', say:'一看手里是正式工牌，说明登录过，只是权限不够。让他再登录一次也没用。'},
+      {at:6, reach:7, bdg:'user', sess:1, hl:'resp', marks:{7:'bad'}, resp:{code:'403',t:'Forbidden',ok:0}, kind:'fail', call:'AccessDeniedHandler', say:'交给 AccessDeniedHandler，返回 403 Forbidden。'}
+    ]},
+    jwt:{req:'GET /orders   Authorization: Bearer eyJhbGciOi…', gone:[1,3], steps:[
+      {at:0, bdg:'', sess:2, hl:'bdg', call:'SecurityContextHolderFilter', say:'无状态 API 不建 Session，这里什么也取不到。这条链没配表单登录，CSRF 也关了。'},
+      {at:4, bdg:'', sess:2, hl:'desk', desk:{c:'jwt',on:0,hand:'eyJhbGciOi…'}, call:'BearerTokenAuthenticationFilter', say:'从请求头 Authorization: Bearer … 里取出 token，交给核验台。'},
+      {at:4, bdg:'', sess:2, hl:'desk', desk:{c:'jwt',on:1,hand:'eyJhbGciOi…'}, call:'providerManager.authenticate(token)', say:'总管一看是 JWT，交给 JwtAuthenticationProvider。'},
+      {at:4, bdg:'', sess:2, hl:'desk', desk:{c:'jwt',on:2,hand:'eyJhbGciOi…'}, call:'jwtDecoder.decode(token)', say:'验签名，看有没有过期：都没问题。读出 sub=tom，scope=order:read。'},
+      {at:4, bdg:'jwt', sess:2, hl:'bdg', desk:{c:'jwt',on:3}, call:'SecurityContextHolder.setContext(…)', say:'换成 JwtAuthenticationToken 放进 SecurityContextHolder，scope 变成权限 SCOPE_order:read。不存 Session，下次请求还得带 token。'},
+      {at:7, bdg:'jwt', sess:2, desk:{c:'jwt',on:3}, marks:{7:'done'}, call:'AuthorizationFilter', say:'规则说 /orders 要 hasAuthority("SCOPE_order:read")。有，放行。'},
+      {at:8, bdg:'jwt', sess:2, hl:'resp', desk:{c:'jwt',on:3}, marks:{7:'done'}, resp:{code:'200',t:'OK，返回订单列表',ok:1}, kind:'done', call:'OrderController.list()', say:'进入 Controller，返回订单列表。'}
+    ]}
+  };
+
+  function badgeHtml(k){
+    if(!k) return '<p class="empty">空：还没有工牌</p>';
+    var b=BDG[k];
+    return '<div class="bd'+(k==='anon'?' anon':'')+'"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-badge"/></svg><div class="bd-tx"><div class="bd-who"><b>'+esc(b.who)+'</b><span class="bd-st">'+b.st+'</span></div><code>'+b.type+'</code><div class="bd-auth">'+b.auth.map(function(a){return '<span>'+esc(a)+'</span>';}).join('')+'</div></div></div>';
+  }
+  function deskHtml(d){
+    if(!d) return '<p class="empty">这一步用不上</p>';
+    var ch=DESK[d.c];
+    var h='<ol class="dk">'+ch.map(function(x,i){
+      var c = i<d.on ? 'ok' : (i===d.on ? (d.bad?'bad':'on') : 'idle');
+      return '<li class="'+c+'"><span><b>'+x[0]+'</b><small>'+x[1]+'</small></span></li>';
+    }).join('')+'</ol>';
+    if(d.bad) h+='<p class="hand no">核验失败：BadCredentialsException</p>';
+    else if(d.on>=ch.length) h+='<p class="hand ok">核验通过</p>';
+    else if(d.hand) h+='<p class="hand">待核验：<code>'+esc(d.hand)+'</code></p>';
+    return h;
+  }
+  function respHtml(r){
+    if(!r) return '<p class="empty">还在路上……</p>';
+    return '<div class="rs"><span class="rs-c">'+r.code+'</span><span class="rs-t">'+esc(r.t)+'</span></div>';
+  }
+
+  var scene='login', pos=0, timer=null;
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  function render(){
+    var sc=SC[scene], s=sc.steps[pos], reach=(s.reach!=null?s.reach:s.at), marks=s.marks||{};
+    $('reqline').textContent=sc.req;
+    for(var i=0;i<N;i++){
+      var cls='';
+      if(sc.gone.indexOf(i)>=0) cls='gone';
+      else if(marks[i]) cls=marks[i];
+      else if(i===s.at) cls='on';
+      else if(i<=reach) cls='passed';
+      $('g'+i).className='gs'+(cls?' '+cls:'');
+    }
+    $('bdg').innerHTML=badgeHtml(s.bdg);
+    $('sess').innerHTML=SESS[s.sess];
+    $('desk').innerHTML=deskHtml(s.desk);
+    $('resp').innerHTML=respHtml(s.resp);
+    $('box-resp').setAttribute('data-role', s.resp ? (s.resp.ok?'done':'bad') : 'other');
+    $('box-bdg').classList.toggle('hl', s.hl==='bdg');
+    $('box-desk').classList.toggle('hl', s.hl==='desk');
+    $('box-resp').classList.toggle('hl', s.hl==='resp');
+    $('cap').setAttribute('data-role', s.kind==='fail' ? 'bad' : (s.kind==='done' ? 'done' : 'guard'));
+    $('capN').textContent=(pos+1)+'/'+sc.steps.length;
+    $('capCall').textContent=s.call;
+    $('capSay').textContent=s.say;
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===sc.steps.length-1;
+  }
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<SC[scene].steps.length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=SC[scene].steps.length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 2000);
+  });
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop(); scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+  $('walk').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+  render();
+
+  /* ---------- rule tester ---------- */
+  var WHO={
+    anon:{name:'游客',auth:['ROLE_ANONYMOUS'],anon:true},
+    tom:{name:'tom',auth:['ROLE_USER']},
+    amy:{name:'amy',auth:['ROLE_ADMIN','order:delete']}
+  };
+  var REQ={
+    pub:{m:'GET',p:'/public/hello'}, get:{m:'GET',p:'/orders/7'},
+    del:{m:'DELETE',p:'/orders/7'}, adm:{m:'GET',p:'/admin/users'}
+  };
+  var RULES=[
+    {hit:function(q){return q.p==='/login'||q.p.indexOf('/public/')===0;}, need:null},
+    {hit:function(q){return q.p.indexOf('/admin/')===0;}, need:'ROLE_ADMIN'},
+    {hit:function(q){return q.m==='DELETE'&&q.p.indexOf('/orders/')===0;}, need:'order:delete'},
+    {hit:function(){return true;}, need:'*'}
+  ];
+  var who='tom', req='del';
+  function decide(){
+    var q=REQ[req], u=WHO[who], h=0;
+    while(!RULES[h].hit(q)) h++;
+    for(var i=0;i<RULES.length;i++){
+      var el=$('r'+i), tag=el.querySelector('.rs-tag');
+      el.className='rl'+(i<h?' skip':(i===h?' hit':' rest'));
+      tag.textContent = i<h ? '不匹配' : (i===h ? '命中' : '不再看');
+    }
+    var need=RULES[h].need;
+    var pass = need===null || (need==='*' ? !u.anon : u.auth.indexOf(need)>=0);
+    var role, code, t, why;
+    if(pass){
+      role='done'; code='200'; t='放行';
+      why = h===0 ? '命中第 1 条 permitAll()：谁都能进，游客也行。'
+          : h===3 ? '命中最后一条 authenticated()：'+u.name+' 登录过就行。'
+          : '命中第 '+(h+1)+' 条：'+u.name+' 有 <code>'+need+'</code>。';
+    } else if(u.anon){
+      role='desk'; code='401'; t='先去登录';
+      why='命中第 '+(h+1)+' 条，游客牌不够。交给 AuthenticationEntryPoint：表单登录跳到 /login，API 返回 401。';
+    } else {
+      role='gate'; code='403'; t='不让进';
+      why='命中第 '+(h+1)+' 条：'+u.name+' 登录了，但没有 <code>'+need+'</code>。交给 AccessDeniedHandler。';
+    }
+    $('rtRes').setAttribute('data-role', role);
+    $('rtCode').textContent=code;
+    $('rtT').textContent=t;
+    $('rtWhy').innerHTML=why;
+  }
+  document.querySelectorAll('[data-who]').forEach(function(b){
+    b.addEventListener('click', function(){
+      who=b.getAttribute('data-who');
+      document.querySelectorAll('[data-who]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      decide();
+    });
+  });
+  document.querySelectorAll('[data-req]').forEach(function(b){
+    b.addEventListener('click', function(){
+      req=b.getAttribute('data-req');
+      document.querySelectorAll('[data-req]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      decide();
+    });
+  });
+  decide();
+})();
+</script>
+
+</body>
+</html>
