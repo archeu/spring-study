@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring @Async 与线程池</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other Spring pages. The caller's request thread is blue, the dispatcher purple, pool threads teal, the queue amber, rejection red. Anchor = the thread pool simulator. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --rq:#3150C4; --rq-tint:#E2E7FA;
+  --dp:#6A3FC0; --dp-tint:#ECE5FA;
+  --wk:#0D7A69; --wk-tint:#DCF0EB;
+  --qu:#9A6B00; --qu-tint:#FBF0CF;
+  --xt:#B85F0C; --xt-tint:#FBE9D5;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C; --skin:#F1C6A0; --hair:#3B2A21; --eye:#2A2320;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --rq:#90A4FF; --rq-tint:#1D2650;
+    --dp:#B9A0FF; --dp-tint:#2A2148;
+    --wk:#40C6B0; --wk-tint:#12352F;
+    --qu:#F2C94C; --qu-tint:#3A3212;
+    --xt:#F4A651; --xt-tint:#3A2812;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E; --skin:#E2B188; --hair:#2A1C15;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --rq:#90A4FF; --rq-tint:#1D2650;
+  --dp:#B9A0FF; --dp-tint:#2A2148;
+  --wk:#40C6B0; --wk-tint:#12352F;
+  --qu:#F2C94C; --qu-tint:#3A3212;
+  --xt:#F4A651; --xt-tint:#3A2812;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E; --skin:#E2B188; --hair:#2A1C15;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--rq)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button,select{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--rq);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="rq"]{--rc:var(--rq);--rt:var(--rq-tint)}
+[data-role="dp"]{--rc:var(--dp);--rt:var(--dp-tint)}
+[data-role="wk"]{--rc:var(--wk);--rt:var(--wk-tint)}
+[data-role="qu"]{--rc:var(--qu);--rt:var(--qu-tint)}
+[data-role="xt"]{--rc:var(--xt);--rt:var(--xt-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-hair{fill:var(--hair)} .k-eye{fill:var(--eye)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none} .ks-eye{stroke:var(--eye);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.bars{margin-top:22px;display:flex;flex-direction:column;gap:14px}
+.br{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:12px;align-items:center}
+.br-l{display:flex;flex-direction:column;gap:2px}
+.br-l b{font-size:15px}
+.br-l small{font-size:12.5px;color:var(--muted)}
+.lanes2{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ln{display:grid;grid-template-columns:9.5em minmax(0,1fr);gap:8px;align-items:center;font-size:12px}
+.ln > span{font-family:var(--font-mono);color:var(--muted);overflow-wrap:anywhere}
+.trk{position:relative;height:26px;border-radius:6px;background:var(--neutral-tint);overflow:hidden}
+.seg{position:absolute;top:0;bottom:0;display:flex;align-items:center;padding:0 8px;font-size:11.5px;font-weight:600;color:var(--on-accent);white-space:nowrap;overflow:hidden;border-radius:6px}
+.seg.a{background:var(--rq)} .seg.b{background:var(--wk)} .seg.c{background:var(--dp)}
+.wait{font-size:13px;font-weight:600}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--dp)} .kw{color:var(--xt)} .st-s{color:var(--wk)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--qu-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.mini pre{padding:8px 10px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:640px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap;font-family:var(--font-mono);font-size:12.5px}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:22px;line-height:1;text-align:center;align-self:center}
+
+/* ---------- how ---------- */
+.how{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px;align-items:start}
+.hsteps{display:flex;flex-direction:column;gap:8px}
+.hs{display:grid;grid-template-columns:28px minmax(0,1fr);gap:2px 10px;padding:8px 12px;border-radius:12px;border:2px solid var(--rc);background:var(--rt);min-width:0}
+.hs i{font-style:normal;grid-row:span 2;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--rc);color:var(--on-accent);font-family:var(--font-mono);font-size:12px;font-weight:700}
+.hs b{font-size:14.5px}
+.hs span{font-size:13px;color:var(--muted)}
+.hs code{font-size:12px;color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- which ---------- */
+.which{display:flex;flex-direction:column;gap:6px}
+.wq{display:grid;grid-template-columns:28px minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:center;padding:8px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--card)}
+.wq i{font-style:normal;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--dp);color:var(--on-accent);font-family:var(--font-mono);font-size:12px;font-weight:700}
+.wq b{font-size:14px}
+.wq span{font-size:13px;color:var(--muted)}
+.wq code{font-size:12px;color:var(--ink);overflow-wrap:anywhere}
+.wq.last{border:2px dashed var(--bad);background:var(--bad-tint)}
+.wq.last i{background:var(--bad)}
+.wq.boot{border:2px solid var(--wk);background:var(--wk-tint)}
+.wq.boot i{background:var(--wk)}
+.cfg2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+
+/* ---------- rules ---------- */
+.rules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.rl{border:2px solid var(--rc);border-radius:14px;padding:10px 12px;background:var(--rt);display:flex;flex-direction:column;gap:4px;min-width:0}
+.rl small{font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--rc)}
+.rl b{font-size:14.5px;line-height:1.4}
+.rl span{font-size:13px}
+.rl span em{font-style:normal;font-weight:700}
+
+/* ---------- simulator ---------- */
+.sim{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.presets .lbl,.params .lbl{font-size:13px;color:var(--muted)}
+.pbtn{font-size:13px;padding:5px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.pbtn[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.params{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.params label{display:inline-flex;align-items:center;gap:6px;font-size:13.5px}
+.params select{padding:4px 8px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card);font-size:13.5px}
+.params .chk{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;cursor:pointer}
+.params .chk input{width:16px;height:16px;margin:0}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:14.5px;padding:8px 14px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.clock{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.clock b{color:var(--ink);font-size:15px}
+.board{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:start}
+.lanebox{display:flex;flex-direction:column;gap:10px;min-width:0}
+.lane-h{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.lane-h b{color:var(--ink)}
+.slots{display:flex;flex-wrap:wrap;gap:6px}
+.th{width:84px;height:62px;border-radius:10px;border:2px dashed var(--line-strong);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;font-size:11.5px;color:var(--muted);position:relative;overflow:hidden}
+.th.core{border-color:var(--wk)}
+.th.extra{border-color:var(--xt)}
+.th.busy.core{border-style:solid;background:var(--wk-tint);color:var(--ink)}
+.th.busy.extra{border-style:solid;background:var(--xt-tint);color:var(--ink)}
+.th.idle{border-style:solid;color:var(--ink)}
+.th b{font-family:var(--font-mono);font-size:12px}
+.th .tk{font-family:var(--font-mono);font-weight:700;font-size:13px}
+.th .pg{position:absolute;left:0;bottom:0;height:4px;background:var(--rc,var(--wk))}
+.th.core .pg{background:var(--wk)} .th.extra .pg{background:var(--xt)}
+.th.none{opacity:.55}
+.more{align-self:center;font-family:var(--font-mono);font-size:12px;color:var(--muted);padding:0 6px}
+.qslots{display:flex;flex-wrap:wrap;gap:4px}
+.q{width:40px;height:30px;border-radius:7px;border:1.5px dashed var(--qu);display:grid;place-items:center;font-family:var(--font-mono);font-size:11.5px;font-weight:700}
+.q.full{border-style:solid;background:var(--qu-tint)}
+.noq{font-size:13px;color:var(--muted);padding:6px 10px;border-radius:8px;border:1.5px dashed var(--line-strong)}
+.caller{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;border:2px solid var(--rq);background:var(--rq-tint);font-size:13.5px}
+.caller.busy{border-color:var(--bad);background:var(--bad-tint)}
+.caller code{font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.st{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;gap:0}
+.st small{font-size:12px;color:var(--muted)}
+.st b{font-family:var(--font-display);font-weight:400;font-size:26px;color:var(--rc);line-height:1.1;font-variant-numeric:tabular-nums}
+.log{list-style:none;margin:0;padding:10px 12px;border-radius:12px;background:var(--console-bg);color:var(--console-dim);font-family:var(--font-mono);font-size:11.5px;line-height:1.55;display:flex;flex-direction:column;gap:2px;min-height:150px;max-height:220px;overflow-y:auto}
+.log li{overflow-wrap:anywhere}
+.log li:first-child{color:var(--console-fg)}
+.log li.bad{color:#FF8A85}
+.verdict{font-size:14.5px;font-weight:500;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+
+/* ---------- ctx ---------- */
+.ctx{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.cx{border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;background:var(--card);display:flex;flex-direction:column;gap:4px;min-width:0}
+.cx b{font-size:14.5px}
+.cx code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.cx span{font-size:13px}
+.cx .lost{align-self:flex-start;font-size:11.5px;font-weight:700;padding:0 8px;border-radius:999px;background:var(--bad-tint);color:var(--bad)}
+.cgrid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:start}
+.facts{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.facts code{overflow-wrap:anywhere}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctx,.rules{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .how,.cfg2,.board,.cgrid,.eras{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits,.minis{grid-template-columns:1fr}
+  .br{grid-template-columns:1fr}
+  .ln{grid-template-columns:7.5em minmax(0,1fr)}
+  .wq{grid-template-columns:28px minmax(0,1fr)}
+  .wq span{grid-column:2}
+}
+@media (max-width:520px){
+  .ctx,.rules{grid-template-columns:1fr}
+  .th{width:72px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-desk" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 63c0-15 9.8-24 22-24s22 9 22 24z"/>
+    <circle class="k-skin" cx="32" cy="27" r="10.5"/>
+    <path class="k-hair" d="M21.5 25c0-7 4.5-11 10.5-11s10.5 4 10.5 11c-3-3-7-4.5-10.5-4.5S24.5 22 21.5 25z"/>
+    <circle class="k-eye" cx="28" cy="28.5" r="1.4"/>
+    <circle class="k-eye" cx="36" cy="28.5" r="1.4"/>
+    <path class="ks-eye" stroke-width="1.6" stroke-linecap="round" d="M28.5 33q3.5 2.4 7 0"/>
+    <rect class="k-ink" x="4" y="50" width="56" height="5" rx="2"/>
+  </symbol>
+  <symbol id="i-dispatch" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="10" y="8" width="44" height="54" rx="4"/>
+    <rect class="k-ink" x="22" y="4" width="20" height="9" rx="2.5"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M18 26h28M18 36h20M18 46h24"/>
+    <path class="k-gold" d="M40 40l10 6-10 6z"/>
+  </symbol>
+  <symbol id="i-crew" viewBox="0 0 64 64">
+    <circle class="k-skin" cx="16" cy="24" r="7"/><path fill="currentColor" d="M3 50c0-10 6-15 13-15s13 5 13 15z"/>
+    <circle class="k-skin" cx="48" cy="24" r="7"/><path fill="currentColor" d="M35 50c0-10 6-15 13-15s13 5 13 15z"/>
+    <circle class="k-skin" cx="32" cy="20" r="8"/><path fill="currentColor" d="M17 52c0-11 7-17 15-17s15 6 15 17z"/>
+    <rect class="k-gold" x="26" y="40" width="12" height="9" rx="1.5"/>
+  </symbol>
+  <symbol id="i-queue" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="22" width="14" height="20" rx="2.5"/>
+    <rect fill="currentColor" x="22" y="22" width="14" height="20" rx="2.5"/>
+    <rect fill="currentColor" opacity=".5" x="40" y="22" width="14" height="20" rx="2.5"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M56 32h6M58 28l4 4-4 4"/>
+    <rect class="k-gold" x="8" y="27" width="6" height="4" rx="1"/>
+  </symbol>
+  <symbol id="i-stop" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M21 4h22l17 17v22L43 60H21L4 43V21z"/>
+    <rect class="k-paper" x="16" y="28" width="32" height="8" rx="2"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Spring</span><span aria-hidden="true">/</span><span class="tb-here">Spring @Async 与线程池</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING · @ASYNC · THREADPOOLTASKEXECUTOR · THREADPOOLEXECUTOR</p>
+  <h1>说一声就走，活交给后台的线程去干</h1>
+  <p class="lead">下单后要发短信，短信网关要 800 ms。不加 @Async，处理请求的线程得一直等着；加了 @Async，它把活交给线程池就回去了，用户 50 ms 就拿到结果。下面两条按同一个比例画。</p>
+
+  <div class="bars">
+    <div class="br">
+      <div class="br-l"><b>不加 @Async</b><small class="wait">用户等 850 ms</small></div>
+      <div class="lanes2">
+        <div class="ln"><span>http-nio-8080-exec-1</span><div class="trk"><div class="seg a" style="left:0;width:5.88%">下单</div><div class="seg c" style="left:5.88%;width:94.12%">发短信 800 ms（请求线程干等）</div></div></div>
+      </div>
+    </div>
+    <div class="br">
+      <div class="br-l"><b>加了 @Async</b><small class="wait">用户等 50 ms</small></div>
+      <div class="lanes2">
+        <div class="ln"><span>http-nio-8080-exec-1</span><div class="trk"><div class="seg a" style="left:0;width:5.88%">下单</div></div></div>
+        <div class="ln"><span>task-1</span><div class="trk"><div class="seg b" style="left:5.88%;width:94.12%">发短信 800 ms（线程池里的线程干）</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="rq">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-desk"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">前台<code>http-nio-8080-exec-1</code></div>
+        <p>Tomcat 处理请求的线程。<b>它越早回去，能接的请求越多</b>。</p>
+        <span class="belong">调用 @Async 方法的那一方</span>
+      </div>
+    </div>
+    <div class="who" data-role="dp">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-dispatch"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">派单员<code>AsyncExecutionInterceptor</code></div>
+        <p>替身上的一个拦截器：把方法调用<b>包成任务，丢给线程池</b>，马上返回。</p>
+        <span class="belong">@EnableAsync 打开后才有</span>
+      </div>
+    </div>
+    <div class="who" data-role="wk">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-crew"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">后台班组<code>ThreadPoolTaskExecutor</code></div>
+        <p>一组反复使用的线程，<b>人数有上下限</b>。Spring 包了一层 JDK 的 ThreadPoolExecutor。</p>
+        <span class="belong">Boot 里默认叫 task-1、task-2……</span>
+      </div>
+    </div>
+    <div class="who" data-role="qu">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-queue"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">任务队列<code>BlockingQueue</code></div>
+        <p>线程都忙时，任务先在这里排队。<b>它有多长，决定了很多事</b>。</p>
+        <span class="belong">Boot 默认不限长</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= HOW ================= -->
+<section id="how">
+  <div>
+    <h2>@Async 背后发生了什么</h2>
+    <p class="lead">还是替身那一套（<a href="spring-aop-proxy.html">第 10 篇</a>）：@EnableAsync 让 Spring 给带 @Async 的 Bean 做替身，替身的拦截器链最前面是派单员。</p>
+  </div>
+  <div class="how">
+    <div class="hsteps">
+      <div class="hs" data-role="rq"><i>1</i><b>调用方调 smsService.send(…)</b><span>拿到的是替身，调用先到替身</span></div>
+      <div class="hs" data-role="dp"><i>2</i><b>派单员挑一个线程池</b><span><code>@Async("smsPool")</code> 写了名字就用它，没写就用默认的</span></div>
+      <div class="hs" data-role="dp"><i>3</i><b>把“继续往下调真身”包成一个任务，提交</b><span>提交这一下在调用方的线程里发生</span></div>
+      <div class="hs" data-role="rq"><i>4</i><b>马上返回</b><span>void 返回 null；CompletableFuture 返回一个还没完成的 future</span></div>
+      <div class="hs" data-role="wk"><i>5</i><b>线程池里的线程执行任务，调到真身的 send</b><span>真身的代码跑在 task-1 上，不在请求线程上</span></div>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><code>AsyncExecutionInterceptor.invoke</code><span>简化版</span></div>
+<pre><code><span class="kw">public</span> Object invoke(MethodInvocation invocation) {
+    AsyncTaskExecutor executor = determineAsyncExecutor(method);   <span class="cm">// ② 挑线程池</span>
+    Callable&lt;Object&gt; task = () -&gt; {
+        <span class="kw">try</span> {
+            Object result = invocation.proceed();                   <span class="cm">// ⑤ 在池子的线程里调真身</span>
+            <span class="kw">if</span> (result <span class="kw">instanceof</span> Future) {
+                <span class="kw">return</span> ((Future&lt;?&gt;) result).get();
+            }
+        } <span class="kw">catch</span> (Throwable ex) {
+            handleError(ex, method, args);   <span class="cm">// void 方法：交给 AsyncUncaughtExceptionHandler，只记日志</span>
+        }
+        <span class="kw">return null</span>;
+    };
+    <span class="kw">return</span> doSubmit(task, executor, method.getReturnType());   <span class="cm">// ③④ 提交，马上返回</span>
+}</code></pre>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">返回类型</th><th scope="col">调用方拿到什么</th><th scope="col">方法里抛异常</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">void</th><td>什么都没有</td><td>交给 <code>AsyncUncaughtExceptionHandler</code>，默认只打一条 ERROR 日志，调用方完全不知道</td></tr>
+        <tr><th scope="row">CompletableFuture&lt;T&gt;</th><td>一个 future，可以 <code>thenApply</code>、<code>join</code>、和别的组合</td><td>装在 future 里，调用方 <code>join()</code> 或 <code>exceptionally</code> 时拿到</td></tr>
+        <tr><th scope="row">Future&lt;T&gt;</th><td>一个 future，只能 <code>get()</code> 阻塞等</td><td>装在 future 里，<code>get()</code> 时抛出</td></tr>
+        <tr><th scope="row">String 等普通类型</th><td><b>null</b>：方法根本没执行完，拿不到值</td><td>同 void</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= WHICH ================= -->
+<section id="which">
+  <div>
+    <h2>@Async 到底用哪个线程池</h2>
+    <p class="lead">派单员按下面的顺序找，找到就停。最后那一步最危险。</p>
+  </div>
+  <div class="which">
+    <div class="wq"><i>1</i><b><code>@Async("smsPool")</code> 写了名字</b><span>用名叫 smsPool 的那个 Executor Bean</span></div>
+    <div class="wq"><i>2</i><b>实现了 <code>AsyncConfigurer</code></b><span>用它的 <code>getAsyncExecutor()</code> 返回的</span></div>
+    <div class="wq"><i>3</i><b>容器里正好只有一个 TaskExecutor</b><span>用它</span></div>
+    <div class="wq"><i>4</i><b>有一个名叫 <code>taskExecutor</code> 的 Executor</b><span>用它</span></div>
+    <div class="wq boot"><i>B</i><b>Spring Boot：自动配的 <code>applicationTaskExecutor</code></b><span>你没声明 Executor 时，Boot 配一个线程池，别名就是 taskExecutor，所以第 4 步能找到它</span></div>
+    <div class="wq last"><i>5</i><b>都找不到：<code>SimpleAsyncTaskExecutor</code></b><span>不是线程池：每个任务新建一个线程，用完就扔，数量不设上限</span></div>
+  </div>
+  <div class="cfg2">
+    <div class="codebox">
+      <div class="code-bar"><b>Boot 默认的那个池子</b><span>不配就是这些值</span></div>
+<pre><code>spring:
+  task:
+    execution:
+      thread-name-prefix: task-
+      pool:
+        core-size: <span class="kw">8</span>
+        max-size: <span class="kw">2147483647</span>          <span class="cm"># 不限</span>
+        queue-capacity: <span class="kw">2147483647</span>    <span class="cm"># 不限：所以 max-size 永远用不上</span>
+        keep-alive: 60s
+        allow-core-thread-timeout: <span class="kw">true</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>自己配一个专用的</b><span>按业务分开，互不拖累</span></div>
+<pre><code><span class="an">@Bean</span>(<span class="st-s">"smsPool"</span>)
+ThreadPoolTaskExecutor smsPool() {
+    ThreadPoolTaskExecutor e = <span class="kw">new</span> ThreadPoolTaskExecutor();
+    e.setCorePoolSize(<span class="kw">4</span>);
+    e.setMaxPoolSize(<span class="kw">8</span>);
+    e.setQueueCapacity(<span class="kw">200</span>);          <span class="cm">// 一定要有上限</span>
+    e.setThreadNamePrefix(<span class="st-s">"sms-"</span>);
+    e.setRejectedExecutionHandler(<span class="kw">new</span> ThreadPoolExecutor.CallerRunsPolicy());
+    e.setWaitForTasksToCompleteOnShutdown(<span class="kw">true</span>);
+    <span class="kw">return</span> e;
+}
+
+<span class="an">@Async</span>(<span class="st-s">"smsPool"</span>)
+<span class="kw">public void</span> send(String phone, String text) { … }</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= RULES + SIM ================= -->
+<section id="pool">
+  <div>
+    <h2>线程池收到一个任务，按这四步走</h2>
+    <p class="lead">这是 JDK ThreadPoolExecutor 的规则，Spring 的 ThreadPoolTaskExecutor 原样照用。最反直觉的是第 2 步：<b>先排队，队列满了才加人</b>。</p>
+  </div>
+  <div class="rules">
+    <div class="rl" data-role="wk"><small>① 线程数 &lt; 核心数？</small><b>是：新建一个线程，直接跑它</b><span>哪怕别的线程闲着，也先把核心数补满</span></div>
+    <div class="rl" data-role="qu"><small>② 队列没满？</small><b>是：放进队列排队</b><span>核心线程忙完了会来取</span></div>
+    <div class="rl" data-role="xt"><small>③ 线程数 &lt; 最大数？</small><b>是：新建临时线程，直接跑它</b><span>它<em>插队</em>：先跑这个新任务，不是队头那个</span></div>
+    <div class="rl" data-role="bad"><small>④ 都不行</small><b>交给拒绝策略</b><span>抛异常、调用方自己跑、悄悄丢掉、丢掉最老的</span></div>
+  </div>
+
+  <div class="sim" id="sim">
+    <h3>线程池模拟器</h3>
+    <div class="presets" role="group" aria-label="预设"><span class="lbl">预设：</span>
+      <button class="pbtn" id="pr-good" data-preset="good" aria-pressed="true">合理配置</button>
+      <button class="pbtn" id="pr-boot" data-preset="boot" aria-pressed="false">Boot 默认</button>
+      <button class="pbtn" id="pr-abort" data-preset="abort" aria-pressed="false">满了就抛异常</button>
+      <button class="pbtn" id="pr-zero" data-preset="zero" aria-pressed="false">没有队列</button>
+    </div>
+    <div class="params">
+      <label for="p-core">核心线程 <select id="p-core"></select></label>
+      <label for="p-max">最大线程 <select id="p-max"></select></label>
+      <label for="p-q">队列长度 <select id="p-q"></select></label>
+      <label for="p-pol">拒绝策略 <select id="p-pol">
+        <option value="abort">AbortPolicy：抛异常</option>
+        <option value="caller">CallerRunsPolicy：调用方自己跑</option>
+        <option value="discard">DiscardPolicy：悄悄丢掉</option>
+        <option value="oldest">DiscardOldestPolicy：丢掉最老的</option>
+      </select></label>
+      <label class="chk" for="p-flood"><input type="checkbox" id="p-flood"> 时间走起来后，每拍自动来 1 个任务</label>
+    </div>
+    <div class="ctrl">
+      <button class="btn primary" id="b1">提交 1 个任务</button>
+      <button class="btn" id="b10">一口气提交 10 个</button>
+      <button class="btn" id="bRun">▶ 让时间走起来</button>
+      <button class="btn" id="bTick">走一拍</button>
+      <button class="btn" id="bReset">清空重来</button>
+      <span class="clock">第 <b id="clock">0</b> 拍 · 每个任务要跑 6 拍 · 临时线程空闲 8 拍被回收</span>
+    </div>
+    <div class="board">
+      <div class="lanebox">
+        <div class="caller" id="caller"></div>
+        <div class="lane-h"><span><b>线程</b>（绿框是核心名额，橙框是临时名额）</span><span id="thCount"></span></div>
+        <div class="slots" id="threads"></div>
+        <div class="lane-h"><span><b>队列</b></span><span id="qCount"></span></div>
+        <div id="queue"></div>
+      </div>
+      <div class="lanebox">
+        <div class="stats" id="stats"></div>
+        <ol class="log" id="log" aria-live="polite"></ol>
+      </div>
+    </div>
+    <p class="verdict" id="verdict" data-role="other"></p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">拒绝策略</th><th scope="col">满了会怎样</th><th scope="col">适合</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">AbortPolicy（默认）</th><td>抛 RejectedExecutionException，Spring 包成 TaskRejectedException，调用方收到</td><td>宁可失败也不能悄悄丢的任务</td></tr>
+        <tr><th scope="row">CallerRunsPolicy</th><td>交回调用方的线程自己跑，调用方被拖慢，自然就提交得慢了</td><td>不能丢、可以慢的任务，天然限流</td></tr>
+        <tr><th scope="row">DiscardPolicy</th><td>直接丢掉，没有任何提示</td><td>丢了也无所谓的，比如统计上报</td></tr>
+        <tr><th scope="row">DiscardOldestPolicy</th><td>丢掉队列里最老的，把新的放进去</td><td>只关心最新状态的，比如刷新缓存</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= CTX ================= -->
+<section id="ctx">
+  <div>
+    <h2>换了线程，丢了什么</h2>
+    <p class="lead">很多东西都挂在 ThreadLocal 上，跟着线程走。任务一换到 task-1，它们就都不在了。</p>
+  </div>
+  <div class="ctx">
+    <div class="cx" data-role="rq"><span class="lost">丢了</span><b>当前登录用户</b><code>SecurityContextHolder</code><span>异步方法里取到的是空的（<a href="spring-security.html">第 05 篇</a>）</span></div>
+    <div class="cx" data-role="rq"><span class="lost">丢了</span><b>日志里的 traceId</b><code>MDC</code><span>异步线程打的日志串不起来</span></div>
+    <div class="cx" data-role="rq"><span class="lost">丢了</span><b>事务</b><code>TransactionSynchronizationManager</code><span>不在调用方的事务里（<a href="../mybatis/mybatis-spring-tx.html">MyBatis 第 02 篇</a>）</span></div>
+    <div class="cx" data-role="rq"><span class="lost">丢了</span><b>当前请求</b><code>RequestContextHolder</code><span>请求可能已经结束了，别在异步里读它</span></div>
+  </div>
+  <div class="cgrid">
+    <div class="codebox">
+      <div class="code-bar"><b>TaskDecorator</b><span>提交时在调用方线程里拍个快照，执行时在池子线程里装回去</span></div>
+<pre><code><span class="an">@Bean</span>
+TaskDecorator mdcDecorator() {
+    <span class="kw">return</span> task -&gt; {
+        Map&lt;String, String&gt; mdc = MDC.getCopyOfContextMap();          <span class="cm">// 调用方线程</span>
+        SecurityContext sc = SecurityContextHolder.getContext();
+        <span class="kw">return</span> () -&gt; {
+            <span class="kw">try</span> {
+                <span class="kw">if</span> (mdc != <span class="kw">null</span>) MDC.setContextMap(mdc);              <span class="cm">// 池子线程</span>
+                SecurityContextHolder.setContext(sc);
+                task.run();
+            } <span class="kw">finally</span> {
+                MDC.clear();                                          <span class="cm">// 线程要还回池子，一定清掉</span>
+                SecurityContextHolder.clearContext();
+            }
+        };
+    };
+}</code></pre>
+    </div>
+    <ul class="facts">
+      <li>Boot 自动配的线程池会用上容器里的 TaskDecorator Bean；自己 new 的 ThreadPoolTaskExecutor 要手动 <code>setTaskDecorator</code>。</li>
+      <li>只管登录信息的话，Spring Security 有现成的 <code>DelegatingSecurityContextAsyncTaskExecutor</code>。</li>
+      <li>事务不要传：异步任务想读调用方刚写的数据，调用方的事务很可能还没提交，读不到。用 <code>@TransactionalEventListener</code> 等提交后再异步（<a href="spring-events.html">第 08 篇</a>）。</li>
+    </ul>
+  </div>
+  <div class="minis">
+    <div class="mini"><b>并行调两个服务</b><pre><code>CompletableFuture&lt;User&gt; u = userSvc.load(id);
+CompletableFuture&lt;List&lt;Order&gt;&gt; o = orderSvc.list(id);
+CompletableFuture.allOf(u, o).join();</code></pre><p>两个方法都是 @Async、返回 CompletableFuture，总耗时取慢的那个。</p></div>
+    <div class="mini"><b>别用公共池干 IO</b><pre><code>CompletableFuture.supplyAsync(() -&gt; callHttp())</code></pre><p>不传线程池就用 ForkJoinPool.commonPool，大小约等于 CPU 核数减一，全 JVM 共用，一堵全堵。传一个自己的线程池。</p></div>
+    <div class="mini"><b>停机时别丢任务</b><pre><code>spring.task.execution.shutdown.await-termination=true
+spring.task.execution.shutdown.await-termination-period=30s</code></pre><p>不配的话，关闭时队列里还没跑的任务会被直接丢掉。</p></div>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：Spring 5 和 Spring 6</h2>
+    <p class="lead">@Async 的机制、线程池的四步规则，两边一样。变化在返回类型和虚拟线程。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>返回值还能用 Spring 自己的 <code>ListenableFuture</code></li>
+        <li>CompletableFuture 已经可以用（JDK 8 自带）</li>
+        <li>线程池里只有平台线程，一个线程对应一个系统线程，数量要省着用</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring 6 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li><code>ListenableFuture</code> 被标记过时，统一用 <code>CompletableFuture</code></li>
+        <li>6.1 起有 <code>ContextPropagatingTaskDecorator</code>，配合 Micrometer 自动把 traceId 带到异步线程</li>
+        <li>Boot 3.2 起，在 JDK 21 上配 <code>spring.threads.virtual.enabled=true</code>，默认的执行器换成每个任务一个虚拟线程，不再有核心数、队列这些参数</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>替身 + 派单员</span><span>找线程池的顺序</span><span>先排队后加人</span><span>四种拒绝策略</span><span>ThreadLocal 不跟着走</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">一半是 @Async 没生效，一半是线程池配得不对。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="dp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-dispatch"/></svg><b>加了 @Async，还是在请求线程里同步执行</b><p>没写 <code>@EnableAsync</code>；或者同一个类里自己调自己、方法是 private，没经过替身（第 10 篇）。打日志看线程名就知道。</p></div>
+    <div class="pit" data-role="qu"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-queue"/></svg><b>max-size 调大了也没用，任务越堆越多</b><p>Boot 默认队列不限长，第 2 步永远能排进去，永远走不到第 3 步。给 <code>queue-capacity</code> 设个上限。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-stop"/></svg><b>线程数一路涨到几千</b><p>容器里有好几个 TaskExecutor 又没有叫 taskExecutor 的，@Async 退回 SimpleAsyncTaskExecutor，每个任务新开一个线程。启动日志里会有 More than one TaskExecutor bean found…。用 <code>@Async("名字")</code> 指定。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-stop"/></svg><b>异步方法里抛的异常，谁也不知道</b><p>void 方法的异常只进日志。实现 <code>AsyncConfigurer.getAsyncUncaughtExceptionHandler</code> 统一处理，或者返回 CompletableFuture 让调用方处理。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-stop"/></svg><b>TaskRejectedException</b><p>线程到了最大数、队列也满了，默认策略就抛这个。调大参数，或者换成 CallerRunsPolicy，让调用方自己跑来限流。</p></div>
+    <div class="pit" data-role="rq"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-desk"/></svg><b>异步方法的返回值总是 null</b><p>返回类型写成了 String 这种普通类型。改成 <code>CompletableFuture&lt;String&gt;</code>，方法里 <code>return CompletableFuture.completedFuture(x)</code>。</p></div>
+    <div class="pit" data-role="rq"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-desk"/></svg><b>异步线程的日志没有 traceId，拿不到当前用户</b><p>ThreadLocal 没跟过去。配一个 TaskDecorator，把 MDC 和 SecurityContext 带过去，用完清掉。</p></div>
+    <div class="pit" data-role="wk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-crew"/></svg><b>异步任务查不到刚插入的订单</b><p>调用方的事务还没提交，别的线程看不到。改成提交后再异步：<code>@TransactionalEventListener</code> 加 <code>@Async</code>。</p></div>
+    <div class="pit" data-role="wk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-crew"/></svg><b>短信网关一慢，订单通知也发不出去了</b><p>所有 @Async 共用一个池子，慢任务把线程全占了。按业务拆成几个池子，各用各的 <code>@Async("…")</code>。</p></div>
+    <div class="pit" data-role="qu"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-queue"/></svg><b>发版重启后，有一批异步任务没执行</b><p>关闭时队列里的任务被丢了。配 <code>await-termination</code>；真正不能丢的，用消息队列。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Spring 5 / 6、Spring Boot 2 / 3 为例。同系列：<a href="spring-aop-proxy.html">Spring AOP 代理原理</a> · <a href="spring-events.html">Spring 事件机制</a> · <a href="spring-security.html">Spring Security 认证与授权</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var D=6, KEEP=8, INF=Infinity;
+function newPool(cfg){
+  return {cfg:cfg, t:0, threads:[], queue:[], nextId:0, nextName:0, done:0, rejected:0, callerRuns:0, discarded:0, callerBusy:0, callerTask:null, pending:0, log:[]};
+}
+function L(p,txt,bad){ p.log.unshift({t:p.t, txt:txt, bad:!!bad}); if(p.log.length>40) p.log.pop(); }
+function addThread(p,task){ p.nextName++; var th={name:'task-'+p.nextName, task:task, rem:D, idle:0}; p.threads.push(th); return th; }
+function submit(p){
+  if(p.callerBusy>0){ p.pending++; return 'deferred'; }
+  var c=p.cfg, id=++p.nextId, n=p.threads.length;
+  if(n < c.core){ var th=addThread(p,id); L(p,'#'+id+'：线程数 '+n+' < 核心数 '+c.core+'，新建 '+th.name+' 直接跑它'); return 'core'; }
+  if(p.queue.length < c.q){ p.queue.push(id); L(p,'#'+id+'：核心线程都在，放进队列（'+p.queue.length+'/'+(c.q===INF?'∞':c.q)+'）'); return 'queue'; }
+  if(n < c.max){ var th2=addThread(p,id); L(p,'#'+id+'：'+(c.q===0?'没有队列':'队列满了')+'，新建临时线程 '+th2.name+'，它先跑 #'+id+(c.q===0?'':'（插队）')); return 'extra'; }
+  if(c.pol==='abort'){ p.rejected++; L(p,'#'+id+'：线程到顶、队列也满，抛 TaskRejectedException 给调用方',true); return 'reject'; }
+  if(c.pol==='caller'){ p.callerRuns++; p.callerBusy=D; p.callerTask=id; L(p,'#'+id+'：交回调用方自己跑，调用方被拖住 '+D+' 拍',true); return 'caller'; }
+  if(c.pol==='discard'){ p.discarded++; L(p,'#'+id+'：直接丢掉，没有任何提示',true); return 'discard'; }
+  var old=p.queue.shift(); p.discarded++; p.queue.push(id); L(p,'#'+id+'：丢掉队列里最老的 #'+old+'，把 #'+id+' 放进去',true); return 'oldest';
+}
+function tick(p){
+  p.t++;
+  var keep=[];
+  for(var i=0;i<p.threads.length;i++){
+    var th=p.threads[i];
+    if(th.task!==null){
+      th.rem--;
+      if(th.rem<=0){
+        p.done++;
+        if(p.queue.length){ var nx=p.queue.shift(); L(p,th.name+' 跑完，从队列取出 #'+nx); th.task=nx; th.rem=D; }
+        else { th.task=null; th.idle=0; }
+      }
+      keep.push(th);
+    } else {
+      th.idle++;
+      var alive=keep.length + (p.threads.length-i);
+      if(th.idle>=KEEP && (alive > p.cfg.core || p.cfg.coreTimeout)){ L(p,th.name+' 空闲 '+KEEP+' 拍，被回收'); }
+      else keep.push(th);
+    }
+  }
+  p.threads=keep;
+  if(p.callerBusy>0){
+    p.callerBusy--;
+    if(p.callerBusy===0){ p.done++; L(p,'调用方跑完了 #'+p.callerTask+'，可以继续提交'); p.callerTask=null; }
+  }
+  while(p.pending>0 && p.callerBusy===0){ p.pending--; submit(p); }
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var PRESETS={
+    good:{core:2,max:4,q:4,pol:'caller',coreTimeout:false, burst:10},
+    boot:{core:8,max:INF,q:INF,pol:'abort',coreTimeout:true, burst:20},
+    abort:{core:2,max:4,q:4,pol:'abort',coreTimeout:false, burst:10},
+    zero:{core:2,max:6,q:0,pol:'abort',coreTimeout:false, burst:10}
+  };
+  function fill(sel, vals, labelInf){
+    $(sel).innerHTML=vals.map(function(v){ return '<option value="'+(v===INF?'inf':v)+'">'+(v===INF?labelInf:v)+'</option>'; }).join('');
+  }
+  fill('p-core',[1,2,3,4,6,8],'');
+  fill('p-max',[1,2,3,4,6,8,10,12,INF],'不限');
+  fill('p-q',[0,1,2,4,8,12,INF],'不限');
+  function readCfg(){
+    function v(id){ var x=$(id).value; return x==='inf'?INF:parseInt(x,10); }
+    var c={core:v('p-core'), max:v('p-max'), q:v('p-q'), pol:$('p-pol').value, coreTimeout:pool?pool.cfg.coreTimeout:false};
+    if(c.max<c.core){ c.max=c.core; $('p-max').value=String(c.core); }
+    return c;
+  }
+  function setCfgUI(c){
+    $('p-core').value=String(c.core);
+    $('p-max').value=c.max===INF?'inf':String(c.max);
+    $('p-q').value=c.q===INF?'inf':String(c.q);
+    $('p-pol').value=c.pol;
+  }
+  var pool=null, timer=null, curPreset='good';
+
+  function verdict(){
+    var c=pool.cfg, v=$('verdict');
+    if(c.q===INF){ v.setAttribute('data-role','bad'); v.textContent='队列不限长：任务永远能排进去，线程数永远停在核心数 '+c.core+'，最大线程数根本用不上。任务一多，就在内存里越堆越多。'; return; }
+    if(c.q===0){ v.setAttribute('data-role','qu'); v.textContent='没有队列：核心线程一忙，新任务直接新建临时线程；到了最大线程数就拒绝。适合任务很短、宁可多开线程也不想排队的场景。'; return; }
+    if(c.pol==='caller'){ v.setAttribute('data-role','done'); v.textContent='有上限的队列 + 调用方自己跑：池子满了，调用方被拖慢，提交自然就慢下来，任务一个都不丢。'; return; }
+    if(c.pol==='abort'){ v.setAttribute('data-role','xt'); v.textContent='有上限的队列 + 抛异常：池子满了，调用方马上收到 TaskRejectedException，要自己决定怎么办。'; return; }
+    v.setAttribute('data-role','bad'); v.textContent='满了就丢：调用方以为提交成功了，其实任务没了。只适合丢了也无所谓的任务。';
+  }
+  function render(){
+    var p=pool, c=p.cfg;
+    $('clock').textContent=p.t;
+    var cl=$('caller');
+    cl.classList.toggle('busy', p.callerBusy>0);
+    cl.innerHTML = p.callerBusy>0
+      ? '调用方 <code>http-nio-8080-exec-1</code>：正在自己跑 #'+p.callerTask+'，还剩 '+p.callerBusy+' 拍'+(p.pending?'，还有 '+p.pending+' 个等着提交':'')
+      : '调用方 <code>http-nio-8080-exec-1</code>：空闲，可以提交';
+    // threads: show slots up to max (cap 12)
+    var maxShow = c.max===INF ? Math.max(c.core, p.threads.length) : Math.min(c.max, 12);
+    var h='';
+    for(var i=0;i<maxShow;i++){
+      var th=p.threads[i], kind = i<c.core ? 'core' : 'extra';
+      if(th){
+        if(th.task!==null) h+='<div class="th '+kind+' busy"><b>'+th.name+'</b><span class="tk">#'+th.task+'</span><span class="pg" style="width:'+Math.round((D-th.rem)/D*100)+'%"></span></div>';
+        else h+='<div class="th '+kind+' idle"><b>'+th.name+'</b><span>空闲 '+th.idle+' 拍</span></div>';
+      } else h+='<div class="th '+kind+' none"><span>'+(kind==='core'?'核心名额':'临时名额')+'</span></div>';
+    }
+    if(c.max===INF) h+='<span class="more">最大线程不限（队列也不限时用不上）</span>';
+    else if(c.max>12) h+='<span class="more">…共 '+c.max+' 个名额</span>';
+    $('threads').innerHTML=h;
+    $('thCount').textContent='线程 '+p.threads.length+' 个 · 核心 '+c.core+' · 最大 '+(c.max===INF?'不限':c.max);
+    // queue
+    if(c.q===0){ $('queue').innerHTML='<div class="noq">没有队列：任务直接交给线程，交不出去就新建或拒绝</div>'; }
+    else {
+      var cap = c.q===INF ? 12 : Math.min(c.q,12), qh='<div class="qslots">';
+      for(var j=0;j<cap;j++){ var id=p.queue[j]; qh+='<div class="q'+(id!==undefined?' full':'')+'">'+(id!==undefined?'#'+id:'')+'</div>'; }
+      if(p.queue.length>cap) qh+='<span class="more">+'+(p.queue.length-cap)+'</span>';
+      $('queue').innerHTML=qh+'</div>';
+    }
+    $('qCount').textContent='排队 '+p.queue.length+' / '+(c.q===INF?'不限':c.q);
+    var st=[['done','已完成',p.done],['wk','正在跑',p.threads.filter(function(x){return x.task!==null;}).length],['bad','抛异常被拒',p.rejected],['rq','调用方自己跑',p.callerRuns],['other','被丢掉',p.discarded],['qu','排队中',p.queue.length]];
+    $('stats').innerHTML=st.map(function(s){ return '<div class="st" data-role="'+s[0]+'"><small>'+s[1]+'</small><b>'+s[2]+'</b></div>'; }).join('');
+    $('log').innerHTML = p.log.length ? p.log.map(function(l){ return '<li'+(l.bad?' class="bad"':'')+'>['+l.t+'] '+esc(l.txt)+'</li>'; }).join('') : '<li>还没有任务。点“提交”试试。</li>';
+    $('b1').disabled = p.callerBusy>0;
+    $('b10').disabled = p.callerBusy>0;
+    verdict();
+  }
+  function reset(c){ stopRun(); pool=newPool(c); render(); }
+  function stopRun(){ if(timer){ clearInterval(timer); timer=null; } $('bRun').textContent='▶ 让时间走起来'; }
+  function burst(n){ for(var i=0;i<n;i++){ submit(pool); } render(); }
+  function loadPreset(k){
+    curPreset=k;
+    document.querySelectorAll('[data-preset]').forEach(function(b){ b.setAttribute('aria-pressed', String(b.getAttribute('data-preset')===k)); });
+    var p=PRESETS[k], c={core:p.core,max:p.max,q:p.q,pol:p.pol,coreTimeout:p.coreTimeout};
+    setCfgUI(c); pool=newPool(c); stopRun();
+    burst(p.burst);
+  }
+  document.querySelectorAll('[data-preset]').forEach(function(b){ b.addEventListener('click', function(){ loadPreset(b.getAttribute('data-preset')); }); });
+  ['p-core','p-max','p-q','p-pol'].forEach(function(id){ $(id).addEventListener('change', function(){
+    document.querySelectorAll('[data-preset]').forEach(function(b){ b.setAttribute('aria-pressed','false'); });
+    reset(readCfg());
+  }); });
+  $('b1').addEventListener('click', function(){ submit(pool); render(); });
+  $('b10').addEventListener('click', function(){ burst(10); });
+  $('bTick').addEventListener('click', function(){ tick(pool); if($('p-flood').checked) submit(pool); render(); });
+  $('bReset').addEventListener('click', function(){ reset(pool.cfg); });
+  $('bRun').addEventListener('click', function(){
+    if(timer){ stopRun(); return; }
+    $('bRun').textContent='❚❚ 暂停';
+    timer=setInterval(function(){ tick(pool); if($('p-flood').checked) submit(pool); render(); }, 600);
+  });
+  loadPreset('good');
+})();
+</script>
+
+</body>
+</html>
