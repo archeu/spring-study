@@ -1,0 +1,1535 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Kafka 可靠性与消费组</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method (route bar under the title, ①–⑥ and ↺ badges on each section). Metaphor: a ledger copied to three cabinets (partition replicas), each department keeps its own bookmark (offset). Producer blue, broker/log teal, inventory group purple, points group brown, offsets/HW amber, duplicates orange, lost red, safe green, old ways grey. Interactives: message-lifecycle stepper (④), fault lab (⑥ anchor), consumer-group rebalance lab (⑥). */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --of:#9A6B00; --of-tint:#FBF0CF;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#7FD8C5;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#7FD8C5;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#7FD8C5;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,60px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--bk)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:52em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:52em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:620px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-on{font-size:11.5px;font-weight:700;fill:var(--on-accent)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12.5px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.c-bk{fill:var(--bk)}
+.c-neu{fill:var(--neutral)}
+.c-new{fill:var(--of)}
+.c-empty{fill:var(--card);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.c-ghost{fill:none;stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-on{stroke:var(--of);stroke-width:3;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-hw{stroke:var(--of);stroke-width:3.5}
+.mk{fill:var(--of)}
+.mk-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.way h3{color:var(--rc);font-size:24px}
+.way h3 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way .verdict{margin-top:auto}
+.need{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need b i{font-style:normal;font-family:var(--font-display);color:var(--of);margin-right:6px}
+.need p{font-size:14px;color:var(--muted)}
+.need .to{font-size:12.5px;align-self:flex-start;padding:2px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink)}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13.5px}
+.flow .nd{padding:5px 10px;border-radius:10px;border:1.5px solid var(--rc);background:var(--rt);white-space:nowrap}
+.flow .nd small{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);margin-left:4px}
+.flow .nd.x{border-color:var(--bad);background:var(--bad-tint)}
+.flow .ar{color:var(--muted)}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--bk-tint);border:2px solid var(--bk)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--bk);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misuse{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:14px;background:var(--bad-tint);border:1.5px solid var(--bad)}
+.misuse b{color:var(--bad)}
+.misuse ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:5px;font-size:14.5px}
+.rule{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border-radius:14px;background:var(--card);border:2px solid var(--ink)}
+.rule ol{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.steps5{display:flex;flex-direction:column;gap:14px}
+.later{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t thead th.me{color:var(--bk)}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.me{background:var(--bk-tint)}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--of);font-weight:700}
+.t td.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---------- ④ chain + group rules ---------- */
+.chain{display:grid;grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr) 28px minmax(0,1fr);gap:8px;align-items:stretch}
+.link{border:2px solid var(--rc);border-radius:16px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.link h4{color:var(--rc)}
+.link ul{margin:0;padding-left:1.1em;font-size:14px;display:flex;flex-direction:column;gap:4px}
+.link .leak{margin-top:auto;font-size:12.5px;padding:4px 10px;border-radius:10px;background:var(--bad-tint);color:var(--ink)}
+.chain .arw{display:grid;place-items:center;color:var(--muted);font-size:22px}
+.rules4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.gm{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.gm > b{font-size:14px}
+.gm .mem-row{display:flex;flex-wrap:wrap;gap:6px}
+.gm p{font-size:13px;color:var(--muted)}
+.mc{border:1.5px solid var(--rc);background:var(--rt);border-radius:10px;padding:4px 7px;display:flex;flex-direction:column;gap:4px;min-width:58px}
+.mc > span{font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.mc .ps{display:flex;flex-wrap:wrap;gap:3px}
+.pc{font-family:var(--font-mono);font-size:11px;padding:1px 6px;border-radius:6px;background:var(--bk);color:var(--on-accent)}
+.mc.idle{border-style:dashed;border-color:var(--bad);background:var(--bad-tint)}
+.mc.idle em{font-style:normal;font-size:11.5px;color:var(--bad);font-weight:700}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--bk-tint);border:2px solid var(--bk);min-height:4.6em}
+.cap-txt.alt{background:var(--bad-tint);border-color:var(--bad)}
+.cap-txt b{color:var(--bk)}
+.cap-txt.alt b{color:var(--bad)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--bad)}
+.stage .svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.stage svg{display:block;width:100%;min-width:600px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+
+/* ---------- labs ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.row .lbl{font-size:13px;color:var(--muted)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:5px 11px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg-btns button:disabled{opacity:.4;cursor:not-allowed}
+.faults{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.faults button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.faults button b{font-family:var(--font-display);font-weight:400;font-size:18px}
+.faults button span{font-size:12.5px;color:var(--muted)}
+.faults button[aria-pressed="true"]{border-color:var(--bad);background:var(--bad-tint);box-shadow:inset 0 0 0 1px var(--bad)}
+.scn{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--neutral-tint)}
+.cfg3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.cfgc{border:2px solid var(--rc);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:opacity .2s}
+.cfgc h4{color:var(--rc)}
+.cfgc .opt{display:flex;flex-direction:column;gap:4px}
+.cfgc .opt > span{font-size:12.5px;color:var(--muted)}
+.cfgc .opt > span code{color:var(--ink)}
+.cfgc.dim{opacity:.5}
+.cfgc .irr{font-size:12px;color:var(--muted);display:none}
+.cfgc.dim .irr{display:block}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:26px;line-height:1.15;font-variant-numeric:tabular-nums}
+.tile span{font-size:12px}
+.cells{display:grid;grid-template-columns:repeat(20,minmax(0,1fr));gap:3px}
+.cells i{aspect-ratio:1.6;border-radius:3px;background:var(--good-tint);border:1px solid var(--good)}
+.cells i.lost{background:var(--bad);border-color:var(--bad)}
+.cells i.fail{background:repeating-linear-gradient(135deg,var(--neutral-tint) 0 3px,var(--line-strong) 3px 5px);border-color:var(--neutral)}
+.cells i.dup{background:var(--warn);border-color:var(--warn)}
+.cells i.dupok{background:var(--good-tint);border:2px solid var(--warn)}
+.cells-head{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:11px;border-radius:3px;display:inline-block}
+.notes{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.notes li{font-size:14.5px;padding:8px 12px;border-radius:10px;background:var(--rt);border-left:4px solid var(--rc)}
+.members{display:flex;flex-wrap:wrap;gap:10px}
+.mbr{border:2px solid var(--cg);background:var(--cg-tint);border-radius:12px;padding:8px 10px;min-width:96px;display:flex;flex-direction:column;gap:6px}
+.mbr.idle{border-style:dashed;border-color:var(--bad);background:var(--bad-tint)}
+.mbr-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mbr-h b{font-family:var(--font-mono);font-size:13.5px}
+.mbr-h button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:8px;width:24px;height:24px;line-height:1;cursor:pointer;font-size:14px;padding:0}
+.mbr .ps{display:flex;flex-wrap:wrap;gap:4px;max-width:180px}
+.mbr .pc{font-size:12px;padding:2px 7px}
+.mbr .pc.mv{background:var(--of-tint);color:var(--ink);outline:2px dashed var(--of);outline-offset:-2px}
+.mbr em{font-style:normal;font-size:12.5px;color:var(--bad);font-weight:700}
+
+/* ---------- ⑥ pits ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.outbox{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px}
+.outbox .bx{border:1.5px solid var(--rc);background:var(--rt);border-radius:10px;padding:6px 10px}
+.outbox .bx.tx{border-width:2px;border-style:dashed}
+.outbox .ar{color:var(--muted)}
+.mini-out{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.dp li code{overflow-wrap:anywhere}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.next li b{color:var(--ink)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted)}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .tiles,.rules4,.faults{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras,.ex{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.cfg3,.later,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .chain{grid-template-columns:1fr}
+  .chain .arw{transform:rotate(90deg);height:22px}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+}
+@media (max-width:520px){
+  .tiles,.rules4,.faults{grid-template-columns:1fr}
+  .cells{grid-template-columns:repeat(10,minmax(0,1fr))}
+  .tile b{font-size:23px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Kafka</span><span aria-hidden="true">/</span><span class="tb-here">消息可靠性与消费组</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">KAFKA · ACKS · ISR · MIN.INSYNC.REPLICAS · OFFSET · CONSUMER GROUP · REBALANCE</p>
+  <h1>写够副本才算数，处理完了再挪书签</h1>
+  <p class="lead">Kafka 把消息记在一本<b>只往后追加、存好几份</b>的日志里，消费者只记“读到哪了”（offset）。不丢消息要三段一起守：生产者等 ISR 里的副本都写到（<code>acks=all</code>），Broker 保证同步副本够数（<code>min.insync.replicas</code>），消费者处理完再提交 offset。消费组让一个分区同一时间只归组里一个实例，组和组之间各读一份。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>为什么学</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>老办法</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>选谁</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>原理</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>跑起来</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>你在订单服务里接 Kafka：下单后通知库存、积分、短信三个下游，一条都不能丢。这也是 Kafka 面试问得最多的两块，第⑥步末尾附了面试题。页面里标“实测”的地方，都在本机的 Kafka 4.1.2 集群和 Spring Boot 3.5.16 上跑过。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>为什么要学：下单之后，三个下游都要知道</h2>
+    <p class="lead">订单服务直接调三个下游，一个慢就全慢，一个挂就下单失败。换成发一条“订单已创建”的消息，各下游自己去取。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 760 300" role="img" aria-label="订单服务把事件写进 order-created 这个 topic，库存、积分、短信三个服务各自读一份，库存服务开了两个实例分着处理">
+        <rect class="b-pd" x="16" y="112" width="140" height="76" rx="12"/>
+        <text class="t-h" x="86" y="144" text-anchor="middle">订单服务</text>
+        <text class="t-m" x="86" y="166" text-anchor="middle">下单 → 发一条事件</text>
+        <line class="e-ink" x1="158" y1="150" x2="204" y2="150" marker-end="url(#ah-ink)"/>
+        <text class="t-b" x="210" y="114">topic：order-created</text>
+        <rect class="c-bk" x="210" y="128" width="26" height="40" rx="4"/><rect class="c-bk" x="239" y="128" width="26" height="40" rx="4"/><rect class="c-bk" x="268" y="128" width="26" height="40" rx="4"/><rect class="c-bk" x="297" y="128" width="26" height="40" rx="4"/><rect class="c-bk" x="326" y="128" width="26" height="40" rx="4"/><rect class="c-bk" x="355" y="128" width="26" height="40" rx="4"/><rect class="c-bk" x="384" y="128" width="26" height="40" rx="4"/><rect class="c-new" x="413" y="128" width="26" height="40" rx="4"/>
+        <text class="t-m" x="210" y="190">按顺序往后追加，默认保留 7 天</text>
+        <line class="e-ink" x1="444" y1="146" x2="516" y2="62" marker-end="url(#ah-ink)"/>
+        <line class="e-ink" x1="444" y1="150" x2="516" y2="150" marker-end="url(#ah-ink)"/>
+        <line class="e-ink" x1="444" y1="154" x2="516" y2="238" marker-end="url(#ah-ink)"/>
+        <rect class="b-cg" x="520" y="20" width="226" height="82" rx="12"/>
+        <text class="t-b" x="534" y="44">库存服务 · 组 inventory</text>
+        <rect class="b-card" x="534" y="58" width="88" height="30" rx="8"/><text class="t-s" x="578" y="78" text-anchor="middle">实例 1</text>
+        <rect class="b-card" x="632" y="58" width="88" height="30" rx="8"/><text class="t-s" x="676" y="78" text-anchor="middle">实例 2</text>
+        <rect class="b-g2" x="520" y="112" width="226" height="76" rx="12"/>
+        <text class="t-b" x="534" y="136">积分服务 · 组 points</text>
+        <rect class="b-card" x="534" y="148" width="88" height="30" rx="8"/><text class="t-s" x="578" y="168" text-anchor="middle">实例 1</text>
+        <rect class="b-neu" x="520" y="198" width="226" height="76" rx="12"/>
+        <text class="t-b" x="534" y="222">短信服务 · 组 sms</text>
+        <rect class="b-card" x="534" y="234" width="88" height="30" rx="8"/><text class="t-s" x="578" y="254" text-anchor="middle">实例 1</text>
+        <circle class="mk" cx="181" cy="128" r="11"/><text class="mk-t" x="181" y="132.5" text-anchor="middle">1</text>
+        <circle class="mk" cx="480" cy="128" r="11"/><text class="mk-t" x="480" y="132.5" text-anchor="middle">2</text>
+        <circle class="mk" cx="733" cy="73" r="11"/><text class="mk-t" x="733" y="77.5" text-anchor="middle">3</text>
+      </svg>
+    </div>
+    <figcaption>订单服务只管写，不知道下游有几个。三个服务各自从 topic 里读，读多快自己定；大促时消息先攒在 Kafka 里，下游慢慢消化。</figcaption>
+  </figure>
+  <div class="trio">
+    <div class="need" data-role="bk"><b><i>1</i>一条都不能丢</b><p>库存少扣一次就超卖，积分少发一次就有人投诉。服务器宕机、网络抖动时也一样。</p><span class="to">本页上半：可靠性</span></div>
+    <div class="need" data-role="cg"><b><i>2</i>每个下游各收一份</b><p>以后加风控、数仓，不用改订单服务，再挂一个组就行。</p><span class="to">消费组</span></div>
+    <div class="need" data-role="cg"><b><i>3</i>组内分着干，挂一台别的接手</b><p>库存服务开两台，消息分着处理；一台挂了，另一台把它的活接过去。</p><span class="to">消费组和 rebalance</span></div>
+  </div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>老办法行不行</h2>
+    <p class="lead">先用已经会的东西做一遍：直接调接口，或者用学过的 <a href="../redis/redis-stream-mq.html">Redis Stream</a>。都能做，但疼的地方正好是 Kafka 的精华。</p>
+  </div>
+  <div class="duo">
+    <div class="way" data-role="other">
+      <h3>同步调接口<small>能做，耦合太紧</small></h3>
+      <div class="flow"><span class="nd" data-role="pd">订单</span><span class="ar">→</span><span class="nd" data-role="other">库存<small>50ms</small></span><span class="ar">→</span><span class="nd" data-role="other">积分<small>80ms</small></span><span class="ar">→</span><span class="nd x">短信<small>超时</small></span></div>
+      <ul class="pains">
+        <li>下单接口至少 430 ms，最慢的那个说了算</li>
+        <li>短信服务挂了，下单跟着失败，或者要自己写重试</li>
+        <li>加一个下游，就要改一次订单服务、发一次版</li>
+        <li>大促时流量直接压到每个下游，没有缓冲</li>
+      </ul>
+    </div>
+    <div class="way" data-role="other">
+      <h3>Redis Stream<small>能做，不够稳、扩不开</small></h3>
+      <div class="flow"><span class="nd" data-role="pd">订单</span><span class="ar">→</span><span class="nd" data-role="other">Stream<small>内存</small></span><span class="ar">→</span><span class="nd" data-role="cg">库存组</span><span class="nd" data-role="g2">积分组</span></div>
+      <ul class="pains">
+        <li class="ok">有消费组、ACK、待确认列表，组内分活、组间各一份都能做</li>
+        <li>消息在内存里，下游停几个小时，积压就可能把内存撑爆</li>
+        <li>AOF 每秒刷盘，断电丢约 1 秒；主从异步复制，切换时丢最后一点（<code>WAIT</code> 能等从节点，但官方说它不能让 Redis 变成强一致）</li>
+        <li>一个 Stream 是一个 key，只在一个节点上，要扩容得自己拆成多个 key</li>
+      </ul>
+    </div>
+  </div>
+  <div class="essence">
+    <span class="big">缺的那块<br>就是精华</span>
+    <p><b>写到磁盘、等够几份副本才算成功</b>：机器挂一台，消息还在别处，而且“成功”的标准可以配。</p>
+    <p><b>按分区并行，每个组自己记读到哪</b>：消息读完不删，加下游、回放历史只是多一个书签；组内按分区分活，加分区就能扩。</p>
+  </div>
+  <div class="misuse">
+    <b>不懂精华时的典型误用</b>
+    <ul>
+      <li>当成普通队列用，以为“消费完就删了”。其实消息一直在，默认存 7 天，别的组照样能读，也能重读。</li>
+      <li>以为加实例就能提速。实例数超过分区数，多出来的拿不到分区，白开着。</li>
+      <li>以为配了 <code>acks=all</code> 就一定不丢。Broker 默认 <code>min.insync.replicas=1</code>，同步副本只剩 leader 时，它和 <code>acks=1</code> 一样。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>选谁：读完就删的队列，还是读完还在的日志</h2>
+    <p class="lead">能干这活的有好几个。先看最根本的差别：消息被读过之后还在不在。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 760 270" role="img" aria-label="左边是队列模型：消费者抢着拿，确认后消息删除，多一个下游要多一个队列。右边是日志模型：消息一直留着，每个组有自己的书签，新接入的下游可以从头读">
+        <text class="t-h" x="16" y="26">队列：读完就删</text><text class="t-m" x="128" y="26">RabbitMQ 经典队列</text>
+        <rect class="b-card" x="16" y="48" width="214" height="48" rx="10"/>
+        <rect class="c-neu" x="26" y="56" width="34" height="32" rx="4"/><text class="t-on" x="43" y="76" text-anchor="middle">m5</text>
+        <rect class="c-neu" x="64" y="56" width="34" height="32" rx="4"/><text class="t-on" x="81" y="76" text-anchor="middle">m4</text>
+        <rect class="c-neu" x="102" y="56" width="34" height="32" rx="4"/><text class="t-on" x="119" y="76" text-anchor="middle">m3</text>
+        <rect class="c-ghost" x="146" y="56" width="34" height="32" rx="4"/><text class="t-m" x="163" y="76" text-anchor="middle">m2</text>
+        <rect class="c-ghost" x="184" y="56" width="34" height="32" rx="4"/><text class="t-m" x="201" y="76" text-anchor="middle">m1</text>
+        <text class="t-bad" x="160" y="114">ack 后删除</text>
+        <line class="e-ink" x1="232" y1="66" x2="282" y2="46" marker-end="url(#ah-ink)"/>
+        <line class="e-ink" x1="232" y1="78" x2="282" y2="98" marker-end="url(#ah-ink)"/>
+        <rect class="b-cg" x="286" y="30" width="86" height="30" rx="8"/><text class="t-s" x="329" y="50" text-anchor="middle">库存 实例1</text>
+        <rect class="b-cg" x="286" y="84" width="86" height="30" rx="8"/><text class="t-s" x="329" y="104" text-anchor="middle">库存 实例2</text>
+        <text class="t-m" x="286" y="132">两个实例抢同一个队列</text>
+        <rect class="b-card" x="16" y="158" width="214" height="48" rx="10"/>
+        <rect class="c-neu" x="26" y="166" width="34" height="32" rx="4"/><rect class="c-neu" x="64" y="166" width="34" height="32" rx="4"/><rect class="c-neu" x="102" y="166" width="34" height="32" rx="4"/><rect class="c-neu" x="140" y="166" width="34" height="32" rx="4"/><rect class="c-neu" x="178" y="166" width="34" height="32" rx="4"/>
+        <line class="e-ink" x1="232" y1="182" x2="282" y2="182" marker-end="url(#ah-ink)"/>
+        <rect class="b-g2" x="286" y="167" width="86" height="30" rx="8"/><text class="t-s" x="329" y="187" text-anchor="middle">积分 实例1</text>
+        <text class="t-m" x="16" y="228">积分要另建一个队列，由交换机再投一份</text>
+        <text class="t-m" x="16" y="248">读过的消息回不去，新下游看不到历史</text>
+        <line class="e-mut" x1="392" y1="16" x2="392" y2="256"/>
+        <text class="t-h" x="414" y="26">日志：读完还在</text><text class="t-m" x="528" y="26">Kafka 分区</text>
+        <rect class="c-bk" x="414" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="446" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="478" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="510" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="542" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="574" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="606" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="638" y="60" width="28" height="36" rx="4"/><rect class="c-bk" x="670" y="60" width="28" height="36" rx="4"/>
+        <text class="t-on" x="428" y="83" text-anchor="middle">0</text><text class="t-on" x="460" y="83" text-anchor="middle">1</text><text class="t-on" x="492" y="83" text-anchor="middle">2</text><text class="t-on" x="524" y="83" text-anchor="middle">3</text><text class="t-on" x="556" y="83" text-anchor="middle">4</text><text class="t-on" x="588" y="83" text-anchor="middle">5</text><text class="t-on" x="620" y="83" text-anchor="middle">6</text><text class="t-on" x="652" y="83" text-anchor="middle">7</text><text class="t-on" x="684" y="83" text-anchor="middle">8</text>
+        <rect class="c-empty" x="702" y="60" width="28" height="36" rx="4"/>
+        <path class="f-cg" d="M716 102l8 12h-16z"/><line class="e-mut" x1="716" y1="116" x2="716" y2="132"/><text class="t-cg" x="730" y="140" text-anchor="end">库存组 → 9（读完了）</text>
+        <path class="f-g2" d="M588 102l8 12h-16z"/><line class="e-mut" x1="588" y1="116" x2="588" y2="160"/><text class="t-g2" x="588" y="174" text-anchor="middle">积分组 → 5（还差 4 条）</text>
+        <path class="f-neu" d="M428 102l8 12h-16z"/><line class="e-mut" x1="428" y1="116" x2="428" y2="194"/><text class="t-b" x="414" y="208">新接的数仓组 → 0，从头读</text>
+        <text class="t-m" x="414" y="232">多一个下游只是多一个书签</text>
+        <text class="t-m" x="414" y="250">消息按时间或大小过期，不因为被读而删除</text>
+      </svg>
+    </div>
+    <figcaption>左边读一条少一条，几个实例抢着拿；右边谁都不删，每个组记自己的位置（▲）。Kafka 的“消费组”就是这样一个个书签。</figcaption>
+  </figure>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">Redis Stream</th><th scope="col">RabbitMQ</th><th scope="col">RocketMQ</th><th scope="col" class="me">Kafka</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">模型</th><td>日志，放内存</td><td>队列，确认后删除（3.9 起另有 Stream 队列）</td><td>队列，底层是一份提交日志</td><td class="me">日志，放磁盘</td></tr>
+        <tr><th scope="row">怎样算写成功</th><td class="mid">主节点写进内存</td><td class="good">publisher confirm；仲裁队列要多数节点写入</td><td class="good">可选同步刷盘、同步复制</td><td class="me good">acks=all + min.insync.replicas</td></tr>
+        <tr><th scope="row">组内并行单位</th><td>每条消息</td><td>每条消息（多个消费者抢一个队列）</td><td>队列（MessageQueue）</td><td class="me">分区</td></tr>
+        <tr><th scope="row">回放历史</th><td class="good">按 ID</td><td class="bad">读完就没了</td><td class="good">按时间重置位点</td><td class="me good">按 offset 或时间</td></tr>
+        <tr><th scope="row">吞吐</th><td>中，受单节点限制</td><td>中</td><td class="good">高</td><td class="me good">很高</td></tr>
+        <tr><th scope="row">重试、死信、延迟</th><td class="bad">都要自己做</td><td class="good">死信交换机、TTL</td><td class="good">自带重试、死信、延迟消息</td><td class="me mid">都不内置；Spring Kafka 有重试和死信</td></tr>
+        <tr><th scope="row">适合</th><td>已有 Redis 的轻量任务</td><td>复杂路由、单条确认的业务消息</td><td>交易类业务消息</td><td class="me">事件流、日志、一条消息多个下游</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="rule">
+    <b>选择规则</b>
+    <ol>
+      <li>同一条消息要被好几个系统各读一份、量大、还想回放：<b>Kafka</b>。</li>
+      <li>要按规则路由，每条单独确认、重试：<b>RabbitMQ</b>。</li>
+      <li>交易类消息，想要延迟消息、事务消息开箱即用：<b>RocketMQ</b>。</li>
+      <li>量小、已经有 Redis、能接受极端情况下丢一点：<b>Redis Stream</b>。</li>
+    </ol>
+  </div>
+  <p class="pick-line"><b>本页学 Kafka。</b>订单事件要扇出给库存、积分、短信，以后数仓、风控也要接，“读完还在”和“按分区扩”最关键。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>基本原理：一本账存三份，每个组夹自己的书签</h2>
+    <p class="lead">把一个 topic 想成几本账（分区）。每本账复印三份放在三台机器上（副本），只有一份是正本（leader），写和读都找它。每个部门（消费组）在每本账里夹自己的书签（offset），部门里的人分账来看，一本账同一时间只归一个人。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 600 320" role="img" aria-label="订单服务按订单号的哈希把消息写进三个分区之一。每个分区的 leader 在不同 Broker 上，另外两台各有一份副本。库存组和积分组在每个分区各有一个书签，库存组的两个实例分摊三个分区，积分组一个实例读全部">
+        <rect class="b-pd" x="12" y="116" width="128" height="82" rx="12"/>
+        <text class="t-h" x="76" y="148" text-anchor="middle">订单服务</text>
+        <text class="t-m" x="76" y="170" text-anchor="middle">key = 订单号</text>
+        <text class="t-m" x="76" y="222" text-anchor="middle">hash(key) % 3</text>
+        <text class="t-m" x="76" y="238" text-anchor="middle">决定进哪个分区</text>
+        <line class="e-ink" x1="142" y1="150" x2="184" y2="66" marker-end="url(#ah-ink)"/>
+        <line class="e-ink" x1="142" y1="157" x2="184" y2="160" marker-end="url(#ah-ink)"/>
+        <line class="e-ink" x1="142" y1="164" x2="184" y2="256" marker-end="url(#ah-ink)"/>
+        <text class="t-b" x="190" y="34">分区 0<tspan class="t-m" dx="8">leader 在 B1，副本在 B2、B3</tspan></text>
+        <text class="t-b" x="190" y="134">分区 1<tspan class="t-m" dx="8">leader 在 B2，副本在 B3、B1</tspan></text>
+        <text class="t-b" x="190" y="234">分区 2<tspan class="t-m" dx="8">leader 在 B3，副本在 B1、B2</tspan></text>
+        <g id="strips"></g>
+        <rect class="b-cg" x="440" y="40" width="148" height="22" rx="6"/><text class="t-cg" x="514" y="56" text-anchor="middle">库存组 · 实例 c1 读</text>
+        <rect class="b-g2" x="440" y="66" width="148" height="22" rx="6"/><text class="t-g2" x="514" y="82" text-anchor="middle">积分组 · 实例 c1 读</text>
+        <rect class="b-cg" x="440" y="140" width="148" height="22" rx="6"/><text class="t-cg" x="514" y="156" text-anchor="middle">库存组 · 实例 c1 读</text>
+        <rect class="b-g2" x="440" y="166" width="148" height="22" rx="6"/><text class="t-g2" x="514" y="182" text-anchor="middle">积分组 · 实例 c1 读</text>
+        <rect class="b-cg" x="440" y="240" width="148" height="22" rx="6"/><text class="t-cg" x="514" y="256" text-anchor="middle">库存组 · 实例 c2 读</text>
+        <rect class="b-g2" x="440" y="266" width="148" height="22" rx="6"/><text class="t-g2" x="514" y="282" text-anchor="middle">积分组 · 实例 c1 读</text>
+        <path class="f-cg" d="M196 300l7 11h-14z"/><text class="t-m" x="208" y="311">库存组的书签</text>
+        <path class="f-g2" d="M300 300l7 11h-14z"/><text class="t-m" x="312" y="311">积分组的书签（下次从这里读）</text>
+      </svg>
+    </div>
+    <figcaption>同一个订单号总进同一个分区，所以同一订单的事件有先后；不同分区之间没有顺序。每个组在每个分区各记一个 offset，互不影响：积分组落后了，不耽误库存组。</figcaption>
+  </figure>
+
+  <div class="stage" id="lc" tabindex="0" aria-label="一条消息从发送到被消费的分步演示，可以用左右方向键切换">
+    <div class="st-top"><h3>一条消息的一生</h3><span class="st-pos" id="lcPos"></span></div>
+    <p class="cap-txt" id="lcCap" aria-live="polite"></p>
+    <div class="svg-scroll"><svg class="sv" id="lcSvg" viewBox="0 0 700 330" role="img" aria-label="生产者、分区 0 的 leader 和两个 follower、消费者、offset 存储之间的消息流"></svg></div>
+    <div class="ctrl">
+      <button class="btn" id="lcPrev">← 上一步</button>
+      <button class="btn primary" id="lcNext">下一步 →</button>
+      <button class="btn" id="lcAuto">▶ 自动播放</button>
+      <button class="btn" id="lcReset">从头来</button>
+    </div>
+  </div>
+
+  <div class="chain">
+    <div class="link" data-role="pd"><h4>生产者：等够了再说成功</h4><ul><li><code>acks=all</code>：ISR 里的副本都写到才回成功</li><li>失败自动重试，开幂等防重复</li><li>回调里看结果，失败要处理</li></ul><span class="leak">漏在这：acks=1、发了不管</span></div>
+    <span class="arw" aria-hidden="true">→</span>
+    <div class="link" data-role="bk"><h4>Broker：副本要够</h4><ul><li>每个分区 3 个副本</li><li><code>min.insync.replicas=2</code>：同步副本不到 2 个就拒写</li><li>落后的副本不许当 leader（默认）</li></ul><span class="leak">漏在这：只剩 leader 还照收</span></div>
+    <span class="arw" aria-hidden="true">→</span>
+    <div class="link" data-role="cg"><h4>消费者：做完再挪书签</h4><ul><li>处理完再提交 offset</li><li>崩溃后会重来一遍，业务要幂等</li><li>同一组的实例分摊分区</li></ul><span class="leak">漏在这：先提交后处理</span></div>
+  </div>
+  <p class="tip">三段里任何一段松了都会丢，第⑥步的故障实验台可以挨个试。HW、ISR 进出、Leader Epoch 这些细节，放到第⑥步第三圈。</p>
+
+  <div class="rules4">
+    <div class="gm"><b>3 个分区 · 2 个实例</b><div class="mem-row"><div class="mc" data-role="cg"><span>c1</span><div class="ps"><i class="pc">p0</i><i class="pc">p1</i></div></div><div class="mc" data-role="cg"><span>c2</span><div class="ps"><i class="pc">p2</i></div></div></div><p>不平均也没关系，按分区分。</p></div>
+    <div class="gm"><b>3 个分区 · 3 个实例</b><div class="mem-row"><div class="mc" data-role="cg"><span>c1</span><div class="ps"><i class="pc">p0</i></div></div><div class="mc" data-role="cg"><span>c2</span><div class="ps"><i class="pc">p1</i></div></div><div class="mc" data-role="cg"><span>c3</span><div class="ps"><i class="pc">p2</i></div></div></div><p>一人一个，并行度到顶了。</p></div>
+    <div class="gm"><b>3 个分区 · 4 个实例</b><div class="mem-row"><div class="mc" data-role="cg"><span>c1</span><div class="ps"><i class="pc">p0</i></div></div><div class="mc" data-role="cg"><span>c2</span><div class="ps"><i class="pc">p1</i></div></div><div class="mc" data-role="cg"><span>c3</span><div class="ps"><i class="pc">p2</i></div></div><div class="mc idle"><span>c4</span><em>闲着</em></div></div><p>多出来的拿不到分区。</p></div>
+    <div class="gm"><b>另一个组 · 1 个实例</b><div class="mem-row"><div class="mc" data-role="g2"><span>积分 c1</span><div class="ps"><i class="pc">p0</i><i class="pc">p1</i><i class="pc">p2</i></div></div></div><p>组和组互不影响，各读一份。</p></div>
+  </div>
+
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>最少的代码</b><span>spring-kafka</span></div>
+<pre><code><span class="cm">// 生产：订单号当 key，同一订单进同一分区</span>
+kafkaTemplate.send("order-created", orderId, json);
+
+<span class="cm">// 消费：同一个 groupId 的实例分摊分区</span>
+@KafkaListener(topics = "order-created", groupId = "inventory")
+void onOrder(String json, Acknowledgment ack) {
+    deductStock(json);
+    ack.acknowledge();           <span class="cm">// 处理完再提交 offset</span>
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>最少的配置</b><span>application.yml</span></div>
+<pre><code>spring:
+  kafka:
+    producer:
+      acks: all             <span class="cm"># 配合 min.insync.replicas，见⑥</span>
+    listener:
+      ack-mode: manual      <span class="cm"># 其他提交方式，见⑥</span>
+
+<span class="cm"># topic 端（运维建 topic 时）：</span>
+<span class="cm"># 3 副本 + min.insync.replicas=2，见⑥</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>跑起来：一个订单服务，两个消费组</h2>
+    <p class="lead">实测环境：Kafka 4.1.2 单机（KRaft），Spring Boot 3.5.16（自带 spring-kafka 3.3.16、kafka-clients 3.9.2），JDK 17 以上。下面的输出都是真实运行时打出来的，只删掉了时间和线程名。</p>
+  </div>
+  <div class="steps5">
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">1</span><b>起一个 Kafka</b><span>二选一</span></div>
+<pre><code><span class="cm"># Docker：官方镜像默认就是单机 KRaft，监听 localhost:9092</span>
+docker run -d --name kafka -p 9092:9092 apache/kafka:4.1.2
+
+<span class="cm"># 不用 Docker：解压 kafka_2.13-4.1.2.tgz 后</span>
+bin/kafka-storage.sh format --standalone \
+  -t $(bin/kafka-storage.sh random-uuid) -c config/server.properties
+bin/kafka-server-start.sh config/server.properties</code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">2</span><b>pom.xml</b><span>只要两个依赖</span></div>
+<pre><code>&lt;parent&gt;
+  &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+  &lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;
+  &lt;version&gt;3.5.16&lt;/version&gt;
+&lt;/parent&gt;
+&lt;groupId&gt;demo&lt;/groupId&gt;
+&lt;artifactId&gt;kafka-order&lt;/artifactId&gt;
+&lt;version&gt;1.0&lt;/version&gt;
+&lt;properties&gt;&lt;java.version&gt;17&lt;/java.version&gt;&lt;/properties&gt;
+&lt;dependencies&gt;
+  &lt;dependency&gt;
+    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+    &lt;artifactId&gt;spring-boot-starter-web&lt;/artifactId&gt;
+  &lt;/dependency&gt;
+  &lt;dependency&gt;
+    &lt;groupId&gt;org.springframework.kafka&lt;/groupId&gt;
+    &lt;artifactId&gt;spring-kafka&lt;/artifactId&gt;
+  &lt;/dependency&gt;
+&lt;/dependencies&gt;
+&lt;build&gt;&lt;plugins&gt;&lt;plugin&gt;
+  &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+  &lt;artifactId&gt;spring-boot-maven-plugin&lt;/artifactId&gt;
+&lt;/plugin&gt;&lt;/plugins&gt;&lt;/build&gt;</code></pre>
+      </div>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">3</span><b>src/main/resources/application.yml</b></div>
+<pre><code>spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      acks: all                     <span class="cm"># ISR 里的副本都写到才算成功</span>
+      properties:
+        enable.idempotence: true    <span class="cm"># 重试不会写出重复</span>
+    consumer:
+      auto-offset-reset: earliest   <span class="cm"># 新消费组从头读，不漏上线前的消息</span>
+      enable-auto-commit: false
+    listener:
+      ack-mode: manual              <span class="cm"># 业务处理完，手动提交 offset</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">4</span><b>src/main/java/demo/OrderApp.java</b><span>生产者和两个消费组都在这一个类里</span></div>
+<pre><code>package demo;
+
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+@RestController
+public class OrderApp {
+
+    private static final Logger log = LoggerFactory.getLogger(OrderApp.class);
+    private final KafkaTemplate&lt;String, String&gt; kafka;
+
+    public OrderApp(KafkaTemplate&lt;String, String&gt; kafka) {
+        this.kafka = kafka;
+    }
+
+    public static void main(String[] args) {
+        SpringApplication.run(OrderApp.class, args);
+    }
+
+    <span class="cm">/** 启动时建 topic：3 个分区。单机只能 1 个副本，生产环境是 3 */</span>
+    @Bean
+    NewTopic orderCreated() {
+        return TopicBuilder.name("order-created").partitions(3).replicas(1).build();
+    }
+
+    <span class="cm">/** 生产者：订单号当 key，同一个订单永远进同一个分区 */</span>
+    @PostMapping("/orders/{id}")
+    public String create(@PathVariable String id) {
+        kafka.send("order-created", id, "{\"orderId\":\"" + id + "\"}")
+             .whenComplete((r, ex) -&gt; {
+                 if (ex != null) {
+                     log.error("发送失败 order={}", id, ex);          <span class="cm">// 第⑥步：落库，稍后重发</span>
+                 } else {
+                     log.info("已写入 order={} 分区={} offset={}", id,
+                             r.getRecordMetadata().partition(), r.getRecordMetadata().offset());
+                 }
+             });
+        return "ok\n";
+    }
+
+    <span class="cm">/** 消费组 inventory：开几个实例，3 个分区就在它们之间分 */</span>
+    @KafkaListener(topics = "order-created", groupId = "inventory")
+    public void deductStock(ConsumerRecord&lt;String, String&gt; rec, Acknowledgment ack) {
+        log.info("[库存] 扣减 order={} 分区={} offset={}", rec.key(), rec.partition(), rec.offset());
+        ack.acknowledge();                                           <span class="cm">// 处理完再提交</span>
+    }
+
+    <span class="cm">/** 消费组 points：另一个组，每条消息再收一份 */</span>
+    @KafkaListener(topics = "order-created", groupId = "points")
+    public void addPoints(ConsumerRecord&lt;String, String&gt; rec, Acknowledgment ack) {
+        log.info("[积分] 加积分 order={} 分区={}", rec.key(), rec.partition());
+        ack.acknowledge();
+    }
+}</code></pre>
+    </div>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">5</span><b>运行</b><span>两个终端</span></div>
+<pre><code>mvn -q package -DskipTests
+
+<span class="cm"># 终端 A：先只开一个实例，发 6 个订单</span>
+java -jar target/kafka-order-1.0.jar
+for i in 1001 1002 1003 1004 1005 1006; do
+  curl -X POST localhost:8080/orders/$i; done
+
+<span class="cm"># 终端 B：再开一个实例，再发 3 个</span>
+java -jar target/kafka-order-1.0.jar --server.port=8081
+for i in 1007 1008 1009; do
+  curl -X POST localhost:8080/orders/$i; done
+
+<span class="cm"># 看消费组：每个分区读到哪、落后多少</span>
+docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group inventory</code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">6</span><b>实测输出</b><span>节选；行首 A、B 表示哪个实例</span></div>
+<pre class="console"><code><span class="w"># 只有 A：两个组都拿到全部 3 个分区</span>
+inventory: <b>partitions assigned</b>: [order-created-0, order-created-1, order-created-2]
+points: <b>partitions assigned</b>: [order-created-0, order-created-1, order-created-2]
+已写入 order=1001 分区=0 offset=0
+已写入 order=1002 分区=0 offset=1
+已写入 order=1003 分区=1 offset=0
+已写入 order=1005 分区=2 offset=0
+[库存] 扣减 order=1001 分区=0 offset=0
+[积分] 加积分 order=1001 分区=0
+<span class="w"># B 加入：A 先交出全部，再领回一个</span>
+A  inventory: <b>partitions revoked</b>: [order-created-0, order-created-1, order-created-2]
+A  inventory: <b>partitions assigned</b>: [order-created-2]
+B  inventory: <b>partitions assigned</b>: [order-created-0, order-created-1]
+B  [库存] 扣减 order=1007 分区=0 offset=2
+B  [库存] 扣减 order=1009 分区=1 offset=2
+<span class="w"># kafka-consumer-groups.sh（9 个订单都消费完，列有删减）</span>
+GROUP     TOPIC          PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+inventory order-created  0          4               4               0
+inventory order-created  1          3               3               0
+inventory order-created  2          2               2               0</code></pre>
+      </div>
+    </div>
+    <p class="tip">再试一下：把 A <code>kill -9</code>，实测 B 等了 45 秒（<code>session.timeout.ms</code> 的默认值）才把分区 2 接过去，这期间分区 2 没人读。在终端里按 Ctrl+C 正常停，B 立刻接手。</p>
+  </div>
+  <div class="later">
+    <div class="done-box"><b>到这里已经能交差了。</b>下单发事件，库存和积分各收一份；库存服务多开一台，分区自动分摊；挂一台，另一台接手。</div>
+    <div class="todo"><b>已知还没处理的细节</b>
+      <ul>
+        <li>发送失败只打了日志，没补发 → <a href="#pit-cb">⑥ 发了不管</a></li>
+        <li>单机只有 1 个副本，acks=all 还没真正起作用 → <a href="#pit-isr">⑥ min.insync.replicas</a></li>
+        <li>崩溃重启会重复消费，扣库存没做幂等 → <a href="#pit-idem">⑥ 一定会重复</a></li>
+        <li>处理抛异常时，默认重试 10 次后直接跳过 → <a href="#pit-dlt">⑥ 坏消息</a></li>
+        <li>分区数 3 定死了，开到第 4 个实例就闲着 → <a href="#pit-more">⑥ 加实例不变快</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>细节 · 规范 · 优化</h2>
+    <p class="lead">初级看到前三条，高手看到第九条。分三圈：不知道就出事故的坑、团队里该怎么配、调优和底层机制。先动手：在实验台里配一套参数，扔一个故障进去。</p>
+  </div>
+
+  <div class="lab" id="fl">
+    <div class="st-top"><h3>故障实验台</h3><span class="st-pos">1000 个订单 · 3 副本</span></div>
+    <div class="faults" role="group" aria-label="选一个故障">
+      <button data-fault="A" aria-pressed="false"><b>A · leader 宕机</b><span>写到一半，leader 被 kill -9</span></button>
+      <button data-fault="B" aria-pressed="true"><b>B · 只剩 leader 后宕机</b><span>follower 先掉队，leader 再挂</span></button>
+      <button data-fault="C" aria-pressed="false"><b>C · 确认丢在路上</b><span>写成功了，生产者没收到回应</span></button>
+      <button data-fault="D" aria-pressed="false"><b>D · 消费者崩溃</b><span>处理到一半进程挂了</span></button>
+    </div>
+    <p class="scn" id="flScn"></p>
+    <div class="cfg3">
+      <div class="cfgc" data-role="pd" id="cfgP"><h4>生产者</h4>
+        <div class="opt"><span><code>acks</code></span><div class="seg-btns" role="group" aria-label="acks"><button data-acks="0">0</button><button data-acks="1">1</button><button data-acks="all">all</button></div></div>
+        <div class="opt"><span><code>enable.idempotence</code></span><div class="seg-btns" role="group" aria-label="生产者幂等"><button data-idem="1">开</button><button data-idem="0">关</button></div></div>
+        <div class="opt"><span>send 的回调</span><div class="seg-btns" role="group" aria-label="回调"><button data-cb="handle">检查并处理失败</button><button data-cb="ignore">发了不管</button></div></div>
+        <p class="irr">这个故障和生产者的配置无关</p>
+      </div>
+      <div class="cfgc" data-role="bk" id="cfgB"><h4>Broker · topic</h4>
+        <div class="opt"><span><code>min.insync.replicas</code></span><div class="seg-btns" role="group" aria-label="min.insync.replicas"><button data-mi="1">1（默认）</button><button data-mi="2">2</button></div></div>
+        <div class="opt"><span>副本数</span><span><code>3</code>，<code>unclean.leader.election.enable=false</code>（默认）</span></div>
+        <p class="irr">这个故障里 Broker 参数不起作用</p>
+      </div>
+      <div class="cfgc" data-role="cg" id="cfgC"><h4>消费者</h4>
+        <div class="opt"><span>提交 offset 的时机</span><div class="seg-btns" role="group" aria-label="提交时机"><button data-cm="after">处理完再提交</button><button data-cm="before">先提交再处理</button></div></div>
+        <div class="opt"><span>业务幂等（按订单号去重）</span><div class="seg-btns" role="group" aria-label="业务幂等"><button data-biz="1">有</button><button data-biz="0">没有</button></div></div>
+        <p class="irr">这个故障和消费者无关</p>
+      </div>
+    </div>
+    <div class="tiles" id="flTiles"></div>
+    <div class="cells-head"><span>1000 个订单的下场（一格 10 个，从 #1 排到 #1000）</span><span id="flSum"></span></div>
+    <div class="cells" id="flCells" role="img" aria-label="1000 个订单的结果"></div>
+    <div class="lg"><span><i style="background:var(--good-tint);border:1px solid var(--good)"></i>正常</span><span><i style="background:var(--bad)"></i>悄悄丢了</span><span><i style="background:repeating-linear-gradient(135deg,var(--neutral-tint) 0 3px,var(--line-strong) 3px 5px);border:1px solid var(--neutral)"></i>没写成，业务知道</span><span><i style="background:var(--warn)"></i>处理了两次</span><span><i style="background:var(--good-tint);border:2px solid var(--warn)"></i>重复了，被幂等挡住</span></div>
+    <ul class="notes" id="flNotes"></ul>
+    <div class="row"><button class="btn" id="flOld">套用：老项目常见配置</button><button class="btn primary" id="flGood">套用：推荐配置</button><span class="tip">B 按 Kafka 4.1 新集群算（默认开启 ELR），3.x 的差别写在结论里。</span></div>
+  </div>
+
+  <!-- ---------- 第一圈 ---------- -->
+  <div class="sub" id="r1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项：不知道就会出事故</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-cb"><b><em>01</em>发了就不管，失败没人知道</b><dl>
+        <dt>现象</dt><dd>Broker 出问题时接口照样返回成功，消息却没进 Kafka。</dd>
+        <dt>原因</dt><dd><code>send()</code> 是异步的，消息进了内存批次就返回。失败要重试到 <code>delivery.timeout.ms</code>（默认 2 分钟）才交给回调。实测同步副本不够时，日志里反复打 <code>NOT_ENOUGH_REPLICAS … retrying</code>，回调最后拿到的是 <code>TimeoutException</code>。<span class="seen">实测</span></dd>
+        <dt>做法</dt><dd class="fix">回调里处理失败：记录、落本地表、定时补发。关键消息用第二圈的事务发件箱。</dd></dl></div>
+      <div class="pit" id="pit-acks"><b><em>02</em>acks=1，leader 一挂就丢最后一段</b><dl>
+        <dt>现象</dt><dd>实测：acks=1 发 200 条，全部回成功；follower 还没拉走时 kill -9 leader，新 leader 上一条都没有。<span class="seen">实测</span></dd>
+        <dt>原因</dt><dd>acks=1 只等 leader 写进自己的日志。kafka-clients 2.x 默认就是 1，Spring Boot 2.5 及更早带的是 2.x。</dd>
+        <dt>做法</dt><dd class="fix">用 <code>acks=all</code>。别为了快改回 1：实测显式写 <code>acks=1</code> 时，默认开着的幂等会被悄悄关掉；再写 <code>enable.idempotence=true</code> 直接启动报错。</dd></dl></div>
+      <div class="pit" id="pit-isr"><b><em>03</em>acks=all 也会丢：min.insync.replicas 还是 1</b><dl>
+        <dt>现象</dt><dd>实测：两个 follower 掉出 ISR 后，acks=all 照样回成功；leader 再一挂，分区下线，这些消息只在那一台上。<span class="seen">实测</span></dd>
+        <dt>原因</dt><dd>“all”指的是 ISR 里的全部。ISR 缩到只剩 leader，就只等它自己。Broker 的 <code>min.insync.replicas</code> 默认是 1。</dd>
+        <dt>做法</dt><dd class="fix">topic 3 副本 + <code>min.insync.replicas=2</code>：同步副本不到 2 个就拒写，宁可报错也不假装成功。</dd></dl></div>
+      <div class="pit" id="pit-rf"><b><em>04</em>自动建出来的 topic 只有 1 个副本、1 个分区</b><dl>
+        <dt>现象</dt><dd>往一个还不存在的 topic 发消息，没报错；后来那台 Broker 坏了，消息全没了。死信 topic 也一样，实测被自动建成 1 分区 1 副本。<span class="seen">实测</span></dd>
+        <dt>原因</dt><dd><code>auto.create.topics.enable</code> 默认 true，自动建时用 <code>num.partitions=1</code>、<code>default.replication.factor=1</code>。</dd>
+        <dt>做法</dt><dd class="fix">生产环境关掉自动建；用 <code>kafka-topics.sh</code> 或 <code>NewTopic</code> 显式指定分区数和副本数，死信 topic 也提前建。</dd></dl></div>
+      <div class="pit" id="pit-commit"><b><em>05</em>先提交再处理，消息丢了还看不出来</b><dl>
+        <dt>现象</dt><dd>消费者重启后，有一段消息没处理过，消费进度却显示早读完了。</dd>
+        <dt>原因</dt><dd>offset 先交了，处理到一半崩溃。常见写法：手动提交写在业务前面；或者开自动提交，又把消息丢给线程池异步处理，下一次 <code>poll()</code> 就把 offset 交掉了。</dd>
+        <dt>做法</dt><dd class="fix">处理完再提交。Spring Kafka 2.3 起默认关掉 <code>enable.auto.commit</code>，按 <code>AckMode.BATCH</code> 在一批处理完后提交，别自己改回去。</dd></dl></div>
+      <div class="pit" id="pit-idem"><b><em>06</em>处理完再提交，就一定会重复</b><dl>
+        <dt>现象</dt><dd>库存偶尔被扣两次。</dd>
+        <dt>原因</dt><dd>处理完、提交前崩溃或 rebalance，这批会被重新投递。Kafka 默认给的是“至少一次”。</dd>
+        <dt>做法</dt><dd class="fix">消费端幂等：订单号做唯一键；或建去重表，和业务在同一个事务里先插入再处理；或用状态机 <code>UPDATE … WHERE status='待扣减'</code>。</dd></dl></div>
+      <div class="pit" id="pit-poll"><b><em>07</em>一批处理太久，被踢出组，越踢越乱</b><dl>
+        <dt>现象</dt><dd>日志里反复 rebalance，同一批消息被不同实例处理好几遍，积压越来越多。</dd>
+        <dt>原因</dt><dd>两次 <code>poll()</code> 间隔超过 <code>max.poll.interval.ms</code>（默认 5 分钟），就被认为卡死、踢出组；这批没提交，交给别人重做；它回来又触发一次 rebalance。一次最多拉 <code>max.poll.records</code>（默认 500）条。</dd>
+        <dt>做法</dt><dd class="fix">调小 <code>max.poll.records</code>，让一批在时限内做完；外部调用加超时；确实慢再调大 <code>max.poll.interval.ms</code>。</dd></dl></div>
+      <div class="pit" id="pit-dlt"><b><em>08</em>一条坏消息，默认重试 10 次后被跳过</b><dl>
+        <dt>现象</dt><dd>实测：某条消息一直抛异常，同一条连着处理 10 次，然后一行 <code>Backoff FixedBackOff{interval=0, currentAttempts=10, maxAttempts=9} exhausted</code>，这条就过去了。<span class="seen">实测</span></dd>
+        <dt>原因</dt><dd>Spring Kafka 的 <code>DefaultErrorHandler</code> 默认不等待、再试 9 次，之后只记日志、提交 offset、跳过。</dd>
+        <dt>做法</dt><dd class="fix">配 <code>DeadLetterPublishingRecoverer</code> 把它转进死信 topic，加退避间隔，给死信 topic 配告警（配置见第二圈）。</dd></dl></div>
+      <div class="pit" id="pit-reset"><b><em>09</em>新消费组上线，之前的消息一条没收到</b><dl>
+        <dt>现象</dt><dd>新加的短信组上线后，只收到上线之后的订单。</dd>
+        <dt>原因</dt><dd>一个组第一次消费、还没提交过 offset 时，按 <code>auto.offset.reset</code> 决定从哪读，默认 <code>latest</code>，只读新的。</dd>
+        <dt>做法</dt><dd class="fix">要补历史就设 <code>earliest</code>；或上线前用 <code>kafka-consumer-groups.sh --reset-offsets</code> 指定位置。</dd></dl></div>
+      <div class="pit" id="pit-more"><b><em>10</em>加了实例，消费速度没变</b><dl>
+        <dt>现象</dt><dd>积压了，把库存服务从 3 台加到 6 台，还是 3 台在干活。</dd>
+        <dt>原因</dt><dd>一个分区同一时间只归组里一个消费者。分区只有 3 个，多出来的拿不到。Spring 的 <code>concurrency: 3</code> 也算 3 个消费者。</dd>
+        <dt>做法</dt><dd class="fix">分区数按“高峰要几个消费者”提前定好、留余量。临时加分区会改变 key 到分区的映射，同一订单的新旧消息可能落在两个分区，顺序会乱一阵。</dd></dl></div>
+      <div class="pit" id="pit-ret"><b><em>11</em>停了一周的消费组，回来时位置没了</b><dl>
+        <dt>现象</dt><dd>一个组停了 8 天，重启后要么跳过一大段，要么从头全部重放。</dd>
+        <dt>原因</dt><dd>消息默认保留 7 天（<code>log.retention.hours=168</code>）。组里没有活跃实例时，提交过的 offset 也只保留 7 天（<code>offsets.retention.minutes=10080</code>），过期后按 <code>auto.offset.reset</code> 重来。</dd>
+        <dt>做法</dt><dd class="fix">积压告警要远早于保留期；长期下线的组，恢复前先确认并手动设好 offset。</dd></dl></div>
+    </div>
+  </div>
+
+  <!-- ---------- 第二圈 ---------- -->
+  <div class="sub" id="r2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范：团队里该怎么配、怎么写</h3></div>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><b>topic 和 Broker</b><span>运维建 topic 时</span></div>
+<pre><code>kafka-topics.sh --bootstrap-server … --create \
+  --topic order.created --partitions 12 \
+  --replication-factor 3 \
+  --config min.insync.replicas=2
+
+<span class="cm"># server.properties</span>
+auto.create.topics.enable=false
+unclean.leader.election.enable=false   <span class="cm"># 默认就是 false</span>
+broker.rack=az-1                       <span class="cm"># 副本分到不同机架 / 可用区</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><b>application.yml</b><span>生产环境</span></div>
+<pre><code>spring:
+  kafka:
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true       <span class="cm"># 3.x 起默认开，显式写上</span>
+        delivery.timeout.ms: 120000
+    consumer:
+      auto-offset-reset: earliest
+      max-poll-records: 100            <span class="cm"># 一批要在 5 分钟内处理完</span>
+    listener:
+      ack-mode: batch                  <span class="cm"># 默认值：一批处理完再提交</span>
+      concurrency: 3                   <span class="cm"># 实例数 × 3 ≤ 分区数</span></code></pre>
+      </div>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>坏消息进死信 topic</b><span>Spring Boot 会把这个 bean 装到监听容器上（实测）</span></div>
+<pre><code>@Bean
+DefaultErrorHandler errorHandler(KafkaTemplate&lt;String, String&gt; template) {
+    var recoverer = new DeadLetterPublishingRecoverer(template);           <span class="cm">// 转发到死信 topic</span>
+    return new DefaultErrorHandler(recoverer, new FixedBackOff(1000L, 2));  <span class="cm">// 隔 1 秒，再试 2 次</span>
+}
+<span class="cm">// 实测 spring-kafka 3.3：死信 topic 叫 order-created-dlt，老版本叫 order-created.DLT</span>
+<span class="cm">// 消息头里带着原 topic、分区、offset 和异常信息，排查完可以再投回去</span></code></pre>
+    </div>
+    <div class="rules-list">
+      <div class="rl"><b>key 用业务主键</b><p>订单号当 key，同一订单的“创建、支付、取消”进同一个分区，才有先后。只有分区内有序。</p></div>
+      <div class="rl"><b>消息自带唯一 ID</b><p>消息体里放事件 ID 和发生时间，消费端拿它去重、排查。</p></div>
+      <div class="rl"><b>topic 命名</b><p><code>&lt;业务域&gt;.&lt;事件&gt;</code>，比如 <code>order.created</code>；死信、重试 topic 跟在后面。</p></div>
+      <div class="rl"><b>盯消费延迟</b><p><code>kafka-consumer-groups.sh</code> 里的 LAG 列接进监控，按“落后多少分钟”告警，不要等积压了才发现。</p></div>
+      <div class="rl"><b>正常停机</b><p>发版用 SIGTERM（Spring 会关监听容器，实例主动离组，立刻交接）；kill -9 要等 45 秒。</p></div>
+      <div class="rl"><b>写库和发消息要一致</b><p>在 <code>@Transactional</code> 方法里直接 <code>send()</code>：事务回滚了，消息已经发出去；或者消息发了，提交时数据库失败。用下面的事务发件箱。</p></div>
+    </div>
+    <div class="mini-out">
+      <div class="outbox">
+        <span class="bx tx" data-role="pd">同一个数据库事务：写 orders + 写 outbox</span><span class="ar">→</span>
+        <span class="bx" data-role="other">后台任务扫 outbox（或 Debezium 读 binlog）</span><span class="ar">→</span>
+        <span class="bx" data-role="bk">发 Kafka，acks=all</span><span class="ar">→</span>
+        <span class="bx" data-role="done">成功后标记已发；失败下次再发</span>
+      </div>
+      <p class="tip" style="margin-top:8px">事务发件箱：订单和“要发的消息”一起提交，要么都有，要么都没有。发送可能重复（标记前崩了会再发一次），所以下游还是要幂等。事务的写法见 <a href="../spring/spring-aop-tx.html">Spring AOP 与事务</a>。</p>
+    </div>
+  </div>
+
+  <!-- ---------- 第三圈 ---------- -->
+  <div class="sub" id="r3">
+    <div class="round"><span class="rb">第三圈</span><h3>优化和深处：副本怎么对齐、组怎么分、精确一次管到哪</h3></div>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 640 210" role="img" aria-label="leader 的 LEO 是 8，follower 1 的 LEO 是 8，follower 2 的 LEO 是 6，HW 取 ISR 里最小的 6，消费者只能读到 offset 5">
+          <text class="t-b" x="16" y="52">leader B1</text><text class="t-b" x="16" y="102">follower B2</text><text class="t-b" x="16" y="152">follower B3</text>
+          <g id="hwRows"></g>
+          <line class="e-hw" x1="290" y1="22" x2="290" y2="172"/>
+          <text class="t-of" x="290" y="16" text-anchor="middle">HW = 6</text>
+          <text class="t-m" x="290" y="192" text-anchor="middle">消费者只能读到这条线之前</text>
+          <text class="t-m" x="364" y="52">LEO 8</text><text class="t-m" x="364" y="102">LEO 8</text><text class="t-m" x="364" y="152">LEO 6（还在追）</text>
+          <text class="t-m" x="476" y="52">LEO：下一条要写的位置</text>
+          <text class="t-m" x="476" y="70">HW：ISR 里都有的位置</text>
+        </svg>
+      </div>
+      <figcaption>offset 6、7 只有两份，还不算“已提交”，消费者看不到；B3 追上来以后 HW 才前进。acks=all 的生产者也是在这条线越过自己那条消息时才收到成功。</figcaption>
+    </figure>
+    <div class="deep">
+      <div class="dp" data-role="bk"><h4>ISR 怎么进出，切换时怎么对齐</h4><ul>
+        <li>follower 超过 <code>replica.lag.time.max.ms</code>（默认 30 秒）没追上，leader 把它踢出 ISR；追上了再加回来。KRaft 下 Broker 心跳断了超过 <code>broker.session.timeout.ms</code>（9 秒），控制器直接把它移出 ISR，实测十几秒内就只剩 leader。</li>
+        <li>Leader Epoch（0.11 起）：每任 leader 有个任期号。切换后副本按“上一任写到哪”截断对齐，修掉了只靠 HW 截断时丢数据、副本不一致的问题。</li>
+        <li>ELR（KIP-966）：ISR 掉到 <code>min.insync.replicas</code> 以下时，被踢出的副本记进 ELR，表示“它有全部已提交的数据”，leader 挂了它能干净接班。实测 4.1 新集群默认开启：<code>min.insync.replicas=2</code> 时 kill -9 leader，follower 自动接班；=1 时分区直接下线。</li>
+        <li><code>unclean.leader.election.enable=true</code>：没有合格副本时，让落后的副本当 leader，换回可用性，代价是丢数据。</li>
+      </ul></div>
+      <div class="dp" data-role="bk"><h4>不刷盘，靠副本</h4><ul>
+        <li><code>log.flush.interval.messages</code> 默认是 Long 的最大值：消息写进操作系统的页缓存就算写入，不等 fsync。</li>
+        <li>所以“不丢”靠的是多份副本同时在内存或磁盘里。三个副本放在同一个机架、同一路电上，一起断电时，没刷到磁盘的部分可能一起没了。</li>
+        <li>用 <code>broker.rack</code> 让副本分散到不同机架或可用区；真要每条刷盘，代价是吞吐大降。</li>
+      </ul></div>
+    </div>
+
+    <div class="sub" id="glab" style="padding-top:0">
+      <h3>消费组怎么分区，rebalance 时谁停</h3>
+      <p class="lead" style="margin-top:0">实例加入、离开、心跳超时（<code>session.timeout.ms</code>，3.0 起 45 秒，之前 10 秒）、处理超时、分区数变化，都会触发 rebalance。默认的 <code>partition.assignment.strategy</code> 是 <code>[RangeAssignor, CooperativeStickyAssignor]</code>，实际用 Range，走 eager 协议：所有实例先交出全部分区，⑤ 里实测看到的 <code>revoked</code> 全部 3 个就是它。</p>
+      <div class="lab" id="gl">
+        <div class="row"><span class="lbl">分区数：</span><div class="seg-btns" role="group" aria-label="分区数"><button data-gp="3">3</button><button data-gp="6">6</button><button data-gp="12">12</button></div>
+          <span class="lbl">分配策略：</span><div class="seg-btns" role="group" aria-label="分配策略"><button data-gs="range">Range（默认）</button><button data-gs="rr">RoundRobin</button><button data-gs="sticky">CooperativeSticky</button></div></div>
+        <div class="row"><button class="btn primary" id="glAdd">+ 加一个实例</button><button class="btn" id="glReset">从头来</button><span class="tip">点实例上的 × 让它下线。虚线框的分区是这次换了主人的。</span></div>
+        <div class="members" id="glMembers"></div>
+        <div class="tiles" id="glTiles"></div>
+        <p class="verdict" id="glV" data-role="cg"></p>
+      </div>
+      <p class="tip">示意：实例按名字排序；真实的 Range 按 member.id 排序，谁拿多一个不一定。</p>
+    </div>
+
+    <div class="deep">
+      <div class="dp" data-role="cg"><h4>少停一点</h4><ul>
+        <li>CooperativeSticky：只交出要挪的分区，其余照常消费。从 Range 换过来要分两次滚动发布，按官方升级说明做。</li>
+        <li>静态成员 <code>group.instance.id</code>（2.3 起）：实例在 <code>session.timeout.ms</code> 内重启回来，不触发 rebalance，适合 K8s 滚动发布。</li>
+        <li>新协议 KIP-848（Kafka 4.0 起正式可用）：消费者设 <code>group.protocol=consumer</code>，分配挪到 Broker 端做（默认 uniform 分配器），增量调整，不再整组停下。实测 kafka-clients 4.4.0 的默认值仍是 <code>classic</code>，要自己打开。</li>
+      </ul></div>
+      <div class="dp" data-role="pd"><h4>“精确一次”管到哪</h4><ul>
+        <li>幂等生产者：每个生产者有 Producer ID，每个分区的批次带序列号，Broker 丢掉重复的。只管同一个生产者实例、同一个分区的重试，进程重启换了 ID 就管不到。</li>
+        <li>事务：<code>transactional.id</code>（Spring 里是 <code>transaction-id-prefix</code>），消费者设 <code>isolation.level=read_committed</code>（默认 <code>read_uncommitted</code>）。适合“读 Kafka → 处理 → 写 Kafka”，offset 和输出一起提交。</li>
+        <li>管不到的：写数据库、调外部接口。Kafka 事务和数据库事务是两个事务，这部分还是靠业务幂等。</li>
+      </ul></div>
+    </div>
+
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th scope="col">吞吐参数</th><th scope="col">默认值（实测）</th><th scope="col">作用和取舍</th></tr></thead>
+        <tbody>
+          <tr><th scope="row"><code>batch.size</code></th><td class="num">16384</td><td>一个分区一批最多 16 KB；调大能多攒，延迟略升</td></tr>
+          <tr><th scope="row"><code>linger.ms</code></th><td class="num">3.x：0 · 4.x：5</td><td>等多久再发；攒批越多，请求越少</td></tr>
+          <tr><th scope="row"><code>compression.type</code></th><td class="num">none</td><td>lz4、zstd 省网络和磁盘，批越大压得越好</td></tr>
+          <tr><th scope="row"><code>max.in.flight.requests.per.connection</code></th><td class="num">5</td><td>开幂等时不超过 5，重试也能保住分区内顺序</td></tr>
+          <tr><th scope="row"><code>max.poll.records</code></th><td class="num">500</td><td>一次拉多少；要和单条处理耗时、5 分钟时限一起算</td></tr>
+          <tr><th scope="row">消费并行度</th><td class="num">—</td><td>分区数 ≥ 实例数 × concurrency；单分区里想并行，要按 key 分到不同线程，并自己管 offset</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sub" id="ver" style="padding-top:0">
+      <h3>版本差异：Kafka 2.x / 3.x / 4.x，Spring Boot 2 / 3，JDK 8 / 17</h3>
+      <div class="eras">
+        <div class="era"><div class="era-top"><h4>kafka-clients 2.x</h4><span class="jdk">Boot ≤ 2.5 · JDK 8</span></div><ul>
+          <li>实测默认：<code>acks=1</code>、幂等关、<code>session.timeout.ms=10000</code>、只有 RangeAssignor</li>
+          <li>Broker 还要 ZooKeeper</li>
+          <li>spring-kafka 2.x：<code>send()</code> 返回 <code>ListenableFuture</code>，用 <code>addCallback</code></li>
+        </ul></div>
+        <div class="era"><div class="era-top"><h4>kafka-clients 3.x</h4><span class="jdk">Boot 2.6 – 3.5 · JDK 8 / 17</span></div><ul>
+          <li>实测默认：<code>acks=all</code>、幂等开、45 秒会话超时、<code>[Range, CooperativeSticky]</code></li>
+          <li>早期 3.x 小版本出过默认值没生效的问题，生产配置里显式写上</li>
+          <li>3.x 客户端还能跑在 JDK 8 上（3.0 起标记废弃），Boot 2.7 带 3.1.2</li>
+          <li>spring-kafka 3.0 起 <code>send()</code> 返回 <code>CompletableFuture</code>，用 <code>whenComplete</code>；2.8 起错误处理统一成 <code>DefaultErrorHandler</code></li>
+        </ul></div>
+        <div class="era"><div class="era-top"><h4>Kafka 4.x</h4><span class="jdk">Boot 4 · 客户端 JDK 11+ · Broker JDK 17+</span></div><ul>
+          <li>只有 KRaft，ZooKeeper 去掉了</li>
+          <li><code>linger.ms</code> 默认改成 5（实测）</li>
+          <li>新消费组协议 KIP-848 可用，要设 <code>group.protocol=consumer</code></li>
+          <li>新集群默认开 ELR（实测 4.1）</li>
+          <li>Boot 4.0 带 kafka-clients 4.1，Boot 4.1 带 4.2；4.x Broker 只接受 2.1 及以上的客户端</li>
+        </ul></div>
+      </div>
+    </div>
+
+    <div class="sub" id="interview" style="padding-top:0">
+      <h3>面试官会怎么问</h3>
+      <div class="faq">
+        <details><summary>Kafka 怎么保证消息不丢？</summary><ul><li>生产者：<code>acks=all</code>、重试、处理回调里的失败。</li><li>Broker：3 副本、<code>min.insync.replicas=2</code>、不开 unclean 选举、副本跨机架。</li><li>消费者：处理完再提交 offset。</li><li>再补一句：<code>acks=all</code> 单独用不够，ISR 只剩 leader 时它等于 <code>acks=1</code>。</li></ul></details>
+        <details><summary>怎么保证不重复消费？</summary><ul><li>做不到“不投递重复”，只能做到“重复了不重复生效”。</li><li>生产端开幂等（Producer ID + 序列号）挡住重试造成的重复。</li><li>消费端是至少一次，崩溃和 rebalance 都会重投，用唯一键、去重表或状态机做业务幂等。</li><li>Kafka 事务的精确一次只覆盖 Kafka 到 Kafka。</li></ul></details>
+        <details><summary>怎么保证顺序？</summary><ul><li>只有分区内有序。要求有序的消息用同一个 key（订单号）。</li><li>开幂等时 <code>max.in.flight.requests.per.connection</code> 不超过 5，重试也不乱序；没开幂等又要严格有序，得设成 1。</li><li>消费端多线程处理时，按 key 分到固定线程；加分区会打乱 key 的映射。</li></ul></details>
+        <details><summary>消费者比分区多会怎样？rebalance 有什么影响？</summary><ul><li>多出来的消费者闲着。</li><li>rebalance 在实例进出、心跳超时、处理超时、分区变化时发生。eager 协议下整个组先交出全部分区，期间都停；还会造成重复消费。</li><li>减少：CooperativeSticky、静态成员、控制单批处理时长、正常停机，Kafka 4 可以换 KIP-848 新协议。</li></ul></details>
+        <details><summary>ISR、HW、LEO 是什么？</summary><ul><li>ISR：跟得上 leader 的副本集合（含 leader）。</li><li>LEO：每个副本下一条要写的位置。HW：ISR 里所有副本都有的位置，消费者只能读到 HW 之前。</li><li>acks=all 等的是 ISR 里的全部，所以 ISR 的大小决定了它有多可靠。</li></ul></details>
+        <details><summary>线上积压了怎么办？</summary><ul><li>先看是不是卡住了：消费报错重试、慢的外部调用、反复 rebalance。</li><li>分区够就加实例或调大 concurrency；分区不够，加分区（注意顺序），或临时建一个分区更多的 topic，把消息转过去并行消费。</li><li>同时确认积压不会超过 7 天的保留期。</li></ul></details>
+      </div>
+    </div>
+
+    <div class="sub" id="next" style="padding-top:0">
+      <h3>下一圈</h3>
+      <p class="tip">这一层没有尽头。本页没展开、以后可以单独做一页的方向：</p>
+      <ul class="next">
+        <li><b>存储</b>：segment 文件、稀疏索引、页缓存和零拷贝，顺序写磁盘为什么这么快</li>
+        <li><b>事务细节</b>：事务协调器、LSO，<code>read_committed</code> 怎么跳过未提交的消息</li>
+        <li><b>新消费组协议和共享组</b>：KIP-848 的服务端分配，KIP-932 让多个消费者按条分享一个分区</li>
+        <li><b>分层存储</b>：旧数据下沉到对象存储，保留期拉长到几个月</li>
+        <li><b>Spring Kafka 非阻塞重试</b>：<code>@RetryableTopic</code> 和延迟重试 topic</li>
+        <li><b>运维</b>：分区重分配、副本均衡、lag 告警、Cruise Control</li>
+        <li><b>流处理</b>：Kafka Streams 和 Flink 怎么读同一份日志</li>
+        <li><b>和 RocketMQ 比</b>：事务消息、延迟消息、消费重试的不同做法</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：拿⑥改自己的案例</h2>
+    <p class="lead">学一圈、用一圈、再深一圈。每个练习都在⑤的 OrderApp 上加一条⑥的内容。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="cg"><h4>给库存加幂等</h4><p>建表 <code>stock_log(order_id varchar(32) primary key)</code>。在 <code>@Transactional</code> 方法里先插入，<code>DuplicateKeyException</code> 就直接 ack 跳过，否则扣库存。处理中途 <code>kill -9</code> 一个实例，看重投的那几条有没有被挡住。</p><span class="uses">用到：<a href="#pit-idem">06 一定会重复</a></span></div>
+    <div class="exc" data-role="bad"><h4>加死信</h4><p>把第二圈的 <code>DefaultErrorHandler</code> bean 加进去，在 <code>deductStock</code> 里遇到 <code>bad-</code> 开头的订单就抛异常。发一个 <code>bad-1</code>，用 <code>kafka-console-consumer.sh --topic order-created-dlt --from-beginning</code> 看它进了死信。</p><span class="uses">用到：<a href="#pit-dlt">08 坏消息</a>、<a href="#pit-rf">04 自动建 topic</a></span></div>
+    <div class="exc" data-role="bk"><h4>换成 3 个 Broker</h4><p>起 3 个 Broker，topic 建成 <code>--replication-factor 3 --config min.insync.replicas=2</code>。停 1 台照常写；停 2 台，看生产者日志里的 <code>NOT_ENOUGH_REPLICAS</code>，以及回调里 2 分钟后的 <code>TimeoutException</code>。</p><span class="uses">用到：<a href="#pit-isr">03 min.insync.replicas</a>、<a href="#pit-cb">01 发了不管</a></span></div>
+  </div>
+  <div class="sub" style="padding-top:0">
+    <h3>自测</h3>
+    <div class="faq">
+      <details><summary>用一句话说出 Kafka 可靠性的精华。</summary><p>写够副本才算成功（acks=all + min.insync.replicas），处理完再挪书签（提交 offset），三段一起守，少一段都会丢。</p></details>
+      <details><summary>用 Redis Stream 做订单消息，疼在哪几处？</summary><p>消息在内存里，积压多了撑爆内存；AOF 每秒刷盘、主从异步复制，断电或切换会丢最后一点；一个 Stream 只在一个节点上，扩容要自己拆 key。</p></details>
+      <details><summary>想让两个实例分摊消费，最少要做什么？</summary><p>两个实例用同一个 <code>groupId</code>，topic 的分区数至少 2。分区数决定了组内最多几个实例能同时干活。</p></details>
+      <details><summary>头号坑：acks=all 为什么还会丢？</summary><p>“all”是 ISR 里的全部。Broker 默认 <code>min.insync.replicas=1</code>，follower 掉队后 ISR 只剩 leader，它写完就回成功，leader 再挂就丢了。要配 3 副本 + <code>min.insync.replicas=2</code>。</p></details>
+      <details><summary>改成“处理完再提交”之后，还剩什么问题？</summary><p>会重复：处理完、提交前崩溃或 rebalance，这批会再来一次。消费端要幂等。</p></details>
+      <details><summary>库存服务从 3 台加到 6 台没变快，为什么？</summary><p>topic 只有 3 个分区，一个分区同一时间只归组内一个消费者，多出来的 3 台拿不到分区。要先加分区（注意顺序会乱一阵），或者一开始就按高峰规划分区数。</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>实测环境：Kafka 4.1.2（1 个控制器 + 3 个 Broker，以及单机 KRaft），kafka-clients 2.8.2 / 3.0.0 / 3.1.2 / 3.9.1 / 4.1.2 / 4.4.0 的默认值，Spring Boot 3.5.16（spring-kafka 3.3.16）。版本行为以你用的版本为准。</span>
+  <span>相关：<a href="../redis/redis-stream-mq.html">Redis Stream 与消息队列</a> · <a href="../spring/spring-events.html">Spring 事件机制</a> · <a href="../spring/spring-aop-tx.html">Spring AOP 与事务</a> · <a href="../redis/redis-ha-cluster.html">Redis 主从、哨兵与集群</a> · <a href="../redis/redis-persistence.html">Redis 持久化</a></span>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+/* 故障实验台：1000 个订单 #1–#1000，看每一段的配置在某个故障下的结果。
+   c = {acks:'0'|'1'|'all', idem:bool, cb:'handle'|'ignore', minIsr:1|2, commit:'after'|'before', biz:bool, fault:'A'|'B'|'C'|'D'} */
+function faultSim(c){
+  var idem = !!c.idem && c.acks === 'all';
+  var r = {ranges:[], lost:0, failed:0, failedKnown:0, dupLog:0, dupBiz:0, stop:'无', stopSub:'', notes:[], rel:{prod:false, broker:false, cons:false}};
+  function add(from, to, st){ r.ranges.push({from:from, to:to, st:st}); }
+  if (c.fault === 'A'){
+    r.rel.prod = true;
+    if (c.acks === '0'){
+      add(581, 630, 'lost'); r.lost += 50;
+      r.notes.push(['bad','acks=0：发出去就算完。leader 挂掉时 follower 还差 #581–#600 没拉到；#601–#630 已经发出、还没写进去。acks=0 收不到失败，也不会重发，一共丢 50 条。']);
+      r.notes.push(['other','acks=0 时，只要发出去了回调就是成功（offset 是 -1），Broker 那边丢没丢它不知道，检查回调也发现不了。']);
+    } else if (c.acks === '1'){
+      add(581, 600, 'lost'); r.lost += 20;
+      r.notes.push(['bad','acks=1：leader 写进自己的日志就回成功。#581–#600 只在 leader 上，它一挂，新 leader 没有这 20 条，生产者却以为都成功了。']);
+      r.notes.push(['done','正在路上的 #601–#630 收到错误，生产者自动重试，写到了新 leader 上。']);
+    } else {
+      r.notes.push(['done','acks=all：#581–#600 还没被 ISR 里的 follower 拉到，生产者没收到成功，自动重试到新 leader 上。#601–#630 也一样。一条没丢。']);
+    }
+    r.notes.push(['other','min.insync.replicas 在这个故障里不起作用：两个 follower 都还在 ISR 里，leader 挂了它们直接接班。']);
+    r.stop = '约 9 秒';
+    r.stopSub = '选出新 leader 前（broker.session.timeout.ms）';
+  } else if (c.fault === 'B'){
+    r.rel.prod = true; r.rel.broker = true;
+    var f1 = 0;
+    if (c.acks !== 'all'){
+      add(301, 600, 'lost'); r.lost += 300;
+      r.notes.push(['bad','acks=' + c.acks + '：min.insync.replicas 只管 acks=all 的写入。#301–#600 只写在 leader 上，leader 回不来，这 300 条没了，生产者那边却是成功。']);
+    } else if (c.minIsr === 1){
+      add(301, 600, 'lost'); r.lost += 300;
+      r.notes.push(['bad','acks=all 加 min.insync.replicas=1：ISR 只剩 leader 一个，“ISR 都写到”就等于“leader 写到”，和 acks=1 一样。#301–#600 都回了成功，leader 一挂全丢。']);
+    } else {
+      f1 = 300;
+      r.notes.push(['done','acks=all 加 min.insync.replicas=2：ISR 不到 2 个，Broker 拒绝写入。生产者日志里反复出现 NOT_ENOUGH_REPLICAS，2 分钟（delivery.timeout.ms）后回调拿到 TimeoutException。#301–#600 没写成，但没有一条是“以为成功其实丢了”。']);
+    }
+    var f2 = 0;
+    if (c.minIsr === 1){
+      f2 = 400;
+      r.notes.push(['bad','leader 挂了以后，两个 follower 都不在 ISR 里，unclean.leader.election.enable 默认关，分区没有 leader，整个下线。#601–#1000 发不出去。想恢复只能人工打开 unclean 选举，让只有 #300 的 follower 当 leader。']);
+      r.stop = '下线';
+      r.stopSub = '直到有人手动处理';
+    } else {
+      r.notes.push(['done','ISR 掉到 2 以下时，被踢出的 follower 被记进 ELR（可以干净接班的副本）。leader 一挂它直接接班，#601–#1000 照常写入。这是 KIP-966，实测 Kafka 4.1 新集群默认开启；3.x 没有 ELR，这里会变成分区下线。']);
+      r.stop = (c.acks === 'all') ? '#301 起拒写' : '几秒';
+      r.stopSub = (c.acks === 'all') ? 'follower 接班后恢复' : 'follower 接班';
+    }
+    var fail = f1 + f2;
+    if (fail){
+      r.failed = fail;
+      var segs = [];
+      if (f1) segs.push([301, 600]);
+      if (f2) segs.push([601, 1000]);
+      segs.forEach(function(s){ add(s[0], s[1], c.cb === 'handle' ? 'fail' : 'lost'); });
+      if (c.cb === 'handle'){ r.failedKnown = fail; r.notes.push(['done','回调里记下了这 ' + fail + ' 条失败，可以先落库，恢复后补发。']); }
+      else { r.lost += fail; r.notes.push(['bad','回调没人看：这 ' + fail + ' 条失败只出现在日志里，业务以为都发出去了，等于又丢了 ' + fail + ' 条。']); }
+    }
+  } else if (c.fault === 'C'){
+    r.rel.prod = true; r.rel.cons = true;
+    if (c.acks === '0'){
+      r.notes.push(['other','acks=0 不等回应，也就不会重发，这次没出重复。可它在 A、B 两种故障里丢得最多。']);
+    } else if (!idem){
+      r.dupLog = 20;
+      r.notes.push(['bad','生产者等回应超时，把 #501–#520 这一批又发了一遍。Broker 认不出是同一批，日志里存了两份。' + (c.acks === '1' ? '幂等要求 acks=all，acks=1 时它是关着的。' : 'enable.idempotence 被关掉了。')]);
+    } else {
+      r.notes.push(['done','开着幂等：重发的这批带着同样的 Producer ID 和序列号，Broker 发现已经写过，直接回成功，日志里只有一份。']);
+    }
+    if (r.dupLog){
+      if (c.biz){ add(501, 520, 'dupok'); r.notes.push(['done','消费端按订单号去重，第二份被挡住，库存只扣一次。']); }
+      else { add(501, 520, 'dup'); r.dupBiz = 20; r.notes.push(['bad','消费端没做幂等，这 20 个订单的库存被扣了两次。']); }
+    }
+  } else if (c.fault === 'D'){
+    r.rel.cons = true;
+    if (c.commit === 'before'){
+      add(451, 500, 'lost'); r.lost += 50;
+      r.notes.push(['bad','先提交再处理：#401–#500 一拉到，offset 就提交成了 501。处理到 #450 时进程崩溃，重启后从 501 接着读，#451–#500 再也不会被处理，消费进度却显示一切正常。']);
+    } else {
+      r.notes.push(['other','处理完再提交：offset 还停在 401。重启后从 401 重新拉，#401–#450 又来一遍，#451–#500 也补上了。']);
+      if (c.biz){ add(401, 450, 'dupok'); r.notes.push(['done','消费端按订单号去重，重复的 50 条被挡住。']); }
+      else { add(401, 450, 'dup'); r.dupBiz = 50; r.notes.push(['bad','消费端没做幂等，这 50 个订单被处理了两次。']); }
+    }
+    r.stop = '约 45 秒';
+    r.stopSub = '这个分区没人读（session.timeout.ms）';
+  }
+  r.cells = cellsOf(r.ranges);
+  return r;
+}
+function cellsOf(ranges){
+  var cells = []; for (var i = 0; i < 100; i++) cells.push('ok');
+  ranges.forEach(function(g){ for (var n = g.from; n <= g.to; n += 10) cells[Math.floor((n - 1) / 10)] = g.st; });
+  return cells;
+}
+
+/* 消费组分配：strategy 'range' | 'rr' | 'sticky'；members 按编号排好；prev 是 {分区: 实例} 或 null */
+function memberNum(m){ return parseInt(m.slice(1), 10); }
+function assignGroup(strategy, P, members, prev){
+  var C = members.length, a = {}, p, i;
+  if (!C) return a;
+  if (strategy === 'range'){
+    var n = Math.floor(P / C), ex = P % C; p = 0;
+    for (i = 0; i < C; i++){ var k = n + (i < ex ? 1 : 0); for (var j = 0; j < k; j++) a[p++] = members[i]; }
+  } else if (strategy === 'rr'){
+    for (p = 0; p < P; p++) a[p] = members[p % C];
+  } else {
+    var minQ = Math.floor(P / C), maxQ = Math.ceil(P / C), slots = P % C;
+    var owned = {}; members.forEach(function(m){ owned[m] = []; });
+    if (prev) for (p = 0; p < P; p++){ var o = prev[p]; if (o != null && owned[o]) owned[o].push(p); }
+    var order = members.slice().sort(function(x, y){ return owned[y].length - owned[x].length || memberNum(x) - memberNum(y); });
+    var taken = {};
+    order.forEach(function(m){
+      var cap = (maxQ > minQ && slots > 0) ? maxQ : minQ;
+      var keep = owned[m].slice(0, cap);
+      if (maxQ > minQ && keep.length === maxQ) slots--;
+      owned[m] = keep; keep.forEach(function(x){ taken[x] = m; });
+    });
+    for (p = 0; p < P; p++){
+      if (taken[p] != null) continue;
+      var best = null;
+      members.forEach(function(m){
+        var cnt = owned[m].length;
+        var ok = cnt < minQ || (cnt < maxQ && slots > 0);
+        if (!ok) return;
+        if (best === null || cnt < owned[best].length || (cnt === owned[best].length && memberNum(m) < memberNum(best))) best = m;
+      });
+      if (owned[best].length === minQ && maxQ > minQ) slots--;
+      owned[best].push(p); taken[p] = best;
+    }
+    for (p = 0; p < P; p++) a[p] = taken[p];
+  }
+  return a;
+}
+function groupStats(strategy, P, members, prev, a){
+  var moved = [], perMember = {};
+  members.forEach(function(m){ perMember[m] = []; });
+  for (var p = 0; p < P; p++){ perMember[a[p]].push(p); if (prev && prev[p] != null && prev[p] !== a[p]) moved.push(p); }
+  var idle = members.filter(function(m){ return perMember[m].length === 0; });
+  var maxLoad = 0; members.forEach(function(m){ maxLoad = Math.max(maxLoad, perMember[m].length); });
+  var eager = strategy !== 'sticky';
+  var paused = prev ? (eager ? P : moved.length) : 0;
+  return {moved:moved, perMember:perMember, idle:idle, maxLoad:maxLoad, paused:paused, eager:eager};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(ch){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]; }); }
+
+  /* ---------- static svg parts ---------- */
+  (function(){
+    var h = '', rows = [[46, 8, 6, 3], [146, 6, 5, 6], [246, 7, 7, 4]];
+    rows.forEach(function(r){
+      var y = r[0];
+      for (var i = 0; i < 8; i++){
+        var x = 190 + i * 29;
+        if (i < r[1]) h += '<rect class="c-bk" x="' + x + '" y="' + y + '" width="26" height="32" rx="4"/><text class="t-on" x="' + (x + 13) + '" y="' + (y + 21) + '" text-anchor="middle">' + i + '</text>';
+        else h += '<rect class="c-empty" x="' + x + '" y="' + y + '" width="26" height="32" rx="4"/>';
+      }
+      [[r[2], 'f-cg'], [r[3], 'f-g2']].forEach(function(b){
+        var cx = 190 + b[0] * 29 + 13;
+        h += '<path class="' + b[1] + '" d="M' + cx + ' ' + (y + 36) + 'l7 11h-14z"/>';
+      });
+    });
+    $('strips').innerHTML = h;
+    var g = '', lens = [8, 8, 6], ys = [32, 82, 132];
+    lens.forEach(function(n, k){
+      for (var i = 0; i < 8; i++){
+        var x = 100 + i * 32;
+        if (i < n) g += '<rect class="' + (i < 6 ? 'c-bk' : 'c-new') + '" x="' + x + '" y="' + ys[k] + '" width="28" height="30" rx="4"/><text class="t-on" x="' + (x + 14) + '" y="' + (ys[k] + 20) + '" text-anchor="middle">' + i + '</text>';
+        else g += '<rect class="c-empty" x="' + x + '" y="' + ys[k] + '" width="28" height="30" rx="4"/>';
+      }
+    });
+    $('hwRows').innerHTML = g;
+  })();
+
+  /* ---------- lifecycle stepper ---------- */
+  var LC = [
+    {L:5, F2:5, F3:5, hw:5, cm:5, pTxt:['空闲', ''], cTxt:'已处理到 offset 4', act:[],
+     cap:'<b>起点。</b>分区 0 有 offset 0–4 五条消息，三个副本都齐了。HW = 5，消费者能读到 4 为止。库存组的书签在 5，意思是“下次从 5 读”。'},
+    {L:5, F2:5, F3:5, hw:5, cm:5, pTxt:['send(key=1001)', '先进内存批次'], cTxt:'已处理到 offset 4', act:['batch'],
+     cap:'<b>发送。</b>订单服务调 send，key 是订单号 1001，分区器算出分区 0（⑤ 里实测 1001 落在分区 0）。消息先进生产者内存里的批次，后台线程攒一小会儿（linger.ms）再一起发。send() 这时已经返回了。'},
+    {L:6, F2:5, F3:5, hw:5, cm:5, pTxt:['已发出', '等 ack…'], cTxt:'已处理到 offset 4', act:['send'],
+     cap:'<b>leader 写入。</b>Broker 1 是分区 0 的 leader，把消息追加成 offset 5，LEO 变成 6。只有它有，HW 还在 5，消费者看不到。<span class="wl">acks=1 的话，到这一步就回成功了。下一步之前 leader 一挂，这条就丢了。</span>'},
+    {L:6, F2:6, F3:6, hw:5, cm:5, pTxt:['已发出', '等 ack…'], cTxt:'已处理到 offset 4', act:['fetch'],
+     cap:'<b>follower 拉取。</b>Broker 2、3 一直在向 leader 发 fetch 请求，各自追加 offset 5。是 follower 自己来拉，leader 不推。'},
+    {L:6, F2:6, F3:6, hw:6, cm:5, pTxt:['回调：成功', '分区 0 · offset 5'], cTxt:'已处理到 offset 4', act:['ack'],
+     cap:'<b>HW 前进，回 ack。</b>leader 看到 ISR 里的副本都到了 offset 5，把 HW 推到 6。acks=all 的生产者这时才收到成功，回调里拿到分区 0、offset 5。'},
+    {L:6, F2:6, F3:6, hw:6, cm:5, pTxt:['回调：成功', '分区 0 · offset 5'], cTxt:'扣库存 1001 …', act:['poll'],
+     cap:'<b>消费者拉到。</b>库存组里负责分区 0 的 c1 调 poll()，从书签 5 开始拉，拿到 offset 5（只能拿到 HW 之前的），开始扣库存。'},
+    {L:6, F2:6, F3:6, hw:6, cm:6, pTxt:['回调：成功', '分区 0 · offset 5'], cTxt:'处理完 ✓', act:['commit'],
+     cap:'<b>提交 offset。</b>扣完库存，c1 提交 offset 6，写进内部 topic __consumer_offsets，意思是“下次从 6 开始”。c1 重启，或者分区交给别人，都从 6 接着读。'},
+    {L:6, F2:6, F3:6, hw:6, cm:5, pTxt:['回调：成功', '分区 0 · offset 5'], cTxt:'崩溃 ✕', act:[], crash:true, alt:true,
+     cap:'<b>换个结局：第 6 步之前崩了。</b>库存扣了，offset 没提交，书签还在 5。重启后从 5 再拉一次，1001 被扣第二次。“处理完再提交”换来的是“不丢，但可能重复”，所以消费端要幂等（第⑥步）。'}
+  ];
+  var lcPos = 0, lcTimer = null, LC_LAST = LC.length - 1;
+  function strip(x, y, n, isNew){
+    var h = '';
+    for (var i = 0; i < 6; i++){
+      var cx = x + i * 46;
+      if (i < n){
+        var nw = (i === 5);
+        h += '<rect class="' + (nw ? 'c-new' : 'c-bk') + '" x="' + cx + '" y="' + y + '" width="42" height="34" rx="5"/>';
+        h += '<text class="t-on" x="' + (cx + 21) + '" y="' + (y + 22) + '" text-anchor="middle">' + (nw ? '1001' : i) + '</text>';
+      } else {
+        h += '<rect class="c-empty" x="' + cx + '" y="' + y + '" width="42" height="34" rx="5"/><text class="t-m" x="' + (cx + 21) + '" y="' + (y + 22) + '" text-anchor="middle">' + i + '</text>';
+      }
+    }
+    return h;
+  }
+  function arrow(d, on, label, lx, ly, anchor){
+    var h = '<path class="' + (on ? 'e-on' : 'e-mut') + '" d="' + d + '" marker-end="url(#' + (on ? 'ah-of' : 'ah-mut') + ')"/>';
+    if (label) h += '<text class="' + (on ? 't-of' : 't-m') + '" x="' + lx + '" y="' + ly + '" text-anchor="' + (anchor || 'start') + '">' + label + '</text>';
+    return h;
+  }
+  function drawLc(st){
+    var on = function(k){ return st.act.indexOf(k) >= 0; }, h = '';
+    h += '<rect class="' + (on('batch') ? 'b-of' : 'b-pd') + '" x="14" y="28" width="150" height="100" rx="12"/>';
+    h += '<text class="t-h" x="89" y="54" text-anchor="middle">订单服务</text>';
+    h += '<text class="t-s" x="89" y="84" text-anchor="middle">' + esc(st.pTxt[0]) + '</text>';
+    h += '<text class="t-m" x="89" y="104" text-anchor="middle">' + esc(st.pTxt[1]) + '</text>';
+    h += '<text class="t-b" x="220" y="40">Broker 1 · 分区 0 leader<tspan class="t-m" dx="8">LEO ' + st.L + '</tspan></text>';
+    h += strip(220, 50, st.L);
+    h += '<text class="t-b" x="220" y="152">Broker 2 · follower<tspan class="t-m" dx="8">LEO ' + st.F2 + '</tspan></text>';
+    h += strip(220, 162, st.F2);
+    h += '<text class="t-b" x="220" y="242">Broker 3 · follower<tspan class="t-m" dx="8">LEO ' + st.F3 + '</tspan></text>';
+    h += strip(220, 252, st.F3);
+    var hx = 220 + st.hw * 46 - 2;
+    h += '<line class="e-hw" x1="' + hx + '" y1="44" x2="' + hx + '" y2="92"/><text class="t-of" x="' + hx + '" y="108" text-anchor="middle">HW</text>';
+    h += arrow('M166 104 L214 80', on('send'), '发给 leader', 168, 140);
+    h += arrow('M214 58 L170 52', on('ack'), 'ack', 186, 44, 'middle');
+    h += '<path class="' + (on('fetch') ? 'e-on' : 'e-mut') + '" d="M204 72 V 268"/>';
+    h += arrow('M204 179 H 216', on('fetch'), '', 0, 0);
+    h += arrow('M204 269 H 216', on('fetch'), '', 0, 0);
+    h += '<text class="' + (on('fetch') ? 't-of' : 't-m') + '" x="196" y="224" text-anchor="end">fetch</text><text class="' + (on('fetch') ? 't-of' : 't-m') + '" x="196" y="240" text-anchor="end">来拉</text>';
+    h += arrow('M498 67 L 552 67', on('poll'), 'poll', 525, 58, 'middle');
+    var cBox = st.crash ? 'b-bad' : 'b-cg';
+    h += '<rect class="' + cBox + '" x="556" y="28" width="132" height="100" rx="12"/>';
+    h += '<text class="t-h" x="622" y="54" text-anchor="middle">库存服务 c1</text>';
+    h += '<text class="t-m" x="622" y="74" text-anchor="middle">组 inventory</text>';
+    h += '<text class="' + (st.crash ? 't-bad' : 't-s') + '" x="622" y="104" text-anchor="middle">' + esc(st.cTxt) + '</text>';
+    h += arrow('M622 130 V 226', on('commit'), 'commit', 630, 182);
+    h += '<rect class="b-of" x="556" y="230" width="132" height="70" rx="12"/>';
+    h += '<text class="t-m" x="622" y="254" text-anchor="middle">__consumer_offsets</text>';
+    h += '<text class="' + (st.crash ? 't-bad' : 't-of') + '" x="622" y="282" text-anchor="middle">inventory · p0 → ' + st.cm + '</text>';
+    $('lcSvg').innerHTML = h;
+  }
+  function renderLc(){
+    var st = LC[lcPos];
+    $('lcPos').innerHTML = '第 <b>' + lcPos + '</b> / ' + LC_LAST + ' 步';
+    var cap = $('lcCap'); cap.innerHTML = st.cap; cap.className = 'cap-txt' + (st.alt ? ' alt' : '');
+    drawLc(st);
+    $('lcPrev').disabled = lcPos === 0; $('lcNext').disabled = lcPos === LC_LAST;
+  }
+  function lcStop(){ if (lcTimer){ clearInterval(lcTimer); lcTimer = null; } $('lcAuto').textContent = '▶ 自动播放'; }
+  function lcGo(p){ lcPos = Math.max(0, Math.min(LC_LAST, p)); renderLc(); }
+  $('lcPrev').addEventListener('click', function(){ lcStop(); lcGo(lcPos - 1); });
+  $('lcNext').addEventListener('click', function(){ lcStop(); lcGo(lcPos + 1); });
+  $('lcReset').addEventListener('click', function(){ lcStop(); lcGo(0); });
+  $('lcAuto').addEventListener('click', function(){
+    if (lcTimer){ lcStop(); return; }
+    if (lcPos === LC_LAST) lcGo(0);
+    $('lcAuto').textContent = '❚❚ 暂停';
+    lcTimer = setInterval(function(){ if (lcPos >= LC_LAST){ lcStop(); return; } lcGo(lcPos + 1); }, 2600);
+  });
+  $('lc').addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight'){ lcStop(); lcGo(lcPos + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft'){ lcStop(); lcGo(lcPos - 1); e.preventDefault(); }
+  });
+  renderLc();
+
+  /* ---------- fault lab ---------- */
+  var SCN = {
+    A:'每个订单一条消息，一共 1000 条（#1–#1000）。发到 #600 时，leader 所在的 Broker 被 kill -9。两个 follower 都在 ISR 里，但还差最后 20 条（#581–#600）没拉；另有 30 条（#601–#630）已经发出、还没写进去。',
+    B:'两个 follower 的网络出了问题，被踢出 ISR，停在 #300。#301–#600 只有 leader 在收。接着 leader 所在机器宕机、磁盘损坏，回不来了；两个 follower 的网络恢复。#601–#1000 照常在发。',
+    C:'#501–#520 这一批已经写进 leader、复制好了，但回给生产者的响应在网络上超时丢了，生产者不知道到底写成功没有。',
+    D:'库存服务一次拉到 #401–#500（100 条），处理到 #450 时进程崩溃，随后重启。'
+  };
+  var cfg = {fault:'B', acks:'all', idem:true, _idemWas:true, cb:'handle', minIsr:1, commit:'after', biz:false};
+  function setPressed(attr, val){ document.querySelectorAll('[' + attr + ']').forEach(function(b){ b.setAttribute('aria-pressed', String(b.getAttribute(attr) === String(val))); }); }
+  function renderFl(){
+    if (cfg.acks !== 'all') cfg.idem = false;
+    setPressed('data-fault', cfg.fault); setPressed('data-acks', cfg.acks); setPressed('data-idem', cfg.idem ? '1' : '0');
+    setPressed('data-cb', cfg.cb); setPressed('data-mi', cfg.minIsr); setPressed('data-cm', cfg.commit); setPressed('data-biz', cfg.biz ? '1' : '0');
+    document.querySelector('[data-idem="1"]').disabled = cfg.acks !== 'all';
+    document.querySelector('[data-idem="1"]').title = cfg.acks !== 'all' ? '幂等要求 acks=all' : '';
+    var r = faultSim(cfg);
+    $('flScn').textContent = SCN[cfg.fault];
+    $('cfgP').classList.toggle('dim', !r.rel.prod);
+    $('cfgB').classList.toggle('dim', !r.rel.broker);
+    $('cfgC').classList.toggle('dim', !r.rel.cons);
+    $('flTiles').innerHTML =
+      '<div class="tile" data-role="' + (r.lost ? 'bad' : 'done') + '"><small>悄悄丢了</small><b>' + r.lost + ' 条</b><span>' + (r.lost ? '以为成功，或失败了没人管' : '没有') + '</span></div>' +
+      '<div class="tile" data-role="' + (r.failedKnown ? 'of' : 'other') + '"><small>没写成，业务知道</small><b>' + r.failedKnown + ' 条</b><span>' + (r.failedKnown ? '回调拿到异常，能补发' : '没有') + '</span></div>' +
+      '<div class="tile" data-role="' + (r.dupBiz ? 'warn' : 'done') + '"><small>处理了两次</small><b>' + r.dupBiz + ' 条</b><span>' + (r.dupLog ? 'Kafka 里重复 ' + r.dupLog + ' 条' : ((r.cells.indexOf('dupok') >= 0) ? '重投的被幂等挡住了' : '没有重复')) + '</span></div>' +
+      '<div class="tile" data-role="other"><small>停写 / 停读</small><b>' + esc(r.stop) + '</b><span>' + esc(r.stopSub || '不受影响') + '</span></div>';
+    var LBL = {ok:'正常', lost:'悄悄丢了', fail:'没写成，业务知道', dup:'处理了两次', dupok:'重复了，被幂等挡住'};
+    $('flCells').innerHTML = r.cells.map(function(s, i){ return '<i class="' + (s === 'ok' ? '' : s) + '" title="#' + (i * 10 + 1) + '–#' + (i * 10 + 10) + '：' + LBL[s] + '"></i>'; }).join('');
+    var okN = r.cells.filter(function(s){ return s === 'ok' || s === 'dupok'; }).length * 10;
+    $('flSum').textContent = '正常处理 ' + okN + ' / 1000';
+    $('flNotes').innerHTML = r.notes.map(function(n){ return '<li data-role="' + n[0] + '">' + esc(n[1]) + '</li>'; }).join('');
+  }
+  function bindFl(attr, fn){ document.querySelectorAll('[' + attr + ']').forEach(function(b){ b.addEventListener('click', function(){ if (b.disabled) return; fn(b.getAttribute(attr)); renderFl(); }); }); }
+  bindFl('data-fault', function(v){ cfg.fault = v; });
+  bindFl('data-acks', function(v){ cfg.acks = v; if (v === 'all') cfg.idem = cfg._idemWas; });
+  bindFl('data-idem', function(v){ cfg.idem = v === '1'; cfg._idemWas = cfg.idem; });
+  bindFl('data-cb', function(v){ cfg.cb = v; });
+  bindFl('data-mi', function(v){ cfg.minIsr = parseInt(v, 10); });
+  bindFl('data-cm', function(v){ cfg.commit = v; });
+  bindFl('data-biz', function(v){ cfg.biz = v === '1'; });
+  $('flOld').addEventListener('click', function(){ cfg.acks = '1'; cfg.idem = false; cfg._idemWas = false; cfg.cb = 'ignore'; cfg.minIsr = 1; cfg.commit = 'before'; cfg.biz = false; renderFl(); });
+  $('flGood').addEventListener('click', function(){ cfg.acks = 'all'; cfg.idem = true; cfg._idemWas = true; cfg.cb = 'handle'; cfg.minIsr = 2; cfg.commit = 'after'; cfg.biz = true; renderFl(); });
+  renderFl();
+
+  /* ---------- group lab ---------- */
+  var gP = 6, gS = 'range', gM = ['c1', 'c2', 'c3'], gNext = 4, gA = null, gEvent = null, gPrev = null;
+  var SNAME = {range:'Range', rr:'RoundRobin', sticky:'CooperativeSticky'};
+  function sortM(){ gM.sort(function(x, y){ return memberNum(x) - memberNum(y); }); }
+  function regroup(ev, keepPrev){
+    gPrev = keepPrev ? gA : null;
+    gA = assignGroup(gS, gP, gM, gPrev);
+    gEvent = ev; renderGl();
+  }
+  function renderGl(){
+    setPressed('data-gp', gP); setPressed('data-gs', gS);
+    var g = groupStats(gS, gP, gM, gPrev, gA);
+    $('glMembers').innerHTML = gM.map(function(m){
+      var ps = g.perMember[m];
+      var chips = ps.length ? ps.map(function(p){ return '<i class="pc' + (g.moved.indexOf(p) >= 0 ? ' mv' : '') + '">p' + p + '</i>'; }).join('') : '<em>闲着</em>';
+      return '<div class="mbr' + (ps.length ? '' : ' idle') + '"><div class="mbr-h"><b>' + m + '</b>' + (gM.length > 1 ? '<button type="button" data-kill="' + m + '" aria-label="让 ' + m + ' 下线">×</button>' : '') + '</div><div class="ps">' + chips + '</div></div>';
+    }).join('');
+    document.querySelectorAll('[data-kill]').forEach(function(b){ b.addEventListener('click', function(){ var m = b.getAttribute('data-kill'); gM = gM.filter(function(x){ return x !== m; }); regroup({type:'leave', m:m}, true); }); });
+    $('glAdd').disabled = gM.length >= 8;
+    $('glTiles').innerHTML =
+      '<div class="tile" data-role="' + (g.idle.length ? 'bad' : 'done') + '"><small>闲着的实例</small><b>' + g.idle.length + ' 个</b><span>' + (g.idle.length ? g.idle.join('、') + ' 拿不到分区' : '每个都有活') + '</span></div>' +
+      '<div class="tile" data-role="of"><small>这次换了主人的分区</small><b>' + (gPrev ? g.moved.length + ' 个' : '—') + '</b><span>' + (gPrev ? '虚线框标出来了' : '还没发生 rebalance') + '</span></div>' +
+      '<div class="tile" data-role="' + (gPrev && g.paused > g.moved.length ? 'bad' : 'cg') + '"><small>rebalance 时停下的分区</small><b>' + (gPrev ? g.paused + ' / ' + gP : '—') + '</b><span>' + (g.eager ? 'eager：全部先交出' : '增量：只停要挪的') + '</span></div>' +
+      '<div class="tile" data-role="cg"><small>最忙的实例</small><b>' + g.maxLoad + ' 个分区</b><span>' + gM.length + ' 个实例分 ' + gP + ' 个分区</span></div>';
+    var v = '';
+    if (!gEvent || gEvent.type === 'init') v = '初始分配：' + gP + ' 个分区按 ' + SNAME[gS] + ' 分给 ' + gM.length + ' 个实例。点“加一个实例”或某个实例的 ×，看 rebalance 挪了哪些分区。';
+    else if (gEvent.type === 'conf') v = '分区数或策略变了，组整体重新分配一次（真实环境里改分区数也会触发 rebalance；换策略要按升级步骤滚动发布）。';
+    else {
+      var who = gEvent.type === 'join' ? gEvent.m + ' 加入。' : gEvent.m + ' 下线，它的分区要交给别人。';
+      if (g.eager) v = who + SNAME[gS] + ' 走 eager 协议：所有实例先交出全部 ' + gP + ' 个分区，整个组停下来，分完再继续。真正换了主人的只有 ' + g.moved.length + ' 个。';
+      else v = who + 'CooperativeSticky 走增量协议：只有要挪的 ' + g.moved.length + ' 个分区停一下，其余照常消费，而且尽量留在原来的实例上。';
+    }
+    if (g.idle.length) v += ' 实例比分区多，' + g.idle.join('、') + ' 白开着；想提速得先加分区。';
+    $('glV').textContent = v;
+  }
+  document.querySelectorAll('[data-gp]').forEach(function(b){ b.addEventListener('click', function(){ gP = parseInt(b.getAttribute('data-gp'), 10); regroup({type:'conf'}, false); }); });
+  document.querySelectorAll('[data-gs]').forEach(function(b){ b.addEventListener('click', function(){ gS = b.getAttribute('data-gs'); regroup({type:'conf'}, false); }); });
+  $('glAdd').addEventListener('click', function(){ if (gM.length >= 8) return; var m = 'c' + (gNext++); gM.push(m); sortM(); regroup({type:'join', m:m}, true); });
+  $('glReset').addEventListener('click', function(){ gM = ['c1', 'c2', 'c3']; gNext = 4; regroup({type:'init'}, false); });
+  regroup({type:'init'}, false);
+})();
+</script>
+
+</body>
+</html>

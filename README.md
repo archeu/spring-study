@@ -58,3 +58,9 @@
 | 09 | [Redis Stream 与消息队列](https://archeu.github.io/study-notes/redis/redis-stream-mq.html) | List、Pub/Sub、Stream 三代对比，消费组、PEL、ACK 和认领，至少一次与幂等，延迟消息，消费组实验台 |
 | 10 | [Redis Lua 脚本与事务](https://archeu.github.io/study-notes/redis/redis-lua-tx.html) | MULTI/EXEC/WATCH、出错为什么不回滚、Lua 的写法和 EVALSHA、Redis 7 Functions，最后一件库存两人抢 |
 | 11 | [布隆过滤器与 HyperLogLog](https://archeu.github.io/study-notes/redis/redis-bloom-hll.html) | 位数组和 k 个哈希、误判率实验室、容量怎么算、抛硬币估人数、16384 个桶，UV 统计和选型 |
+
+## Kafka
+
+| # | 页面 | 内容 |
+|---|------|------|
+| 01 | [Kafka 消息可靠性与消费组](https://archeu.github.io/study-notes/kafka/kafka-reliability-group.html) | 六步学习法：acks 和 ISR、min.insync.replicas、offset 提交时机、消费组和 rebalance、幂等与死信，故障实验台和消费组实验台（关键行为本机集群实测） |
