@@ -50,3 +50,4 @@
 | 01 | [缓存穿透、击穿与雪崩](https://archeu.github.io/study-notes/redis/cache-problems.html) | 三种漏法怎么发生、布隆过滤器、互斥锁和逻辑过期、过期时间打散和高可用，十种防护的代价，数据库压力实验台 |
 | 02 | [Redis 持久化 RDB 与 AOF](https://archeu.github.io/study-notes/redis/redis-persistence.html) | 拍照和记账、fork 与写时复制、三种刷盘策略、AOF 重写、混合持久化和多文件 AOF，宕机实验台 |
 | 03 | [Redis 主从、哨兵与集群](https://archeu.github.io/study-notes/redis/redis-ha-cluster.html) | 全量和部分同步、哨兵怎么判死和换主、16384 个槽和 hash tag，故障转移演示和槽位计算器 |
+| 04 | [Redis 数据结构与编码](https://archeu.github.io/study-notes/redis/redis-data-encoding.html) | 五种类型和八种编码、SDS 与 embstr、listpack 与 quicklist、渐进式 rehash、跳表，编码观察器 |

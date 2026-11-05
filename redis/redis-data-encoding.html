@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis 数据结构与编码</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: small values are packed into one tight drawer (compact encodings, teal); big ones move into a cabinet of pointers (orange). Types blue, redisObject purple. Interactives: encoding observer (anchor), rehash stepper, skiplist search. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --ty:#3150C4; --ty-tint:#E2E7FA;
+  --cp:#0D7A69; --cp-tint:#DCF0EB;
+  --pt:#C2410C; --pt-tint:#FDE6D8;
+  --ob:#6A3FC0; --ob-tint:#ECE5FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --ty:#90A4FF; --ty-tint:#1D2650;
+    --cp:#40C6B0; --cp-tint:#12352F;
+    --pt:#FB923C; --pt-tint:#3A2214;
+    --ob:#B9A0FF; --ob-tint:#2A2148;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --ty:#90A4FF; --ty-tint:#1D2650;
+  --cp:#40C6B0; --cp-tint:#12352F;
+  --pt:#FB923C; --pt-tint:#3A2214;
+  --ob:#B9A0FF; --ob-tint:#2A2148;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--ty)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button,input{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--ty);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="ty"]{--rc:var(--ty);--rt:var(--ty-tint)}
+[data-role="cp"]{--rc:var(--cp);--rt:var(--cp-tint)}
+[data-role="pt"]{--rc:var(--pt);--rt:var(--pt-tint)}
+[data-role="ob"]{--rc:var(--ob);--rt:var(--ob-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.map{margin-top:18px;background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.mrow{display:grid;grid-template-columns:7em minmax(0,1fr);gap:12px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)}
+.map .mrow:nth-last-child(2){border-bottom:0}
+.tyb{font-family:var(--font-mono);font-weight:700;font-size:14px;padding:6px 10px;border-radius:10px;background:var(--ty);color:var(--on-accent);text-align:center}
+.tyb small{display:block;font-family:var(--font-body);font-weight:500;font-size:11.5px;opacity:.9}
+.chain{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.enc{font-family:var(--font-mono);font-size:13px;font-weight:700;padding:5px 11px;border-radius:999px;border:2px solid var(--rc);background:var(--rt);white-space:nowrap}
+.to{display:inline-flex;flex-direction:column;align-items:center;line-height:1.1;color:var(--muted)}
+.to b{font-size:16px;color:var(--line-strong)}
+.to small{font-size:11px;white-space:nowrap}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted);align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:14px;border-radius:50%;border:2px solid var(--rc);background:var(--rt)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--ob)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap;font-family:var(--font-mono);font-size:13px}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:5px 12px;font-size:13px;cursor:pointer;font-family:var(--font-mono)}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.pbtn{font-size:12.5px;padding:4px 11px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer;font-family:var(--font-mono)}
+.pbtn[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+
+/* ---------- memory bars ---------- */
+.mbar{display:flex;height:40px;border-radius:8px;overflow:hidden;border:1.5px solid var(--line-strong);min-width:0}
+.mbar span{display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;border-right:1.5px solid var(--card);padding:0 4px;min-width:0}
+.mbar span:last-child{border-right:0}
+.mb-ob{background:var(--ob);color:var(--on-accent)}
+.mb-hd{background:var(--ob-tint);color:var(--ink)}
+.mb-dt{background:var(--cp);color:var(--on-accent)}
+.mb-nul{background:var(--neutral-tint);color:var(--ink)}
+.mb-free{background:repeating-linear-gradient(135deg,var(--line) 0 2px,transparent 2px 7px);color:var(--muted)}
+.mb-ptr{background:var(--pt);color:var(--on-accent)}
+.mcap{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.robj{display:grid;grid-template-columns:4fr 4fr 24fr 32fr 64fr;border-radius:8px;overflow:hidden;border:1.5px solid var(--ob)}
+.robj span{padding:6px 4px;text-align:center;font-size:11.5px;border-right:1.5px solid var(--card);background:var(--ob-tint);display:flex;flex-direction:column;line-height:1.3;min-width:0;overflow:hidden}
+.robj span:last-child{border-right:0;background:var(--ob);color:var(--on-accent)}
+.robj b{font-family:var(--font-mono);font-size:11.5px}
+.robj small{font-size:10.5px;opacity:.85}
+
+/* ---------- listpack / ziplist ---------- */
+.lp{display:flex;align-items:stretch;gap:2px;overflow-x:auto;padding-bottom:4px}
+.lp span{flex:none;border-radius:6px;padding:6px 8px;font-family:var(--font-mono);font-size:11.5px;display:flex;flex-direction:column;align-items:center;line-height:1.3;border:1.5px solid var(--rc);background:var(--rt)}
+.lp span small{font-size:10px;color:var(--muted)}
+.lp .hd{--rc:var(--ob);--rt:var(--ob-tint)}
+.lp .en{--rc:var(--cp);--rt:var(--cp-tint)}
+.lp .end{--rc:var(--neutral);--rt:var(--neutral-tint)}
+.lp .hot{--rc:var(--bad);--rt:var(--bad-tint)}
+.lp .gr{--rc:var(--warn);--rt:var(--warn-tint)}
+.entry{display:inline-flex;gap:0}
+.entry i{font-style:normal;padding:0 4px;border-right:1px dashed var(--line-strong)}
+.entry i:last-child{border-right:0}
+.qk{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.qn{border:2px solid var(--pt);border-radius:10px;padding:5px 7px;display:flex;flex-direction:column;gap:4px;background:var(--card)}
+.qn small{font-size:10.5px;color:var(--muted);font-family:var(--font-mono)}
+.qn .cells{display:flex;gap:2px}
+.qn .cells i{width:10px;height:14px;border-radius:2px;background:var(--cp)}
+.qn.z .cells i{background:var(--neutral)}
+.qa{color:var(--pt);font-weight:700}
+
+/* ---------- observer ---------- */
+.obs{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.obs-top{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.obs-top .lbl{font-size:13px;color:var(--muted)}
+.ops{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ops input{width:min(22em,100%);padding:6px 10px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card);font-family:var(--font-mono);font-size:13.5px}
+.obs-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:14px;align-items:start}
+.cli{margin:0;padding:10px 12px;border-radius:12px;background:var(--console-bg);color:var(--console-fg);font-family:var(--font-mono);font-size:12.5px;line-height:1.6;overflow-x:auto;white-space:pre}
+.cli .p{color:var(--console-dim)}
+.big-enc{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.big-enc .enc{font-size:18px;padding:6px 16px}
+.meters{display:flex;flex-direction:column;gap:8px}
+.mt{display:grid;grid-template-columns:8.5em minmax(0,1fr) 6.5em;gap:8px;align-items:center;font-size:12.5px}
+.mt > span:first-child{color:var(--muted)}
+.mt .trk{position:relative;height:16px;border-radius:0 4px 4px 0;background:var(--neutral-tint)}
+.mt .fill{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--rc)}
+.mt .lim{position:absolute;top:-3px;bottom:-3px;border-left:2px dashed var(--ink)}
+.mt b{font-family:var(--font-mono);font-size:12px;font-variant-numeric:tabular-nums}
+.viz{min-height:90px;border:1.5px dashed var(--line-strong);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;justify-content:center}
+.viz small{font-size:12px;color:var(--muted)}
+.strip{display:flex;flex-wrap:wrap;gap:2px}
+.strip i{width:14px;height:18px;border-radius:3px;background:var(--cp)}
+.strip i.l{width:34px;background:var(--warn)}
+.strip i.s{background:var(--ty)}
+.strip .more{font-family:var(--font-mono);font-size:11px;color:var(--muted);align-self:center;padding-left:4px}
+.ints{display:flex;flex-wrap:wrap;gap:2px}
+.ints i{font-style:normal;font-family:var(--font-mono);font-size:10px;padding:1px 4px;border-radius:3px;background:var(--cp-tint);border:1px solid var(--cp)}
+.buckets{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px}
+.buckets div{display:flex;flex-direction:column;gap:2px;align-items:center;border-top:3px solid var(--pt);padding-top:3px}
+.buckets i{width:12px;height:12px;border-radius:50%;background:var(--pt-tint);border:1.5px solid var(--pt)}
+.ladder{display:flex;flex-direction:column;gap:3px}
+.ladder div{height:6px;border-radius:3px;background:var(--pt)}
+.hist{list-style:none;margin:0;padding:0;font-size:13px;display:flex;flex-direction:column;gap:2px}
+.hist li b{font-family:var(--font-mono)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+
+/* ---------- rehash ---------- */
+.rh{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.rh-top{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.rh-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.rh-cap{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--pt-tint);border:2px solid var(--pt);min-height:3.2em}
+.tables{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:16px}
+.ht{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ht > b{font-family:var(--font-mono);font-size:13px}
+.ht > b small{font-family:var(--font-body);font-weight:500;color:var(--muted);margin-left:6px}
+.bk{display:grid;grid-template-columns:2.4em minmax(0,1fr);gap:6px;align-items:center;font-family:var(--font-mono);font-size:12px}
+.bk > span{color:var(--muted);text-align:right}
+.bk > div{min-height:28px;border-radius:6px;border:1.5px solid var(--line);background:var(--code-bg);display:flex;gap:4px;align-items:center;padding:2px 6px;flex-wrap:wrap}
+.bk.done > div{background:var(--neutral-tint);border-style:dashed}
+.bk.next > div{border-color:var(--pt);border-width:2px}
+.kv{font-weight:700;padding:1px 7px;border-radius:999px;background:var(--ty-tint);border:1.5px solid var(--ty)}
+.kv.moved{background:var(--pt-tint);border-color:var(--pt)}
+.kv.new{background:var(--good-tint);border-color:var(--good)}
+.ht.off{opacity:.45}
+
+/* ---------- intset ---------- */
+.is{display:flex;flex-direction:column;gap:8px}
+.isr{display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:10px;align-items:center;font-size:12.5px}
+.isr > span{color:var(--muted)}
+.isc{display:flex;gap:2px}
+.isc i{font-style:normal;font-family:var(--font-mono);font-size:11.5px;font-weight:700;text-align:center;padding:6px 0;border-radius:4px;background:var(--cp-tint);border:1.5px solid var(--cp)}
+.isc i.n{background:var(--good-tint);border-color:var(--good)}
+
+/* ---------- skiplist ---------- */
+.sk{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.sk svg{width:100%;height:auto;display:block;border:1.5px solid var(--line);border-radius:12px;background:var(--code-bg)}
+.sk-l{stroke:var(--line-strong);stroke-width:1.5}
+.sk-lh{stroke:var(--pt);stroke-width:3}
+.sk-b{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.sk-bh{fill:var(--pt-tint);stroke:var(--pt);stroke-width:2}
+.sk-bt{fill:var(--good);stroke:var(--good)}
+.sk-hd{fill:var(--ob-tint);stroke:var(--ob);stroke-width:1.5}
+.sk-t{font-family:var(--font-mono);font-size:11px;font-weight:700;fill:var(--ink)}
+.sk-tl{font-family:var(--font-mono);font-size:10px;fill:var(--muted)}
+.sk-ttw{font-family:var(--font-mono);font-size:11px;font-weight:700;fill:var(--on-accent)}
+.sk-res{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .two,.obs-grid,.eras,.tables{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .mrow{grid-template-columns:1fr}
+  .tyb{justify-self:start}
+  .robj span small{display:none}
+}
+@media (max-width:520px){
+  .mt{grid-template-columns:6.5em minmax(0,1fr) 5.5em}
+  .sk-res{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-box" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l26 12v32L32 60 6 48V16z"/>
+    <path class="ks-paper" stroke-width="3" stroke-linejoin="round" d="M6 16l26 12 26-12M32 28v32"/>
+    <rect class="k-gold" x="12" y="30" width="12" height="6" rx="1.5" transform="rotate(25 18 33)"/>
+  </symbol>
+  <symbol id="i-str" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="18" width="56" height="28" rx="5"/>
+    <rect class="k-paper" x="9" y="23" width="8" height="18" rx="2"/>
+    <rect class="k-paper" x="19" y="23" width="8" height="18" rx="2"/>
+    <rect class="k-gold" x="29" y="23" width="26" height="18" rx="2"/>
+  </symbol>
+  <symbol id="i-pack" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="3" y="20" width="58" height="24" rx="4"/>
+    <path class="ks-paper" stroke-width="2.5" d="M14 20v24M24 20v24M38 20v24M47 20v24"/>
+    <rect class="k-gold" x="51" y="25" width="6" height="14" rx="1.5"/>
+  </symbol>
+  <symbol id="i-cab" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="4" width="22" height="56" rx="3"/>
+    <path class="ks-paper" stroke-width="2.5" d="M6 18h22M6 32h22M6 46h22"/>
+    <path class="ks-cur" stroke-width="3" stroke-linecap="round" d="M28 11h10M28 25h18M28 39h10"/>
+    <circle fill="currentColor" cx="42" cy="11" r="5"/><circle fill="currentColor" cx="50" cy="25" r="5"/><circle fill="currentColor" cx="42" cy="39" r="5"/>
+    <circle class="k-gold" cx="56" cy="11" r="4"/>
+  </symbol>
+  <symbol id="i-ladder" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="48" width="56" height="8" rx="3"/>
+    <rect fill="currentColor" x="4" y="32" width="38" height="8" rx="3"/>
+    <rect fill="currentColor" x="4" y="16" width="20" height="8" rx="3"/>
+    <rect class="k-gold" x="52" y="48" width="8" height="8" rx="2"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis 数据结构与编码</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS 7.2 · OBJECT ENCODING · SDS · LISTPACK · QUICKLIST · INTSET · DICT · SKIPLIST</p>
+  <h1>同一个类型，小时候挤在一格抽屉里，长大了才搬进柜子</h1>
+  <p class="lead">你用的是 String、List、Hash、Set、ZSet 五种类型，Redis 底层却有好几种存法（编码）。数据少的时候，全部挤在一块连续内存里，省空间；数据一多，就换成用指针串起来的结构，操作快。<code>OBJECT ENCODING key</code> 能看到当前用的是哪一种。</p>
+
+  <div class="map" aria-label="五种类型和它们的底层编码">
+    <div class="mrow"><span class="tyb">String<small>字符串</small></span><div class="chain"><span class="enc" data-role="cp">int</span><span class="to"><b>→</b><small>不是整数</small></span><span class="enc" data-role="cp">embstr</span><span class="to"><b>→</b><small>&gt; 44 字节或被改过</small></span><span class="enc" data-role="pt">raw</span></div></div>
+    <div class="mrow"><span class="tyb">List<small>列表</small></span><div class="chain"><span class="enc" data-role="cp">listpack</span><span class="to"><b>→</b><small>&gt; 8 KB</small></span><span class="enc" data-role="pt">quicklist</span></div></div>
+    <div class="mrow"><span class="tyb">Hash<small>哈希</small></span><div class="chain"><span class="enc" data-role="cp">listpack</span><span class="to"><b>→</b><small>&gt; 128 个 或 值 &gt; 64 字节</small></span><span class="enc" data-role="pt">hashtable</span></div></div>
+    <div class="mrow"><span class="tyb">Set<small>集合</small></span><div class="chain"><span class="enc" data-role="cp">intset</span><span class="to"><b>→</b><small>混进非整数</small></span><span class="enc" data-role="cp">listpack</span><span class="to"><b>→</b><small>&gt; 128 个 或 值 &gt; 64 字节</small></span><span class="enc" data-role="pt">hashtable</span></div></div>
+    <div class="mrow"><span class="tyb">ZSet<small>有序集合</small></span><div class="chain"><span class="enc" data-role="cp">listpack</span><span class="to"><b>→</b><small>&gt; 128 个 或 值 &gt; 64 字节</small></span><span class="enc" data-role="pt">skiplist</span></div></div>
+    <div class="legend"><span data-role="cp"><i></i>紧凑：一块连续内存，省空间，查找要挨个找</span><span data-role="pt"><i></i>散开：指针串起来，多占内存，查找快</span><span>阈值是 Redis 7.2 的默认值，都能在配置里改</span></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="ob">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-box"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">外壳<code>redisObject · 16 字节</code></div>
+        <p>每个值外面都套一层，记着<b>类型、编码</b>和指向真实数据的指针。</p>
+        <span class="belong">TYPE 和 OBJECT ENCODING 读的就是它</span>
+      </div>
+    </div>
+    <div class="who" data-role="ty">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-str"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">字符串<code>SDS</code></div>
+        <p>Redis 自己的字符串，<b>记着长度</b>，还会预留空间。</p>
+        <span class="belong">key 和大多数值都是它</span>
+      </div>
+    </div>
+    <div class="who" data-role="cp">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pack"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">一格抽屉<code>listpack</code></div>
+        <p>所有元素<b>挨着放在一块连续内存</b>里，没有指针。</p>
+        <span class="belong">小 List、Hash、Set、ZSet 都用它</span>
+      </div>
+    </div>
+    <div class="who" data-role="pt">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cab"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">柜子<code>hashtable · skiplist</code></div>
+        <p>每个元素单独分配，<b>用指针串起来</b>，大了也快。</p>
+        <span class="belong">升级后一般不会再降回去</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= OBJECT ================= -->
+<section id="obj">
+  <div>
+    <h2>每个值外面都套一层 redisObject</h2>
+    <p class="lead">不管什么类型，Redis 拿到的都是一个 16 字节的外壳。类型和编码分开记，所以同一种类型可以随时换编码，命令那一层不用管。</p>
+  </div>
+  <div class="mini">
+    <b>redisObject 的 16 字节（按位宽画）</b>
+    <div class="robj" role="img" aria-label="type 4 位，encoding 4 位，lru 24 位，refcount 32 位，ptr 64 位">
+      <span><b>type</b><small>4 位</small></span>
+      <span><b>enc</b><small>4 位</small></span>
+      <span><b>lru</b><small>24 位：上次访问时间或访问频率</small></span>
+      <span><b>refcount</b><small>32 位：引用计数</small></span>
+      <span><b>ptr</b><small>64 位：指向真实数据</small></span>
+    </div>
+    <p>lru 字段给内存淘汰用：LRU 策略下存最近访问时间，LFU 策略下存访问频率。0～9999 这些小整数是共享的，整个实例只有一份，refcount 很大。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>自己看一下</b><span>redis-cli</span></div>
+<pre><code>&gt; SET n 100
+&gt; TYPE n                 <span class="cm">→ string</span>
+&gt; OBJECT ENCODING n      <span class="cm">→ "int"</span>
+&gt; HSET u name tom age 18
+&gt; OBJECT ENCODING u      <span class="cm">→ "listpack"</span>
+&gt; MEMORY USAGE u         <span class="cm">→ 这个 key 一共占多少字节（含外壳）</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= STRING ================= -->
+<section id="str">
+  <div>
+    <h2>String：int、embstr、raw</h2>
+    <p class="lead">字符串底层是 SDS（简单动态字符串）。它在头部记着已用长度和分配长度，所以取长度是 O(1)，可以存任意二进制数据（中间有 <code>\0</code> 也行），追加时也不会写越界。</p>
+  </div>
+  <div class="two">
+    <div class="mini">
+      <b>embstr：外壳和字符串一次分配，正好 64 字节</b>
+      <div class="mbar" role="img" aria-label="64 字节里：redisObject 16，SDS 头 3，内容最多 44，结尾 1">
+        <span class="mb-ob" style="flex:16">redisObject 16</span><span class="mb-hd" style="flex:3">头 3</span><span class="mb-dt" style="flex:44">内容 ≤ 44</span><span class="mb-nul" style="flex:1">\0</span>
+      </div>
+      <div class="mcap" aria-hidden="true"><span>0</span><span>16</span><span>64 字节</span></div>
+      <p>16 + 3 + 44 + 1 = 64，正好是内存分配器的一档。所以 44 字节就是 embstr 的上限。embstr 是只读的，一旦 APPEND、SETRANGE 改它，就先转成 raw。</p>
+    </div>
+    <div class="mini">
+      <b>raw：外壳和字符串分两次分配</b>
+      <div class="mbar" role="img" aria-label="redisObject 和 SDS 分开，用指针相连">
+        <span class="mb-ob" style="flex:16">redisObject 16</span><span class="mb-ptr" style="flex:6">ptr →</span>
+      </div>
+      <div class="mbar" role="img" aria-label="单独分配的 SDS">
+        <span class="mb-hd" style="flex:3">头</span><span class="mb-dt" style="flex:30">内容</span><span class="mb-nul" style="flex:1">\0</span><span class="mb-free" style="flex:20">预留空间</span>
+      </div>
+      <p>追加时 SDS 会多分配一些：新长度小于 1 MB 就翻倍，否则多给 1 MB。之后再追加往往不用重新分配。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LISTPACK ================= -->
+<section id="lp">
+  <div>
+    <h2>listpack：一块连续内存，从 ziplist 改进而来</h2>
+    <p class="lead">小的 List、Hash、Set、ZSet 都用 listpack。所有元素一个挨一个放在同一块内存里，没有指针，非常省空间；代价是查找要从头挨个看，插入要移动后面的数据。所以只适合小数据。</p>
+  </div>
+  <div class="mini">
+    <b>listpack 的样子</b>
+    <div class="lp" aria-label="listpack 布局">
+      <span class="hd"><b>总字节数</b><small>4 字节</small></span>
+      <span class="hd"><b>元素个数</b><small>2 字节</small></span>
+      <span class="en"><span class="entry"><i>编码</i><i>name</i><i>长度</i></span><small>元素 1</small></span>
+      <span class="en"><span class="entry"><i>编码</i><i>tom</i><i>长度</i></span><small>元素 2</small></span>
+      <span class="en"><span class="entry"><i>编码</i><i>age</i><i>长度</i></span><small>元素 3</small></span>
+      <span class="en"><span class="entry"><i>编码</i><i>18</i><i>长度</i></span><small>元素 4</small></span>
+      <span class="end"><b>0xFF</b><small>结束</small></span>
+    </div>
+    <p>每个元素末尾记着<b>自己</b>有多长，所以能从后往前遍历。Hash 存成“字段、值、字段、值”交替排列；ZSet 存成“成员、分数”交替。</p>
+  </div>
+  <div class="two">
+    <div class="mini">
+      <b>ziplist 的毛病：连锁更新</b>
+      <div class="lp" aria-label="ziplist 连锁更新">
+        <span class="hot"><b>新插入</b><small>300 字节</small></span>
+        <span class="gr"><b>prev 1→5</b><small>253→257</small></span>
+        <span class="gr"><b>prev 1→5</b><small>253→257</small></span>
+        <span class="gr"><b>prev 1→5</b><small>…</small></span>
+      </div>
+      <p>ziplist 的每个元素记的是<b>前一个</b>元素的长度：前一个小于 254 字节用 1 字节记，否则用 5 字节。在一串 253 字节的元素前面插入一个大元素，后面第一个要变大 4 字节，变成 257，又逼着下一个变大……一路改到底。</p>
+    </div>
+    <div class="mini">
+      <b>listpack 的改法：只记自己的长度</b>
+      <div class="lp" aria-label="listpack 插入不影响后面的元素">
+        <span class="hot"><b>新插入</b><small>300 字节</small></span>
+        <span class="en"><b>不变</b><small>253</small></span>
+        <span class="en"><b>不变</b><small>253</small></span>
+        <span class="en"><b>不变</b><small>…</small></span>
+      </div>
+      <p>每个元素只记自己的长度，插入一个元素不会改动别人。Redis 7.0 起，所有用 ziplist 的地方都换成了 listpack。</p>
+    </div>
+  </div>
+  <div class="mini">
+    <b>大 List 用 quicklist：一串 listpack 用链表连起来</b>
+    <div class="qk" aria-label="quicklist：多个 listpack 节点双向相连">
+      <span class="qn"><small>节点 1 · ≤ 8 KB</small><span class="cells"><i></i><i></i><i></i><i></i><i></i><i></i></span></span><span class="qa">⇄</span>
+      <span class="qn z"><small>节点 2 · 可压缩</small><span class="cells"><i></i><i></i><i></i><i></i><i></i><i></i></span></span><span class="qa">⇄</span>
+      <span class="qn z"><small>节点 3 · 可压缩</small><span class="cells"><i></i><i></i><i></i><i></i><i></i><i></i></span></span><span class="qa">⇄</span>
+      <span class="qn"><small>节点 4 · ≤ 8 KB</small><span class="cells"><i></i><i></i><i></i><i></i></span></span>
+    </div>
+    <p>每个节点是一个不超过 8 KB 的 listpack（<code>list-max-listpack-size -2</code>）。两头的节点常被访问，中间的节点可以用 LZF 压缩（<code>list-compress-depth</code>，默认 0 不压缩）。LPUSH、RPOP 在两头操作，很快；LINDEX 取中间要一个节点一个节点地走。</p>
+  </div>
+</section>
+
+<!-- ================= OBSERVER ================= -->
+<section id="observe">
+  <div>
+    <h2>编码观察器：往里加东西，看它什么时候换编码</h2>
+    <p class="lead">选一种类型，加元素、加长值、混进字符串，看 <code>OBJECT ENCODING</code> 什么时候变。规则按 Redis 7.2 的默认配置。</p>
+  </div>
+  <div class="obs" id="obs">
+    <div class="obs-top"><span class="lbl">类型：</span>
+      <div class="seg-btns" role="group" aria-label="选择类型">
+        <button data-ty="string" aria-pressed="false">String</button>
+        <button data-ty="list" aria-pressed="false">List</button>
+        <button data-ty="hash" aria-pressed="true">Hash</button>
+        <button data-ty="set" aria-pressed="false">Set</button>
+        <button data-ty="zset" aria-pressed="false">ZSet</button>
+      </div>
+    </div>
+    <div class="ops" id="ops"></div>
+    <div class="obs-grid">
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <pre class="cli" id="obsCli" aria-live="polite"></pre>
+        <div class="meters" id="obsMeters"></div>
+        <ol class="hist" id="obsHist" aria-label="编码变化记录"></ol>
+      </div>
+      <div class="viz" id="obsViz" aria-label="当前编码的内存示意"></div>
+    </div>
+    <p class="verdict" id="obsV" data-role="cp"></p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>相关配置</b><span>Redis 7.2 默认值；老的 *-ziplist-* 名字仍然能用</span></div>
+<pre><code><span class="kw">hash-max-listpack-entries</span> 128
+<span class="kw">hash-max-listpack-value</span> 64
+<span class="kw">zset-max-listpack-entries</span> 128
+<span class="kw">zset-max-listpack-value</span> 64
+<span class="kw">set-max-intset-entries</span> 512
+<span class="kw">set-max-listpack-entries</span> 128       <span class="cm"># 7.2 起</span>
+<span class="kw">set-max-listpack-value</span> 64          <span class="cm"># 7.2 起</span>
+<span class="kw">list-max-listpack-size</span> -2          <span class="cm"># 负数按字节：-2 = 每个节点 ≤ 8 KB</span>
+<span class="kw">list-compress-depth</span> 0</code></pre>
+  </div>
+</section>
+
+<!-- ================= DICT ================= -->
+<section id="dict">
+  <div>
+    <h2>hashtable：两张表，一点一点搬家</h2>
+    <p class="lead">Redis 的哈希表（dict）用数组 + 链表解决冲突。元素数达到桶数时就扩容。但它不会一口气把所有元素搬到新表，那样大表会卡住主线程；而是同时留着新旧两张表，每次有人读写时顺手搬一个桶，叫渐进式 rehash。整个 Redis 的 key 空间也是这样一张大 dict。</p>
+  </div>
+  <div class="rh" id="rh" tabindex="0" aria-label="渐进式 rehash 演示，可以用左右方向键切换">
+    <div class="rh-top"><h3>渐进式 rehash</h3><span class="rh-pos" id="rhPos"></span></div>
+    <p class="rh-cap" id="rhCap" aria-live="polite"></p>
+    <div class="tables">
+      <div class="ht" id="ht0"></div>
+      <div class="ht" id="ht1"></div>
+    </div>
+    <div class="ops">
+      <button class="btn" id="rhPrev">← 上一步</button>
+      <button class="btn primary" id="rhNext">下一步 →</button>
+      <button class="btn" id="rhReset">从头来</button>
+    </div>
+  </div>
+  <div class="two">
+    <div class="mini"><b>搬家期间怎么查</b><p>先查旧表，没有再查新表。新写入的 key 直接放进新表，所以旧表只会越来越空。空闲时，后台定时任务也会每次花 1 毫秒批量搬一些（<code>activerehashing yes</code>）。</p></div>
+    <div class="mini"><b>什么时候扩、什么时候缩</b><p>元素数 ≥ 桶数就扩容到下一个 2 的幂。有子进程在做 RDB 或 AOF 重写时，会放宽到比例大很多才扩，避免大量写时复制。填充率低于 10% 时缩容。</p></div>
+  </div>
+</section>
+
+<!-- ================= INTSET + ZSET ================= -->
+<section id="zset">
+  <div>
+    <h2>intset 和跳表</h2>
+    <p class="lead">Set 全是整数时用 intset：一个有序的整数数组，用二分查找。ZSet 大了以后用跳表 + 哈希表：哈希表按成员查分数是 O(1)，跳表按分数和排名查范围是 O(log n)。</p>
+  </div>
+  <div class="mini is">
+    <b>intset 升级：插入一个更大的数，整个数组换宽度</b>
+    <div class="isr"><span>int16，每个 2 字节</span><div class="isc"><i style="width:44px">1</i><i style="width:44px">5</i><i style="width:44px">300</i></div></div>
+    <div class="isr"><span>插入 70000 后 int32，每个 4 字节</span><div class="isc"><i style="width:88px">1</i><i style="width:88px">5</i><i style="width:88px">300</i><i class="n" style="width:88px">70000</i></div></div>
+    <p>70000 超出了 int16 的范围（±32767），所有元素都要扩成 4 字节。升级后不会再降回去。</p>
+  </div>
+  <div class="sk" id="sk">
+    <h3>跳表：多层索引，一层层往下跳</h3>
+    <p class="tip">底层是按分数排好序的链表，每个节点随机长出几层（每多一层的概率是 1/4，最多 32 层）。查找从最高层开始：下一个比目标小就往右，否则往下一层。</p>
+    <div class="ops" role="group" aria-label="选择要查找的分数"><span class="tip">查找分数：</span>
+      <button class="pbtn" data-sk="25" aria-pressed="false">25</button>
+      <button class="pbtn" data-sk="44" aria-pressed="false">44</button>
+      <button class="pbtn" data-sk="60" aria-pressed="true">60</button>
+      <button class="pbtn" data-sk="75" aria-pressed="false">75</button>
+    </div>
+    <svg id="skSvg" viewBox="0 0 640 210" role="img" aria-label="跳表结构和查找路径"></svg>
+    <div class="sk-res" id="skRes"></div>
+    <p class="tip">每层指针还记着跨过了几个节点（span），沿路加起来就是排名，所以 ZRANK 也是 O(log n)。作者选跳表而不是平衡树，是因为它更好写、范围查询方便、改层数概率就能调内存。</p>
+  </div>
+</section>
+
+<!-- ================= COMPLEXITY ================= -->
+<section id="cx">
+  <div>
+    <h2>常用命令有多快</h2>
+    <p class="lead">小数据用紧凑编码时，很多操作其实是 O(n)，但 n 不超过 128，内存又连续，实际很快。阈值调得太大，这个 O(n) 就会变慢。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">命令</th><th scope="col">紧凑编码时</th><th scope="col">升级后</th><th scope="col">说明</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">GET / SET</th><td colspan="2">O(1)</td><td>先在全局 dict 里找 key</td></tr>
+        <tr><th scope="row">HGET / HSET</th><td>O(n)，n ≤ 128</td><td>O(1)</td><td>listpack 要挨个比字段</td></tr>
+        <tr><th scope="row">SISMEMBER</th><td>intset O(log n)；listpack O(n)</td><td>O(1)</td><td>intset 用二分查找</td></tr>
+        <tr><th scope="row">ZADD</th><td>O(n)</td><td>O(log n)</td><td>跳表找位置 + 哈希表存分数</td></tr>
+        <tr><th scope="row">ZSCORE</th><td>O(n)</td><td>O(1)</td><td>升级后直接查哈希表</td></tr>
+        <tr><th scope="row">ZRANGE / ZRANK</th><td>O(n)</td><td>O(log n + m)</td><td>m 是返回的个数</td></tr>
+        <tr><th scope="row">LPUSH / RPOP</th><td colspan="2">O(1)</td><td>在两头操作</td></tr>
+        <tr><th scope="row">LINDEX / LSET</th><td colspan="2">O(n)</td><td>要从头或尾一个个数过去</td></tr>
+        <tr><th scope="row">HGETALL / SMEMBERS</th><td colspan="2">O(n)</td><td>大集合会卡住主线程，用 HSCAN / SSCAN 分批</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="mini"><b>另外几种类型，底下也是它们</b><p><b>Bitmap</b> 就是 String，按位读写；<b>HyperLogLog</b> 也是 String，最多 12 KB 就能估算上亿个不重复元素；<b>Geo</b> 是 ZSet，分数是经纬度算出的 geohash；<b>Stream</b> 用基数树（rax）+ listpack。</p></div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>Redis 版本，以及 Java 这边</h2>
+    <p class="lead">编码随 Redis 版本变过好几次。Java 8 还是 17、Boot 2 还是 3 不影响编码，影响编码的是 Java 这边怎么序列化。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Redis 6.x 及以前</h3><span class="jdk">ziplist</span></div>
+      <ul>
+        <li>小 Hash、小 ZSet 用 ziplist；List 用 quicklist，节点是 ziplist</li>
+        <li>配置项叫 <code>hash-max-ziplist-entries</code> 等</li>
+        <li>非整数的小 Set 直接用 hashtable</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Redis 7.0 / 7.2</h3><span class="jdk">listpack</span></div>
+      <ul>
+        <li>7.0：ziplist 全部换成 listpack，只在读老 RDB 时还认识它；配置改名为 <code>*-listpack-*</code></li>
+        <li>7.2：小 List 直接用 listpack 编码，变小后还会从 quicklist 降回来</li>
+        <li>7.2：非整数的小 Set 也用 listpack</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note-box"><b>Java 这边</b><span>Spring 的 <code>RedisTemplate</code> 默认用 JDK 序列化（Boot 2 和 3 都是）：key <code>user:1</code> 存进去变成 <code>\xac\xed\x00\x05t\x00\x06user:1</code>，整数 100 变成约 81 字节的二进制，于是本该是 int 的变成 raw，本该是 listpack 的 Hash 因为值超过 64 字节直接变 hashtable。用 <code>StringRedisTemplate</code>，或者给 RedisTemplate 配字符串和 JSON 序列化器。</span></div>
+  <div class="same"><b>没变的：</b><span>redisObject 外壳</span><span>SDS</span><span>小数据用紧凑编码</span><span>升级看个数和长度</span><span>渐进式 rehash</span><span>跳表 + 哈希表</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">内存突然涨、命令突然慢，常常是编码变了，或者一个 key 太大了。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>redis-cli 里看到 key 前面一串 \xac\xed</b><p>RedisTemplate 用了默认的 JDK 序列化，key 和值都变长，编码也变差。换 <code>StringRedisTemplate</code> 或配置序列化器。</p></div>
+    <div class="pit" data-role="pt"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cab"/></svg><b>某个 Hash 的内存突然涨了好几倍</b><p>有一个值超过了 64 字节，整个 Hash 从 listpack 变成 hashtable，而且删掉那个值也不会降回去。控制值的长度，长内容单独存。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pack"/></svg><b>为了省内存把阈值调到上万，CPU 却涨了</b><p>listpack 查找是 O(n)，插入要移动后面的数据。阈值调大省了内存，但每次操作变慢。一般在几百以内。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>DEL 一个大 key，Redis 卡住好几秒</b><p>几百万个元素的 Hash、List 要一个个释放。用 <code>UNLINK</code> 在后台删，或者打开 <code>lazyfree-lazy-user-del</code>。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>HGETALL、SMEMBERS、LRANGE 0 -1 把 Redis 卡住</b><p>大集合一次全取，O(n) 都在主线程上。用 HSCAN、SSCAN 分批，或者 LRANGE 只取一段。</p></div>
+    <div class="pit" data-role="ty"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pack"/></svg><b>用 LINDEX 当数组随机访问，越来越慢</b><p>quicklist 取中间位置要逐个节点走。需要按下标随机访问的，换成 Hash 或 ZSet。</p></div>
+    <div class="pit" data-role="cp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pack"/></svg><b>整数 Set 里混进一个字符串，内存变大</b><p>intset 一遇到非整数就升级成 listpack 或 hashtable，回不去了。存 ID 时保持纯数字。</p></div>
+    <div class="pit" data-role="pt"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ladder"/></svg><b>排行榜的 ZSet 占了很多内存</b><p>成员存的是一整段 JSON，跳表和哈希表各存一份引用，节点又多。成员只存 ID，详情放到别处。</p></div>
+    <div class="pit" data-role="ob"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-box"/></svg><b>几千万个小 key，内存比数据本身大得多</b><p>每个 key 都有 dict 节点、key 的 SDS、redisObject 这些外壳，各几十字节。可以按 ID 分桶存进 Hash，比如 <code>user:1234</code> 存成 Hash <code>user:12</code> 的字段 <code>34</code>，让小 Hash 走 listpack。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-str"/></svg><b>不知道哪个 key 最占内存</b><p><code>redis-cli --bigkeys</code> 按元素个数找、<code>--memkeys</code> 按内存找；单个 key 用 <code>MEMORY USAGE</code> 和 <code>OBJECT ENCODING</code> 看。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7.2 为例。相关：<a href="cache-problems.html">缓存穿透、击穿与雪崩</a> · <a href="redis-persistence.html">Redis 持久化 RDB 与 AOF</a> · <a href="redis-ha-cluster.html">Redis 主从、哨兵与集群</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var LIM={hashN:128,hashV:64,zsetN:128,zsetV:64,intsetN:512,setLpN:128,setLpV:64,listBytes:8192};
+function u8len(s){ if(typeof TextEncoder!=='undefined') return new TextEncoder().encode(s).length; return unescape(encodeURIComponent(s)).length; }
+function isLongInt(s){
+  if(s.length===0 || s.length>20) return false;
+  if(!/^-?(0|[1-9][0-9]*)$/.test(s) || s==='-0') return false;
+  try { var b=BigInt(s); return b>=BigInt('-9223372036854775808') && b<=BigInt('9223372036854775807'); } catch(e){ return s.length<16; }
+}
+function strEncoding(val, modified){
+  if(modified) return 'raw';
+  if(isLongInt(val)) return 'int';
+  return u8len(val)<=44 ? 'embstr' : 'raw';
+}
+function newColl(t){
+  return {t:t, n:0, maxLen:0, allInt:true, bytes:7, enc: t==='set'?'intset':'listpack', log:[]};
+}
+function entryBytes(len){ return len + (len<64?1:2) + (len<128?1:2); }
+function addTo(c, len, isInt){
+  c.n++; if(len>c.maxLen) c.maxLen=len; if(!isInt) c.allInt=false;
+  c.bytes += entryBytes(len);
+  var before=c.enc;
+  if(c.t==='hash'){ if(c.enc==='listpack' && (c.n>LIM.hashN || c.maxLen>LIM.hashV)) c.enc='hashtable'; }
+  else if(c.t==='zset'){ if(c.enc==='listpack' && (c.n>LIM.zsetN || c.maxLen>LIM.zsetV)) c.enc='skiplist'; }
+  else if(c.t==='set'){
+    if(c.enc==='intset'){
+      if(!c.allInt) c.enc = (c.n<=LIM.setLpN && c.maxLen<=LIM.setLpV) ? 'listpack' : 'hashtable';
+      else if(c.n>LIM.intsetN) c.enc='hashtable';
+    } else if(c.enc==='listpack' && (c.n>LIM.setLpN || c.maxLen>LIM.setLpV)) c.enc='hashtable';
+  }
+  else if(c.t==='list'){ if(c.enc==='listpack' && c.bytes>LIM.listBytes) c.enc='quicklist'; }
+  if(before!==c.enc) c.log.push({n:c.n, from:before, to:c.enc});
+  return c;
+}
+function trimTo(c, k){
+  if(c.n<=k) return c;
+  var avg=(c.bytes-7)/c.n;
+  c.n=k; c.bytes=7+Math.round(avg*k);
+  if(c.t==='list' && c.enc==='quicklist' && c.bytes<=LIM.listBytes/2){ c.log.push({n:c.n, from:'quicklist', to:'listpack'}); c.enc='listpack'; }
+  return c;
+}
+
+var SK_SCORES=[3,7,12,19,25,31,38,44,52,60,67,75], SK_LV=[2,1,1,3,1,1,2,1,4,1,2,1];
+function skSearch(target){
+  var top=Math.max.apply(null,SK_LV), cur=-1, path=[{node:-1,lvl:top}], cmps=0, links=[];
+  for(var l=top;l>=1;l--){
+    while(true){
+      var nx=-1; for(var j=cur+1;j<SK_SCORES.length;j++){ if(SK_LV[j]>=l){ nx=j; break; } }
+      if(nx<0) break;
+      cmps++;
+      if(SK_SCORES[nx]<target){ links.push({from:cur,to:nx,lvl:l}); cur=nx; path.push({node:cur,lvl:l}); }
+      else break;
+    }
+    if(l>1) path.push({node:cur,lvl:l-1});
+  }
+  var nxt=cur+1, found = nxt<SK_SCORES.length && SK_SCORES[nxt]===target;
+  if(found){ links.push({from:cur,to:nxt,lvl:1}); }
+  return {cmps:cmps, path:path, links:links, found:found, idx:found?nxt:-1, linear: found?nxt+1:SK_SCORES.length};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function fmt(v){ return Math.round(v).toLocaleString('en-US'); }
+
+  /* ---------- observer ---------- */
+  var ty='hash', S={}, str={val:'hello', modified:false, cmds:['SET k hello']};
+  function resetColl(t){
+    S[t]=newColl(t);
+    if(t==='hash'){ for(var i=0;i<20;i++) addTo(S[t],8,false); }
+    if(t==='list'){ for(var j=0;j<20;j++) addTo(S[t],8,false); }
+    if(t==='set'){ for(var k=0;k<20;k++) addTo(S[t],3,true); }
+    if(t==='zset'){ for(var m=0;m<20;m++) addTo(S[t],8,false); }
+  }
+  ['hash','list','set','zset'].forEach(resetColl);
+  var CMD={hash:'HSET k',list:'RPUSH k',set:'SADD k',zset:'ZADD k'};
+  function opsHtml(){
+    if(ty==='string') return '<label class="tip" for="sIn">值：</label><input id="sIn" type="text" maxlength="200" spellcheck="false" value="'+esc(str.val)+'"><button class="btn primary" id="sSet">SET</button><button class="btn" id="sApp">APPEND 一个字符</button>'+
+      '<button class="pbtn" data-sv="100">100</button><button class="pbtn" data-sv="12345678901234567890">20 位数字</button><button class="pbtn" data-sv="'+('a'.repeat(44))+'">44 个 a</button><button class="pbtn" data-sv="'+('a'.repeat(45))+'">45 个 a</button><button class="pbtn" data-sv="你好世界你好世界你好世界你好世界">16 个汉字</button>';
+    var h='<button class="btn primary" data-add="1">加 1 个短元素</button><button class="btn" data-add="100">加 100 个</button><button class="btn" data-add="long">加 1 个 100 字节的长值</button>';
+    if(ty==='set') h='<button class="btn primary" data-add="1">加 1 个整数</button><button class="btn" data-add="100">加 100 个整数</button><button class="btn" data-add="str">加 1 个短字符串</button><button class="btn" data-add="long">加 1 个 100 字节的长值</button>';
+    if(ty==='list') h='<button class="btn primary" data-add="1">加 1 个短元素</button><button class="btn" data-add="500">加 500 个</button><button class="btn" data-add="long">加 1 个 100 字节的长值</button>';
+    return h+'<button class="btn" data-add="trim">删到只剩 10 个</button><button class="btn" data-add="reset">重置</button>';
+  }
+  function meter(label, v, lim, txt, role){
+    var mx=Math.max(v,lim)*1.15, w=Math.min(100,v/mx*100), lp=lim/mx*100;
+    return '<div class="mt" data-role="'+role+'"><span>'+label+'</span><div class="trk"><div class="fill" style="width:'+w+'%"></div><span class="lim" style="left:'+lp+'%"></span></div><b>'+txt+'</b></div>';
+  }
+  function vizColl(c){
+    var n=c.n, show=Math.min(n,48), h='';
+    if(c.enc==='listpack'){
+      h='<small>一块连续内存，'+n+' 个元素挨着放</small><div class="strip">'; for(var i=0;i<show;i++) h+='<i'+(i===show-1&&c.maxLen>64?' class="l"':'')+'></i>'; if(n>show) h+='<span class="more">…共 '+n+' 个</span>'; return h+'</div>';
+    }
+    if(c.enc==='intset'){
+      h='<small>有序整数数组，二分查找</small><div class="ints">'; for(var j=0;j<Math.min(n,40);j++) h+='<i>'+(j*3+1)+'</i>'; if(n>40) h+='<span class="more">…共 '+n+' 个</span>'; return h+'</div>';
+    }
+    if(c.enc==='quicklist'){
+      var nodes=Math.ceil(c.bytes/LIM.listBytes); h='<small>quicklist：'+nodes+' 个 listpack 节点，每个 ≤ 8 KB</small><div class="qk">';
+      for(var q=0;q<Math.min(nodes,6);q++) h+=(q?'<span class="qa">⇄</span>':'')+'<span class="qn"><small>节点 '+(q+1)+'</small><span class="cells"><i></i><i></i><i></i><i></i><i></i></span></span>';
+      if(nodes>6) h+='<span class="more">…</span>'; return h+'</div>';
+    }
+    if(c.enc==='hashtable'){
+      h='<small>哈希表：桶数组 + 链表，每个元素单独分配</small><div class="buckets">';
+      for(var b=0;b<8;b++){ var k=Math.round(n/8 + ((b*37)%5-2)*Math.min(1,n/40)); k=Math.max(0,Math.min(4,k)); h+='<div>'; for(var e=0;e<k;e++) h+='<i></i>'; h+='</div>'; }
+      return h+'</div>';
+    }
+    if(c.enc==='skiplist'){
+      return '<small>跳表 + 哈希表：按分数排序的多层链表，另有一张成员 → 分数的表</small><div class="ladder"><div style="width:25%"></div><div style="width:50%"></div><div style="width:75%"></div><div style="width:100%"></div></div>';
+    }
+    return '';
+  }
+  function renderObs(){
+    var v=$('obsV');
+    if(ty==='string'){
+      var enc=strEncoding(str.val,str.modified), len=u8len(str.val);
+      $('obsCli').innerHTML=str.cmds.slice(-3).map(function(c){return '<span class="p">&gt;</span> '+esc(c);}).join('\n')+'\n<span class="p">&gt;</span> OBJECT ENCODING k\n"'+enc+'"';
+      $('obsMeters').innerHTML=meter('字节数',len,44,len+' / 44',enc==='raw'?'pt':'cp');
+      $('obsHist').innerHTML='';
+      var viz='';
+      if(enc==='int'){ var n=BigInt(str.val), shared=n>=0n && n<=9999n; viz='<small>数字直接存进外壳的 ptr 字段，不再另外分配字符串</small><div class="mbar"><span class="mb-ob" style="flex:8">type · enc · lru · refcount</span><span class="mb-dt" style="flex:8">ptr = '+esc(str.val)+'</span></div>'+(shared?'<small>0～9999 用共享对象，整个实例只有一份</small>':''); }
+      else if(enc==='embstr'){ viz='<small>embstr：一次分配 64 字节</small><div class="mbar"><span class="mb-ob" style="flex:16">obj 16</span><span class="mb-hd" style="flex:3">3</span><span class="mb-dt" style="flex:'+Math.max(len,1)+'">'+len+'</span><span class="mb-nul" style="flex:1">\\0</span>'+(44-len>0?'<span class="mb-free" style="flex:'+(44-len)+'">空 '+(44-len)+'</span>':'')+'</div>'; }
+      else { var hdr=len<256?3:5, alloc=str.modified?(len<1048576?len*2:len+1048576):len; viz='<small>raw：外壳和 SDS 分开分配'+(str.modified?'，追加后预留了空间':'')+'</small><div class="mbar"><span class="mb-ob" style="flex:16">obj 16</span><span class="mb-ptr" style="flex:5">ptr →</span></div><div class="mbar"><span class="mb-hd" style="flex:'+hdr+'">'+hdr+'</span><span class="mb-dt" style="flex:'+Math.max(len,1)+'">内容 '+len+'</span><span class="mb-nul" style="flex:1">\\0</span>'+(alloc>len?'<span class="mb-free" style="flex:'+(alloc-len)+'">预留 '+(alloc-len)+'</span>':'')+'</div>'; }
+      $('obsViz').innerHTML=viz;
+      v.setAttribute('data-role',enc==='raw'?'pt':'cp');
+      v.textContent = enc==='int' ? '能当成 64 位整数解析（没有前导 0、没有空格、不超过 20 位），存成 int。' : (enc==='embstr' ? (/^-?[0-9]+$/.test(str.val)?'看着像数字，但有前导 0 或超出了 64 位整数范围，只能当字符串；':'不是整数，')+len+' 字节 ≤ 44，外壳和字符串一起分配，存成 embstr。注意汉字在 UTF-8 里每个占 3 字节。' : (str.modified ? '被 APPEND 改过：embstr 和 int 都是只读的，一改就转成 raw，哪怕很短。' : len+' 字节 > 44，放不进 64 字节那一档，存成 raw。'));
+      return;
+    }
+    var c=S[ty];
+    $('obsCli').innerHTML='<span class="p">&gt;</span> '+CMD[ty]+' …（现在 '+c.n+' 个元素）\n<span class="p">&gt;</span> OBJECT ENCODING k\n"'+c.enc+'"';
+    var m='';
+    if(ty==='hash'||ty==='zset'){ m+=meter('元素个数',c.n,128,c.n+' / 128',c.n>128?'pt':'cp')+meter('最长的值',c.maxLen,64,c.maxLen+' / 64 字节',c.maxLen>64?'pt':'cp'); }
+    if(ty==='set'){ m+=meter('元素个数',c.n,c.allInt?512:128,c.n+' / '+(c.allInt?'512':'128'),(c.allInt?c.n>512:c.n>128)?'pt':'cp')+meter('最长的值',c.maxLen,64,c.maxLen+' / 64 字节',c.maxLen>64?'pt':'cp')+'<div class="mt" data-role="'+(c.allInt?'cp':'pt')+'"><span>全是整数？</span><span class="tip">'+(c.allInt?'是':'否，混进了字符串')+'</span><b></b></div>'; }
+    if(ty==='list'){ m+=meter('总字节（估算）',c.bytes,8192,fmt(c.bytes)+' / 8,192',c.bytes>8192?'pt':'cp'); }
+    $('obsMeters').innerHTML=m;
+    $('obsHist').innerHTML=c.log.map(function(l){ return '<li>第 <b>'+l.n+'</b> 个时：<b>'+l.from+'</b> → <b>'+l.to+'</b></li>'; }).join('');
+    $('obsViz').innerHTML=vizColl(c);
+    var compact=(c.enc==='listpack'||c.enc==='intset');
+    v.setAttribute('data-role',compact?'cp':'pt');
+    var sticky = (ty==='list') ? '7.2 起 List 变小到 4 KB 以下会降回 listpack。' : '升级后，删到再少也不会降回去。';
+    v.textContent = compact ? '现在是 '+c.enc+'：还在紧凑编码的范围内。' : '现在是 '+c.enc+'。'+sticky;
+  }
+  function bindOps(){
+    if(ty==='string'){
+      $('sSet').addEventListener('click',function(){ str.val=$('sIn').value; str.modified=false; str.cmds.push('SET k '+str.val); renderObs(); });
+      $('sApp').addEventListener('click',function(){ str.val=$('sIn').value+'!'; $('sIn').value=str.val; str.modified=true; str.cmds.push('APPEND k !'); renderObs(); });
+      $('sIn').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); $('sSet').click(); } });
+      document.querySelectorAll('[data-sv]').forEach(function(b){ b.addEventListener('click',function(){ $('sIn').value=b.getAttribute('data-sv'); $('sSet').click(); }); });
+      return;
+    }
+    document.querySelectorAll('[data-add]').forEach(function(b){ b.addEventListener('click',function(){
+      var a=b.getAttribute('data-add'), c=S[ty];
+      if(a==='reset'){ resetColl(ty); }
+      else if(a==='trim'){ trimTo(c,10); }
+      else if(a==='long'){ addTo(c,100,false); }
+      else if(a==='str'){ addTo(c,8,false); }
+      else { var k=parseInt(a,10); for(var i=0;i<k;i++) addTo(c, ty==='set'?3:8, ty==='set'); }
+      renderObs();
+    }); });
+  }
+  function setType(t){
+    ty=t;
+    document.querySelectorAll('[data-ty]').forEach(function(x){ x.setAttribute('aria-pressed',String(x.getAttribute('data-ty')===t)); });
+    $('ops').innerHTML=opsHtml(); bindOps(); renderObs();
+  }
+  document.querySelectorAll('[data-ty]').forEach(function(b){ b.addEventListener('click',function(){ setType(b.getAttribute('data-ty')); }); });
+  setType('hash');
+
+  /* ---------- rehash stepper ---------- */
+  var H={a:0,b:5,c:2,d:7,e:4};
+  var RS=[
+    {cap:'哈希表 ht[0] 有 4 个桶，放了 a、b、c、d 四个 key，元素数 = 桶数，已经满了。', t0:{0:['a'],1:['b'],2:['c'],3:['d']}, t1:null, idx:-1},
+    {cap:'<b>SET e</b>：元素数达到桶数，开始扩容。新建一张 8 个桶的 ht[1]，rehashidx = 0。新 key e 直接放进新表。这一下没搬任何旧数据。', t0:{0:['a'],1:['b'],2:['c'],3:['d']}, t1:{4:['e']}, idx:0, nw:'e'},
+    {cap:'<b>GET b</b>：顺手搬一个桶。把旧表 0 号桶的 a 按“哈希值 mod 8”放进新表，rehashidx = 1。查 b 时先查旧表，找到了。', t0:{1:['b'],2:['c'],3:['d']}, t1:{0:['a'],4:['e']}, idx:1, mv:'a'},
+    {cap:'<b>HSET 别的 key</b>：再搬一个桶。旧表 1 号桶的 b 的哈希值是 5，搬到新表 5 号桶，rehashidx = 2。', t0:{2:['c'],3:['d']}, t1:{0:['a'],4:['e'],5:['b']}, idx:2, mv:'b'},
+    {cap:'<b>又一次读写</b>：搬 2 号桶的 c，rehashidx = 3。', t0:{3:['d']}, t1:{0:['a'],2:['c'],4:['e'],5:['b']}, idx:3, mv:'c'},
+    {cap:'<b>又一次读写</b>：搬最后一个桶 d，旧表空了。新表变成 ht[0]，rehashidx 回到 -1，搬家结束。整个过程没有哪一次操作要一口气搬全部。', t0:null, t1:{0:['a'],2:['c'],4:['e'],5:['b'],7:['d']}, idx:-1, mv:'d', done:true}
+  ];
+  var rp=0;
+  function tbl(title, sub, size, data, opts){
+    var h='<b>'+title+'<small>'+sub+'</small></b>';
+    for(var i=0;i<size;i++){
+      var ks=(data&&data[i])||[], cls='bk'+(opts.done&&i<opts.done?' done':'')+(opts.next===i?' next':'');
+      h+='<div class="'+cls+'"><span>'+i+'</span><div>'+ks.map(function(k){ return '<span class="kv'+(k===opts.mv?' moved':'')+(k===opts.nw?' new':'')+'">'+k+'<small style="font-weight:400;color:var(--muted)"> h='+H[k]+'</small></span>'; }).join('')+'</div></div>';
+    }
+    return h;
+  }
+  function renderRh(){
+    var s=RS[rp];
+    $('rhPos').textContent='第 '+rp+' / '+(RS.length-1)+' 步 · rehashidx = '+s.idx;
+    $('rhCap').innerHTML=s.cap;
+    var t0=$('ht0'), t1=$('ht1');
+    if(s.done){ t0.className='ht off'; t0.innerHTML='<b>旧 ht[0]<small>已释放</small></b>'; t1.className='ht'; t1.innerHTML=tbl('ht[0]（原来的新表）','8 个桶',8,s.t1,{mv:s.mv}); }
+    else {
+      t0.className='ht'; t0.innerHTML=tbl('ht[0] 旧表','4 个桶，按 h mod 4',4,s.t0,{done:s.idx>0?s.idx:0,next:s.idx>=0?s.idx:-1});
+      if(s.t1){ t1.className='ht'; t1.innerHTML=tbl('ht[1] 新表','8 个桶，按 h mod 8',8,s.t1,{mv:s.mv,nw:s.nw}); }
+      else { t1.className='ht off'; t1.innerHTML='<b>ht[1]<small>还没有，平时是空的</small></b>'; }
+    }
+    $('rhPrev').disabled=rp===0; $('rhNext').disabled=rp===RS.length-1;
+  }
+  $('rhPrev').addEventListener('click',function(){ rp=Math.max(0,rp-1); renderRh(); });
+  $('rhNext').addEventListener('click',function(){ rp=Math.min(RS.length-1,rp+1); renderRh(); });
+  $('rhReset').addEventListener('click',function(){ rp=0; renderRh(); });
+  $('rh').addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'){ rp=Math.min(RS.length-1,rp+1); renderRh(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ rp=Math.max(0,rp-1); renderRh(); e.preventDefault(); }
+  });
+  renderRh();
+
+  /* ---------- skiplist ---------- */
+  var TOP=Math.max.apply(null,SK_LV);
+  function X(i){ return i<0 ? 34 : 86+i*46; }
+  function Y(l){ return 170-(l-1)*38; }
+  function drawSk(target){
+    var r=skSearch(target), h='', onPath={}, hl={};
+    r.path.forEach(function(p){ onPath[p.node+'@'+p.lvl]=1; });
+    r.links.forEach(function(k){ hl[k.from+'>'+k.to+'@'+k.lvl]=1; });
+    // links
+    for(var l=1;l<=TOP;l++){
+      var prev=-1;
+      for(var i=0;i<SK_SCORES.length;i++){ if(SK_LV[i]>=l){ var key=prev+'>'+i+'@'+l; h+='<line class="'+(hl[key]?'sk-lh':'sk-l')+'" x1="'+(X(prev)+15)+'" y1="'+Y(l)+'" x2="'+(X(i)-15)+'" y2="'+Y(l)+'"/>'; prev=i; } }
+      h+='<line class="sk-l" x1="'+(X(prev)+15)+'" y1="'+Y(l)+'" x2="626" y2="'+Y(l)+'"/><text class="sk-tl" x="630" y="'+(Y(l)+3)+'" text-anchor="end">∅</text>';
+    }
+    // head
+    for(var l2=1;l2<=TOP;l2++){ h+='<rect class="sk-hd" x="'+(X(-1)-15)+'" y="'+(Y(l2)-11)+'" width="30" height="22" rx="4"/><text class="sk-tl" x="'+X(-1)+'" y="'+(Y(l2)+4)+'" text-anchor="middle">L'+l2+'</text>'; }
+    h+='<text class="sk-tl" x="'+X(-1)+'" y="200" text-anchor="middle">头</text>';
+    // nodes
+    for(var j=0;j<SK_SCORES.length;j++){
+      var isT=r.found && r.idx===j;
+      for(var l3=1;l3<=SK_LV[j];l3++){
+        var cls=isT?'sk-bt':(onPath[j+'@'+l3]?'sk-bh':'sk-b');
+        h+='<rect class="'+cls+'" x="'+(X(j)-15)+'" y="'+(Y(l3)-11)+'" width="30" height="22" rx="4"/>';
+        if(l3===1) h+='<text class="'+(isT?'sk-ttw':'sk-t')+'" x="'+X(j)+'" y="'+(Y(1)+4)+'" text-anchor="middle">'+SK_SCORES[j]+'</text>';
+      }
+    }
+    $('skSvg').innerHTML=h;
+    $('skRes').innerHTML='<div class="tile" data-role="pt"><small>跳表比较了</small><b>'+r.cmps+' 次</b></div><div class="tile" data-role="other"><small>从头挨个找要比较</small><b>'+r.linear+' 次</b></div>';
+  }
+  document.querySelectorAll('[data-sk]').forEach(function(b){ b.addEventListener('click',function(){
+    document.querySelectorAll('[data-sk]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+    drawSk(parseInt(b.getAttribute('data-sk'),10));
+  }); });
+  drawSk(60);
+})();
+</script>
+
+</body>
+</html>
