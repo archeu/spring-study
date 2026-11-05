@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>MyBatis 插件与分页</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Core picture = an onion of proxies around the Executor (blue core); plugins are purple, the pagination plugin teal, the timer orange, the database brown. Anchors = the onion order toggle and the pagination comparator. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --ex:#3150C4; --ex-tint:#E2E7FA;
+  --pl:#6A3FC0; --pl-tint:#ECE5FA;
+  --pg:#0D7A69; --pg-tint:#DCF0EB;
+  --tm:#B85F0C; --tm-tint:#FBE9D5;
+  --db:#8A5A2B; --db-tint:#F3E6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --ex:#90A4FF; --ex-tint:#1D2650;
+    --pl:#B9A0FF; --pl-tint:#2A2148;
+    --pg:#40C6B0; --pg-tint:#12352F;
+    --tm:#F4A651; --tm-tint:#3A2812;
+    --db:#D9A26B; --db-tint:#3A2A1A;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --ex:#90A4FF; --ex-tint:#1D2650;
+  --pl:#B9A0FF; --pl-tint:#2A2148;
+  --pg:#40C6B0; --pg-tint:#12352F;
+  --tm:#F4A651; --tm-tint:#3A2812;
+  --db:#D9A26B; --db-tint:#3A2A1A;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--ex)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--ex);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="ex"]{--rc:var(--ex);--rt:var(--ex-tint)}
+[data-role="pl"]{--rc:var(--pl);--rt:var(--pl-tint)}
+[data-role="pg"]{--rc:var(--pg);--rt:var(--pg-tint)}
+[data-role="tm"]{--rc:var(--tm);--rt:var(--tm-tint)}
+[data-role="db"]{--rc:var(--db);--rt:var(--db-tint)}
+[data-role="au"],[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)} .k-line{fill:var(--line-strong)}
+.ks-cur{stroke:currentColor;fill:none} .ks-gold{stroke:var(--gold);fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.thesis{margin-top:24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);gap:16px;align-items:center}
+.th-note{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--muted);min-width:0}
+.th-note b{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--ink)}
+.th-note .big{font-size:30px;line-height:1;color:var(--line-strong)}
+.th-note.r{text-align:right;align-items:flex-end}
+.ring{border:2.5px solid var(--rc);background:var(--rt);border-radius:22px;padding:8px 12px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.ring > .rl{font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:var(--rc);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ring > .rl small{font-family:var(--font-body);font-weight:400;color:var(--muted);font-size:12px}
+.ring .ring{border-radius:18px}
+.core{border-radius:14px;background:var(--ex);color:var(--on-accent);padding:12px;text-align:center;font-family:var(--font-mono);font-size:13px;font-weight:600}
+.core small{display:block;font-family:var(--font-body);font-weight:400;font-size:12px;opacity:.85}
+.ring.pass{border-style:dashed;background:var(--card)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:112px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code{color:var(--ink)}
+.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--pl)} .kw{color:var(--tm)} .st-s{color:var(--pg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--tm-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:20px;line-height:1;text-align:center;align-self:center}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tabs .lbl{font-size:13.5px;color:var(--muted);margin-right:4px}
+.tab{font-size:14.5px;padding:7px 15px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.facts{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.facts code{overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:640px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:500;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+
+/* ---------- where ---------- */
+.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fo{background:var(--card);border:2px solid var(--rc);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fo-h{display:flex;align-items:center;gap:8px}
+.fo-h svg{width:28px;height:28px;color:var(--rc);flex:none}
+.fo-h b{font-family:var(--font-mono);font-size:13px;overflow-wrap:anywhere}
+.fo code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.fo p{font-size:13.5px}
+.fo .when{font-size:12.5px;padding:2px 8px;border-radius:6px;background:var(--rt);align-self:flex-start}
+
+/* ---------- write ---------- */
+.wgrid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:16px;align-items:start}
+.anno{display:flex;flex-direction:column;gap:10px}
+.an-i{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;align-items:start;font-size:14px}
+.an-i .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--pl);color:var(--on-accent);font-family:var(--font-mono);font-size:12.5px;font-weight:700}
+.an-i code{overflow-wrap:anywhere}
+
+/* ---------- onion ---------- */
+.onion-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.ostage{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px;align-items:start}
+.reg{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.reg span{font-family:var(--font-mono);font-size:12px;padding:2px 8px;border-radius:6px;border:1.5px solid var(--rc);background:var(--rt);color:var(--ink)}
+.reg i{font-style:normal;color:var(--line-strong)}
+.nowrap{font-size:12.5px;padding:6px 10px;border-radius:10px;border:1.5px dashed var(--line-strong);color:var(--muted)}
+.nowrap code{color:var(--ink)}
+.trace{list-style:none;margin:0;padding:12px 14px;border-radius:14px;background:var(--console-bg);color:var(--console-fg);font-family:var(--font-mono);font-size:12px;line-height:1.55;display:flex;flex-direction:column;gap:3px;min-width:0}
+.trace li{overflow-wrap:anywhere;padding-left:10px;border-left:2px solid transparent}
+.trace li.in::before{content:"→ ";color:var(--gold)}
+.trace li.out::before{content:"← ";color:var(--gold)}
+.trace li.pass{color:var(--console-dim)}
+.trace li.pass::before{content:"· ";}
+.trace li.sql{border-left-color:var(--gold);color:var(--gold)}
+.trace li.tmr{color:var(--console-fg)}
+.osum{font-size:14.5px;font-weight:500;padding:10px 14px;border-radius:12px;background:var(--tm-tint)}
+
+/* ---------- comparator ---------- */
+.cmp{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.cmp-assume{font-size:13.5px;color:var(--muted)}
+.cmp-assume b{color:var(--ink)}
+.cgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px;align-items:start}
+.ccol{display:flex;flex-direction:column;gap:12px;min-width:0}
+.sqlc{border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0;background:var(--code-bg)}
+.sqlc-h{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--muted)}
+.sqlc-h b{color:var(--ink)}
+.sqltxt{margin:0;padding:0;font-family:var(--font-mono);font-size:12.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.sqlp{font-family:var(--font-mono);font-size:11.5px;color:var(--muted)}
+.bars{display:flex;flex-direction:column;gap:6px}
+.bar{display:grid;grid-template-columns:6.5em minmax(0,1fr) 7.5em;gap:8px;align-items:center;font-size:12.5px}
+.bar > span:first-child{color:var(--muted)}
+.track{display:block;height:12px;border-radius:6px;background:var(--neutral-tint);overflow:hidden}
+.fill{height:100%;border-radius:6px;min-width:3px;transition:width .35s ease}
+.fill.scan{background:var(--db)}
+.fill.sent{background:var(--ex)}
+.bar b{font-family:var(--font-mono);font-size:12.5px;text-align:right;font-variant-numeric:tabular-nums}
+.got{font-size:14px;padding:10px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--card)}
+.got b{display:block;font-size:12.5px;color:var(--muted);font-weight:500}
+.verdict{font-size:15px;font-weight:500;padding:12px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc);transition:background .25s,border-color .25s}
+
+/* ---------- pagehelper ---------- */
+.lanes{display:flex;flex-direction:column;gap:10px}
+.lane{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px;align-items:stretch}
+.lane-l{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 12px;border-radius:12px;background:var(--rt)}
+.lane-l b{font-family:var(--font-display);font-weight:400;font-size:21px;color:var(--rc);line-height:1.2}
+.lane-l small{font-size:12px;color:var(--muted)}
+.lane-s{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.stn{display:grid;grid-template-columns:26px minmax(0,1fr);gap:0 8px;align-items:start;background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;min-width:0;max-width:100%}
+.stn .n{grid-row:span 2;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--rc);color:var(--on-accent);font-family:var(--font-mono);font-size:12px;font-weight:600}
+.stn b{font-size:14.5px;line-height:1.4}
+.stn code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.arr{color:var(--line-strong);font-size:18px;line-height:1}
+.sql3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.s3{border:2px solid var(--rc);border-radius:14px;padding:10px 12px;background:var(--card);display:flex;flex-direction:column;gap:6px;min-width:0}
+.s3 small{font-size:12.5px;color:var(--rc);font-weight:700}
+.twin{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+
+/* ---------- deep ---------- */
+.deepbar{display:flex;flex-direction:column;gap:6px}
+.dtrack{display:flex;height:34px;border-radius:10px;overflow:hidden;border:1.5px solid var(--line)}
+.dskip{flex:999990;background:repeating-linear-gradient(45deg,var(--neutral-tint) 0 8px,var(--card) 8px 16px);display:flex;align-items:center;padding-left:12px;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden}
+.dkeep{flex:10;min-width:6px;background:var(--pg)}
+.dlab{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--muted)}
+.dlab b{color:var(--pg)}
+.fixes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast,.four{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .thesis{grid-template-columns:1fr}
+  .th-note.r{text-align:left;align-items:flex-start}
+  .wgrid,.ostage,.cgrid,.twin,.fixes,.eras,.sql3{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:88px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits,.minis{grid-template-columns:1fr}
+  .lane{grid-template-columns:1fr;gap:6px}
+  .lane-l{flex-direction:row;align-items:baseline;gap:10px}
+  .lane-s .arr{display:none}
+  .stn{flex:1 1 220px}
+}
+@media (max-width:520px){
+  .four{grid-template-columns:1fr}
+  .bar{grid-template-columns:5.5em minmax(0,1fr) 6.5em}
+}
+@media (prefers-reduced-motion:reduce){
+  .fill{transition:none}
+  .verdict{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plug" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 18h14a6 6 0 1 1 12 0h14v14a6 6 0 1 0 0 12v14H36a6 6 0 1 1-12 0H10V44a6 6 0 1 0 0-12z"/>
+  </symbol>
+  <symbol id="i-nest" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="4" width="56" height="56" rx="14"/>
+    <rect class="k-paper" x="11" y="11" width="42" height="42" rx="10"/>
+    <rect class="k-gold" x="17" y="17" width="30" height="30" rx="8"/>
+    <rect class="k-paper" x="24" y="24" width="16" height="16" rx="5"/>
+  </symbol>
+  <symbol id="i-link" viewBox="0 0 64 64">
+    <rect class="ks-cur" x="5" y="21" width="32" height="22" rx="11" stroke-width="7"/>
+    <rect class="ks-gold" x="27" y="21" width="32" height="22" rx="11" stroke-width="7"/>
+  </symbol>
+  <symbol id="i-pages" viewBox="0 0 64 64">
+    <rect class="k-line" x="18" y="3" width="38" height="46" rx="3"/>
+    <rect fill="currentColor" opacity=".6" x="13" y="8" width="38" height="46" rx="3"/>
+    <rect fill="currentColor" x="8" y="13" width="38" height="47" rx="3"/>
+    <rect class="k-paper" x="14" y="21" width="26" height="3" rx="1.5"/>
+    <rect class="k-paper" x="14" y="28" width="20" height="3" rx="1.5"/>
+    <rect class="k-paper" x="14" y="35" width="24" height="3" rx="1.5"/>
+    <rect class="k-gold" x="28" y="46" width="14" height="8" rx="2"/>
+  </symbol>
+  <symbol id="i-gear" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2"/>
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2" transform="rotate(45 32 32)"/>
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2" transform="rotate(90 32 32)"/>
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2" transform="rotate(135 32 32)"/>
+    <circle fill="currentColor" cx="32" cy="32" r="19"/>
+    <circle class="k-paper" cx="32" cy="32" r="8"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 14v36c0 5 9.8 9 22 9s22-4 22-9V14z"/>
+    <ellipse fill="currentColor" cx="32" cy="14" rx="22" ry="9"/>
+    <ellipse class="k-paper" opacity=".3" cx="32" cy="14" rx="22" ry="9"/>
+    <path class="ks-paper" opacity=".6" stroke-width="2" d="M10 27c0 5 9.8 9 22 9s22-4 22-9M10 39c0 5 9.8 9 22 9s22-4 22-9"/>
+  </symbol>
+  <symbol id="i-sql" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M12 4h30l10 10v46H12z"/>
+    <path class="k-paper" opacity=".5" d="M42 4v10h10z"/>
+    <rect class="k-paper" x="18" y="20" width="24" height="3.4" rx="1.7"/>
+    <rect class="k-paper" x="18" y="29" width="13" height="3.4" rx="1.7"/>
+    <rect class="k-gold" x="34" y="26" width="11" height="9" rx="2"/>
+    <rect class="k-paper" x="18" y="40" width="26" height="3.4" rx="1.7"/>
+    <rect class="k-paper" x="18" y="48" width="17" height="3.4" rx="1.7"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>MyBatis</span><span aria-hidden="true">/</span><span class="tb-here">MyBatis 插件与分页</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">MYBATIS · INTERCEPTOR · PLUGIN.WRAP · PAGEHELPER · MYBATIS-PLUS</p>
+  <h1>插件是一层层套上去的，分页就是其中一层</h1>
+  <p class="lead">MyBatis 的插件，就是给四个核心对象套上一层层 JDK 动态代理。分页插件也是其中一层：SQL 发出去之前，它先帮你查总数，再在 SQL 后面加上 LIMIT。</p>
+
+  <div class="thesis">
+    <div class="th-note"><span class="big" aria-hidden="true">→</span><b>调用往里走</b><span>从最外层开始，每层做完自己的事，调用 <code>proceed()</code> 交给里面一层。</span></div>
+    <div class="ring" data-role="pg">
+      <div class="rl"><span>分页插件 PageInterceptor</span><small>先 count，再加 LIMIT</small></div>
+      <div class="ring" data-role="tm">
+        <div class="rl"><span>你写的计时插件</span><small>记下用了多久</small></div>
+        <div class="core">Executor<small>真正干活的那个对象</small></div>
+      </div>
+    </div>
+    <div class="th-note r"><span class="big" aria-hidden="true">←</span><b>结果往外回</b><span>里面返回后，外面一层还能再加工结果，比如装进 Page。</span></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="pl">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">插件<code>Interceptor</code></div>
+        <p>你写的类。用 <code>@Signature</code> 说清楚<b>拦哪个对象的哪个方法</b>。</p>
+        <span class="belong">只要实现 intercept 一个方法</span>
+      </div>
+    </div>
+    <div class="who" data-role="ex">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-nest"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">套娃工<code>Plugin.wrap</code></div>
+        <p>给对象套一层 JDK 动态代理。<b>签名对得上才套</b>，对不上原样返回。</p>
+        <span class="belong">org.apache.ibatis.plugin.Plugin</span>
+      </div>
+    </div>
+    <div class="who" data-role="tm">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-link"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">插件链<code>InterceptorChain</code></div>
+        <p>按登记顺序一个个套。<b>最后登记的在最外层</b>，最先执行。</p>
+        <span class="belong">对象一造出来就套</span>
+      </div>
+    </div>
+    <div class="who" data-role="pg">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pages"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">分页插件<code>PageHelper · MyBatis-Plus</code></div>
+        <p>也是一个插件。拦下查询，<b>先 count、再改写成 LIMIT</b>。</p>
+        <span class="belong">都靠 JSqlParser 改 SQL</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="pl"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><span><b>Invocation</b> 装着目标对象、方法和参数，<code>proceed()</code> 就是往里走一层</span></span>
+    <span class="ex" data-role="pg"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sql"/></svg><span><b>JSqlParser</b> 把 SQL 解析成语法树再改，比拼字符串可靠</span></span>
+    <span class="ex" data-role="db"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><span><b>RowBounds</b> MyBatis 自带的分页，在内存里跳过</span></span>
+  </div>
+</header>
+
+<!-- ================= WHERE ================= -->
+<section id="where">
+  <div>
+    <h2>能插在哪：只有四个对象</h2>
+    <p class="lead">MyBatis 在造这四种对象时，都会顺手调用一次 <code>interceptorChain.pluginAll(…)</code>。别的对象，插件碰不到。</p>
+  </div>
+  <div class="four">
+    <div class="fo" data-role="ex"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gear"/></svg><b>Executor</b></div><code>query · update · commit · rollback</code><p>查缓存、调度一次查询。分页插件拦在这里。</p><span class="when">每开一个 SqlSession 造一次</span></div>
+    <div class="fo" data-role="pg"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sql"/></svg><b>StatementHandler</b></div><code>prepare · parameterize · query · update</code><p>准备语句、执行。要改 SQL、统计慢 SQL，拦这里。</p><span class="when">每执行一条 SQL 造一次</span></div>
+    <div class="fo" data-role="tm"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>ParameterHandler</b></div><code>setParameters</code><p>填问号。参数加密可以拦这里。</p><span class="when">跟着 StatementHandler 一起造</span></div>
+    <div class="fo" data-role="db"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>ResultSetHandler</b></div><code>handleResultSets</code><p>把行变成对象。结果脱敏可以拦这里。</p><span class="when">跟着 StatementHandler 一起造</span></div>
+  </div>
+  <p class="tip">后三个每执行一条 SQL 就造一次，也就套一次。插件里别做重活，它会跟着每条 SQL 跑。</p>
+</section>
+
+<!-- ================= WRITE ================= -->
+<section id="write">
+  <div>
+    <h2>一个插件长什么样</h2>
+    <p class="lead">一个统计查询耗时的插件。注解说要拦什么，<code>intercept</code> 里写要做什么，中间调一次 <code>proceed()</code>。</p>
+  </div>
+  <div class="wgrid">
+    <div class="codebox">
+      <div class="code-bar"><code>TimerPlugin.java</code></div>
+<pre><code><span class="an">@Intercepts</span>({                                                      <span class="cm">// ①</span>
+    <span class="an">@Signature</span>(type = Executor.<span class="kw">class</span>, method = <span class="st-s">"query"</span>,
+        args = {MappedStatement.<span class="kw">class</span>, Object.<span class="kw">class</span>, RowBounds.<span class="kw">class</span>, ResultHandler.<span class="kw">class</span>}),
+    <span class="an">@Signature</span>(type = Executor.<span class="kw">class</span>, method = <span class="st-s">"query"</span>,
+        args = {MappedStatement.<span class="kw">class</span>, Object.<span class="kw">class</span>, RowBounds.<span class="kw">class</span>, ResultHandler.<span class="kw">class</span>,
+                CacheKey.<span class="kw">class</span>, BoundSql.<span class="kw">class</span>})
+})
+<span class="kw">public class</span> TimerPlugin <span class="kw">implements</span> Interceptor {
+    <span class="an">@Override</span>
+    <span class="kw">public</span> Object intercept(Invocation inv) <span class="kw">throws</span> Throwable {      <span class="cm">// ②</span>
+        MappedStatement ms = (MappedStatement) inv.getArgs()[0];
+        <span class="kw">long</span> start = System.nanoTime();
+        <span class="kw">try</span> {
+            <span class="kw">return</span> inv.proceed();                                     <span class="cm">// ③ 往里走一层</span>
+        } <span class="kw">finally</span> {
+            log.info(<span class="st-s">"{} 用时 {} ms"</span>, ms.getId(), (System.nanoTime() - start) / 1_000_000);
+        }
+    }
+}
+
+<span class="cm">// ④ Spring Boot 里声明成 Bean，自动配置会把它装进 SqlSessionFactory</span>
+<span class="an">@Bean</span>
+TimerPlugin timerPlugin() { <span class="kw">return new</span> TimerPlugin(); }</code></pre>
+    </div>
+    <div class="anno">
+      <div class="an-i"><span class="n">1</span><span><b>拦哪个方法</b>：type 是四个接口之一，method 和 args 要和接口里的方法<b>一字不差</b>。Executor 有两个 query，参数个数不同，最好两个都写上。</span></div>
+      <div class="an-i"><span class="n">2</span><span><b>Invocation</b> 里有目标对象、方法、参数。改参数、换返回值，都在这里。</span></div>
+      <div class="an-i"><span class="n">3</span><span><b>proceed()</b> 交给里面一层。不调它，后面谁都执行不到，SQL 也不会发。</span></div>
+      <div class="an-i"><span class="n">4</span><span><b>plugin()、setProperties()</b> 从 MyBatis 3.5.2 起有默认实现，通常不用写。</span></div>
+      <div class="codebox">
+        <div class="code-bar"><span>想改 SQL，就拦 StatementHandler.prepare</span></div>
+<pre><code>StatementHandler h = (StatementHandler) inv.getTarget();
+MetaObject meta = SystemMetaObject.forObject(h);
+String sql = (String) meta.getValue(<span class="st-s">"delegate.boundSql.sql"</span>);
+meta.setValue(<span class="st-s">"delegate.boundSql.sql"</span>, rewrite(sql));  <span class="cm">// 用 JSqlParser 改</span>
+<span class="kw">return</span> inv.proceed();</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= WRAP ================= -->
+<section id="wrap">
+  <div>
+    <h2>套娃原理：三段源码</h2>
+    <p class="lead">造对象时一层层套代理；调方法时，每层代理先看这个方法在不在自己的签名里，在就交给插件，不在就直接往里传。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span>简化版，去掉了异常处理和缓存</span></div>
+<pre><code><span class="cm">// ① InterceptorChain：所有插件挨个套一层（Configuration.newExecutor 等方法里调用）</span>
+<span class="kw">public</span> Object pluginAll(Object target) {
+    <span class="kw">for</span> (Interceptor interceptor : interceptors) {
+        target = interceptor.plugin(target);        <span class="cm">// 默认就是 Plugin.wrap(target, this)</span>
+    }
+    <span class="kw">return</span> target;                                  <span class="cm">// 最后登记的，套在最外面</span>
+}
+
+<span class="cm">// ② Plugin.wrap：签名里有这个接口，才套</span>
+<span class="kw">public static</span> Object wrap(Object target, Interceptor interceptor) {
+    Map&lt;Class&lt;?&gt;, Set&lt;Method&gt;&gt; signatureMap = getSignatureMap(interceptor);   <span class="cm">// 读 @Signature</span>
+    Class&lt;?&gt;[] interfaces = getAllInterfaces(target.getClass(), signatureMap);
+    <span class="kw">if</span> (interfaces.length &gt; 0) {
+        <span class="kw">return</span> Proxy.newProxyInstance(target.getClass().getClassLoader(), interfaces,
+                <span class="kw">new</span> Plugin(target, interceptor, signatureMap));               <span class="cm">// JDK 动态代理</span>
+    }
+    <span class="kw">return</span> target;                                                          <span class="cm">// 不相干，原样返回</span>
+}
+
+<span class="cm">// ③ Plugin.invoke：方法在签名里，才交给插件</span>
+<span class="kw">public</span> Object invoke(Object proxy, Method method, Object[] args) <span class="kw">throws</span> Throwable {
+    Set&lt;Method&gt; methods = signatureMap.get(method.getDeclaringClass());
+    <span class="kw">if</span> (methods != <span class="kw">null</span> &amp;&amp; methods.contains(method)) {
+        <span class="kw">return</span> interceptor.intercept(<span class="kw">new</span> Invocation(target, method, args));
+    }
+    <span class="kw">return</span> method.invoke(target, args);             <span class="cm">// 不拦，直接往里传</span>
+}</code></pre>
+  </div>
+
+  <div class="onion-box" id="onion">
+    <h3>试一试：登记顺序变了，套娃顺序就变了</h3>
+    <p class="tip">项目里登记了四个插件：计时插件拦 Executor.query；审计插件只拦 Executor.update；SQL 日志插件只拦 StatementHandler；还有 PageHelper 的分页插件。调用一次 <code>PageHelper.startPage(3, 10)</code> 加 <code>selectByStatus(1)</code>，看看会发生什么。</p>
+    <div class="tabs" role="group" aria-label="登记顺序">
+      <span class="lbl">谁最后登记</span>
+      <button class="tab" id="ord-page" data-ord="page" aria-pressed="true">分页插件最后（starter 的默认）</button>
+      <button class="tab" id="ord-timer" data-ord="timer" aria-pressed="false">计时插件最后</button>
+    </div>
+    <div class="reg" id="reg"></div>
+    <div class="ostage">
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <div id="onionView"></div>
+        <div class="nowrap"><code>SqlLogPlugin</code> 没套在 Executor 上：它的签名里只有 StatementHandler，Plugin.wrap 原样返回。它套在每次造出来的 StatementHandler 上。</div>
+      </div>
+      <ol class="trace" id="trace" aria-label="调用过程"></ol>
+    </div>
+    <p class="osum" id="osum"></p>
+  </div>
+</section>
+
+<!-- ================= COMPARE ================= -->
+<section id="paging">
+  <div>
+    <h2>分页的五种做法，比一比</h2>
+    <p class="lead">同一个需求：查 status = 1 的订单，每页 10 条。换个做法、换个页码，看发出去的 SQL 和数据库干的活有多少。</p>
+  </div>
+  <div class="cmp" id="cmp">
+    <p class="cmp-assume">假设：<b>t_order 里 status = 1 的有 1,000,000 行</b>，有 (status, id) 联合索引，按 id 排序。</p>
+    <div class="tabs" role="group" aria-label="做法">
+      <span class="lbl">做法</span>
+      <button class="tab" id="m-rb" data-m="rb" aria-pressed="false">RowBounds</button>
+      <button class="tab" id="m-lim" data-m="lim" aria-pressed="false">手写 LIMIT</button>
+      <button class="tab" id="m-ph" data-m="ph" aria-pressed="true">PageHelper</button>
+      <button class="tab" id="m-mp" data-m="mp" aria-pressed="false">MyBatis-Plus</button>
+      <button class="tab" id="m-ks" data-m="ks" aria-pressed="false">按 id 往后翻</button>
+    </div>
+    <div class="tabs" role="group" aria-label="页码">
+      <span class="lbl">翻到</span>
+      <button class="tab" id="p-1" data-p="1" aria-pressed="false">第 1 页</button>
+      <button class="tab" id="p-3" data-p="3" aria-pressed="true">第 3 页</button>
+      <button class="tab" id="p-deep" data-p="100000" aria-pressed="false">第 100000 页</button>
+    </div>
+    <div class="cgrid">
+      <div class="ccol">
+        <div class="codebox"><div class="code-bar"><span>你写的代码</span></div><pre><code id="cCode"></code></pre></div>
+        <div class="got" id="cGot"></div>
+      </div>
+      <div class="ccol">
+        <div id="cSqls" class="ccol"></div>
+      </div>
+    </div>
+    <p class="verdict" id="cVerdict" data-role="done" aria-live="polite"></p>
+  </div>
+</section>
+
+<!-- ================= PAGEHELPER ================= -->
+<section id="ph">
+  <div>
+    <h2>PageHelper 一次分页的经过</h2>
+    <p class="lead">它靠一张贴在当前线程上的便签（ThreadLocal）知道“下一条查询要分页”。</p>
+  </div>
+  <div class="lanes">
+    <div class="lane" data-role="ex">
+      <div class="lane-l"><b>你写的</b><small>两行代码</small></div>
+      <div class="lane-s">
+        <div class="stn"><span class="n">1</span><b>贴便签：下一条查询要分页</b><code>PageHelper.startPage(3, 10) → ThreadLocal</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">2</span><b>照常调用 Mapper，SQL 一个字没改</b><code>orderMapper.selectByStatus(1)</code></div>
+      </div>
+    </div>
+    <div class="lane" data-role="pg">
+      <div class="lane-l"><b>分页插件</b><small>拦 Executor.query</small></div>
+      <div class="lane-s">
+        <div class="stn"><span class="n">3</span><b>看便签，没有就直接放行</b><code>PageInterceptor.intercept</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">4</span><b>改成 count 查总数，是 0 就直接返回空</b><code>JSqlParser 改写</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">5</span><b>原 SQL 后面加 LIMIT，再执行</b><code>MySqlDialect.getPageSql</code></div>
+      </div>
+    </div>
+    <div class="lane" data-role="pl">
+      <div class="lane-l"><b>收尾</b><small>finally</small></div>
+      <div class="lane-s">
+        <div class="stn"><span class="n">6</span><b>结果装进 Page，带上 total</b><code>Page&lt;E&gt; extends ArrayList&lt;E&gt;</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">7</span><b>撕掉便签</b><code>PageHelper.clearPage()</code></div>
+      </div>
+    </div>
+  </div>
+  <div class="sql3">
+    <div class="s3" data-role="ex"><small>你在 XML 里写的</small><pre class="sqltxt">SELECT id, order_no, amount
+FROM t_order
+WHERE status = ?
+ORDER BY id</pre></div>
+    <div class="s3" data-role="pg"><small>④ 插件生成的 count</small><pre class="sqltxt">SELECT count(0)
+FROM t_order
+WHERE status = ?</pre><span class="sqlp">ORDER BY 对计数没用，去掉了</span></div>
+    <div class="s3" data-role="pg"><small>⑤ 插件生成的分页 SQL</small><pre class="sqltxt">SELECT id, order_no, amount
+FROM t_order
+WHERE status = ?
+ORDER BY id
+ LIMIT ?, ?</pre><span class="sqlp">参数：1, 20, 10</span></div>
+  </div>
+
+  <h3>和 MyBatis-Plus 的分页对比</h3>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">PageHelper</th><th scope="col">MyBatis-Plus</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">怎么说要分页</th><td><code>PageHelper.startPage()</code>，放进 ThreadLocal</td><td>把 <code>Page</code> 对象当第一个参数传进去</td></tr>
+        <tr><th scope="row">拦在哪</th><td>Executor.query</td><td><code>MybatisPlusInterceptor</code> 拦 Executor 和 StatementHandler 的几个方法，分页交给其中的 <code>PaginationInnerInterceptor</code></td></tr>
+        <tr><th scope="row">count 长什么样</th><td><code>SELECT count(0) FROM …</code></td><td><code>SELECT COUNT(*) AS total FROM …</code>，还会去掉用不上的 LEFT JOIN</td></tr>
+        <tr><th scope="row">返回什么</th><td><code>Page</code>（就是个 ArrayList），常包成 <code>PageInfo</code></td><td><code>IPage</code>：records、total、pages</td></tr>
+        <tr><th scope="row">要注意</th><td>只管紧跟着的下一条查询</td><td>要先注册拦截器 Bean，否则不分页</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="twin">
+    <div class="codebox">
+      <div class="code-bar"><b>PageHelper</b><span>startPage 和查询要紧挨着</span></div>
+<pre><code>PageHelper.startPage(<span class="kw">3</span>, <span class="kw">10</span>);
+List&lt;Order&gt; list = orderMapper.selectByStatus(<span class="kw">1</span>);
+PageInfo&lt;Order&gt; info = <span class="kw">new</span> PageInfo&lt;&gt;(list);   <span class="cm">// total、pages 都在里面</span>
+
+<span class="cm">// 更保险的写法：查询包在 lambda 里，用完自动清掉</span>
+Page&lt;Order&gt; page = PageHelper.startPage(<span class="kw">3</span>, <span class="kw">10</span>)
+        .doSelectPage(() -&gt; orderMapper.selectByStatus(<span class="kw">1</span>));</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>MyBatis-Plus</b><span>先注册，再传 Page</span></div>
+<pre><code><span class="an">@Bean</span>
+MybatisPlusInterceptor mybatisPlusInterceptor() {
+    MybatisPlusInterceptor i = <span class="kw">new</span> MybatisPlusInterceptor();
+    i.addInnerInterceptor(<span class="kw">new</span> PaginationInnerInterceptor(DbType.MYSQL));
+    <span class="kw">return</span> i;
+}
+
+Page&lt;Order&gt; page = orderMapper.selectPage(<span class="kw">new</span> Page&lt;&gt;(<span class="kw">3</span>, <span class="kw">10</span>),
+        Wrappers.&lt;Order&gt;lambdaQuery().eq(Order::getStatus, <span class="kw">1</span>));</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DEEP ================= -->
+<section id="deep">
+  <div>
+    <h2>越往后翻越慢：深分页</h2>
+    <p class="lead">不管哪个分页插件，最后都是 <code>LIMIT offset, size</code>。翻到第 100000 页，数据库要先数过 999,990 行，再把它们丢掉。</p>
+  </div>
+  <div class="deepbar" aria-label="LIMIT 999990, 10 扫过的行">
+    <div class="dtrack"><div class="dskip">扫过再丢掉：999,990 行</div><div class="dkeep"></div></div>
+    <div class="dlab"><span>按比例画的：1,000,000 行</span><span>真正要的：<b>10 行</b>（最右边那一条）</span></div>
+  </div>
+  <div class="fixes">
+    <div class="codebox">
+      <div class="code-bar"><b>办法一：按 id 往后翻</b><span>记住上一页最后的 id</span></div>
+<pre><code>SELECT id, order_no, amount FROM t_order
+WHERE status = 1 AND id &gt; #{lastId}
+ORDER BY id
+LIMIT 10;
+<span class="cm">-- 不管翻到哪，都只扫 10 行</span>
+<span class="cm">-- 代价：只能下一页，不能直接跳到第 N 页</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>办法二：先找 id，再回表</b><span>延迟关联</span></div>
+<pre><code>SELECT o.* FROM t_order o
+JOIN (SELECT id FROM t_order
+      WHERE status = 1
+      ORDER BY id
+      LIMIT 999990, 10) t ON o.id = t.id;
+<span class="cm">-- 子查询只在索引里数，最后只回表 10 次</span>
+<span class="cm">-- 还是要数过那些行，但每行便宜多了</span></code></pre>
+    </div>
+  </div>
+  <p class="tip">count 也一样贵：每翻一页都要把 1,000,000 行数一遍。不需要总数时，关掉它：<code>PageHelper.startPage(n, size, false)</code>，或者 MyBatis-Plus 里 <code>page.setSearchCount(false)</code>。</p>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：原理一样，依赖要换</h2>
+    <p class="lead">插件机制是 MyBatis 3.5 本体的，两边完全一样。变的是分页插件的 starter，和它们依赖的 JSqlParser。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>PageHelper 用 1.x 的 <code>pagehelper-spring-boot-starter</code></li>
+        <li>MyBatis-Plus 用 <code>mybatis-plus-boot-starter</code></li>
+        <li>MyBatis-Plus 3.5.9 起，分页插件要单独引入 JSqlParser 模块。JDK 8 引 <code>mybatis-plus-jsqlparser-4.9</code></li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>PageHelper 要用支持 Boot 3 的新版 starter（比如 2.x）。老版本的自动配置只登记在 spring.factories 里，Boot 3 不读，分页会悄悄失效，也不报错</li>
+        <li>MyBatis-Plus 换成 <code>mybatis-plus-spring-boot3-starter</code></li>
+        <li>3.5.9 起引 <code>mybatis-plus-jsqlparser</code>，里面是 JSqlParser 5，要求 JDK 11+</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>只能拦四个对象</span><span>Plugin.wrap 套 JDK 代理</span><span>最后登记的最先执行</span><span>PageHelper 靠 ThreadLocal</span><span>MyBatis-Plus 靠 Page 参数</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">插件的坑多出在签名和顺序上，分页的坑多出在“到底分了哪一条查询”上。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="pg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pages"/></svg><b>startPage 和查询之间夹了别的查询，分页分错了</b><p>便签只管紧跟着的下一条查询。中间先查了一下用户权限，被分页的就成了那条。让两者紧挨着，或者用 <code>doSelectPage(() -&gt; …)</code>。</p></div>
+    <div class="pit" data-role="pg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pages"/></svg><b>startPage 之后提前 return，下一个请求莫名其妙被分页</b><p>便签没被用掉，留在线程上，线程池把这个线程分给下一个请求时还在。在 finally 里调用 <code>PageHelper.clearPage()</code>。</p></div>
+    <div class="pit" data-role="pg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pages"/></svg><b>接口返回给前端，只有数组，没有 total</b><p>Page 就是一个 ArrayList，转 JSON 时只剩元素。包成 <code>PageInfo</code> 或自己的分页对象再返回。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>一对多查询分页，每页条数不对</b><p>LIMIT 限制的是 JOIN 之后的行，一个订单有 3 条明细就占 3 行。先分页查主表的 id，再按 id 查明细。</p></div>
+    <div class="pit" data-role="pg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pages"/></svg><b>MyBatis-Plus 的 selectPage 不分页，total 是 0</b><p>没注册 <code>MybatisPlusInterceptor</code> 和 <code>PaginationInnerInterceptor</code>。3.5.9 以后还要引入 jsqlparser 模块。</p></div>
+    <div class="pit" data-role="pl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>启动报 Could not find method on interface … Executor named query</b><p><code>@Signature</code> 的 args 和接口方法对不上，多写或少写了一个参数类型。照着接口源码抄。</p></div>
+    <div class="pit" data-role="pl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>只拦了 6 个参数的 query，插件一次都没进来</b><p>SqlSession 调的是 4 个参数的那个。Executor 内部再转调 6 参数版本时，是对象自己调自己，不经过代理。两个签名都写上。</p></div>
+    <div class="pit" data-role="pl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>StatementHandler 插件里，MetaObject 取不到 delegate</b><p>它已经被别的插件套过一层，<code>getTarget()</code> 拿到的是代理。先顺着 <code>h.target</code> 一层层剥到真对象。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>页码越往后越慢</b><p>深分页。能只往后翻就按 id 翻；必须跳页，就用延迟关联。</p></div>
+    <div class="pit" data-role="tm"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>每翻一页都 count，count 比查询还慢</b><p>不需要总数就关掉 count；需要的话，把 total 缓存一会儿，或者只在第一页查一次。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 MyBatis 3.5、PageHelper、MyBatis-Plus 3.5 为例。相关：<a href="mybatis-flow.html">MyBatis 执行流程</a> · <a href="mybatis-spring-tx.html">MyBatis 与 Spring 事务</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- onion ---------- */
+  var REG_ROLE={TimerPlugin:'tm',AuditPlugin:'au',SqlLogPlugin:'pl',PageInterceptor:'pg'};
+  var CNT='SELECT count(0) FROM t_order WHERE status = ?';
+  var PAGE='SELECT id, order_no, amount FROM t_order WHERE status = ? ORDER BY id LIMIT ?, ?';
+  var ORD={
+    page:{
+      reg:['TimerPlugin','AuditPlugin','SqlLogPlugin','PageInterceptor'],
+      layers:[
+        {n:'PageInterceptor',r:'pg',d:'拦 query'},
+        {n:'AuditPlugin',r:'au',d:'只拦 update，query 直接放行',pass:1},
+        {n:'TimerPlugin',r:'tm',d:'拦 query'}
+      ],
+      trace:[
+        [0,'in','PageInterceptor.intercept：便签上写着 Page(3, 10)'],
+        [1,'pass','AuditPlugin 代理：query 不在签名里，放行'],
+        [2,'in','TimerPlugin.intercept'],
+        [3,'sql',CNT],
+        [2,'out','TimerPlugin：count 用时 120 ms'],
+        [1,'pass','AuditPlugin 代理：放行'],
+        [2,'in','TimerPlugin.intercept'],
+        [3,'sql',PAGE],
+        [2,'out','TimerPlugin：分页查询用时 6 ms'],
+        [0,'out','PageInterceptor：装进 Page，total = 1000000']
+      ],
+      sum:'计时插件在里层，被调了 2 次：count 和分页查询分开计时。'
+    },
+    timer:{
+      reg:['AuditPlugin','SqlLogPlugin','PageInterceptor','TimerPlugin'],
+      layers:[
+        {n:'TimerPlugin',r:'tm',d:'拦 query'},
+        {n:'PageInterceptor',r:'pg',d:'拦 query'},
+        {n:'AuditPlugin',r:'au',d:'只拦 update，query 直接放行',pass:1}
+      ],
+      trace:[
+        [0,'in','TimerPlugin.intercept'],
+        [1,'in','PageInterceptor.intercept：便签上写着 Page(3, 10)'],
+        [2,'pass','AuditPlugin 代理：放行'],
+        [3,'sql',CNT],
+        [2,'pass','AuditPlugin 代理：放行'],
+        [3,'sql',PAGE],
+        [1,'out','PageInterceptor：装进 Page，total = 1000000'],
+        [0,'out','TimerPlugin：总共用时 126 ms']
+      ],
+      sum:'计时插件在最外层，只被调 1 次，记下的是两条 SQL 加起来的时间。'
+    }
+  };
+  function onionHtml(layers){
+    var inner='<div class="core">Executor<small>CachingExecutor → SimpleExecutor</small></div>';
+    for(var i=layers.length-1;i>=0;i--){
+      var l=layers[i];
+      inner='<div class="ring'+(l.pass?' pass':'')+'" data-role="'+l.r+'"><div class="rl"><span>'+esc(l.n)+'</span><small>'+esc(l.d)+'</small></div>'+inner+'</div>';
+    }
+    return inner;
+  }
+  function renderOnion(k){
+    var o=ORD[k];
+    $('reg').innerHTML='<b style="color:var(--ink)">登记顺序：</b>'+o.reg.map(function(n,i){ return (i?'<i>→</i>':'')+'<span data-role="'+REG_ROLE[n]+'">'+esc(n)+'</span>'; }).join('')+'<b style="color:var(--ink)">　套出来（从外到里）：</b>'+o.layers.map(function(l){return esc(l.n);}).join(' ⊃ ')+' ⊃ Executor';
+    $('onionView').innerHTML=onionHtml(o.layers);
+    $('trace').innerHTML=o.trace.map(function(t){ return '<li class="'+t[1]+'" style="margin-left:'+(t[0]*14)+'px">'+esc(t[2])+'</li>'; }).join('');
+    $('osum').textContent=o.sum;
+  }
+  document.querySelectorAll('[data-ord]').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('[data-ord]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      renderOnion(b.getAttribute('data-ord'));
+    });
+  });
+  renderOnion('page');
+
+  /* ---------- pagination comparator ---------- */
+  var N=1000000, SIZE=10;
+  function fmt(n){ return Number(n).toLocaleString('en-US'); }
+  var BASE='SELECT id, order_no, amount\nFROM t_order\nWHERE status = ?\nORDER BY id';
+  function build(m,p){
+    var off=(p-1)*SIZE, deep=p>=100000, R={sqls:[]};
+    if(m==='rb'){
+      R.code='List<Order> list = orderMapper.selectByStatus(1,\n        new RowBounds('+off+', 10));   // 跳过 '+fmt(off)+' 行，取 10 行';
+      R.sqls=[{t:'唯一一条 SQL',sql:BASE,prm:'1',scan:N,sent:N}];
+      R.got=['List<Order>','10 条，没有总数'];
+      R.v='不管第几页，SQL 里都没有 LIMIT。数据库把 1,000,000 行全传回来，MyBatis 再一行行跳过'+(off?' '+fmt(off)+' 行':'')+'，只留 10 行。MySQL 驱动默认一次全拉进内存，数据一多就慢，还可能内存溢出。';
+      R.role='bad';
+    } else if(m==='lim'){
+      R.code='// XML：… ORDER BY id LIMIT #{offset}, #{size}\nList<Order> list = orderMapper.selectPage(1, '+off+', 10);\n// 要总数，得自己再写一条 count';
+      R.sqls=[{t:'唯一一条 SQL',sql:BASE+'\nLIMIT ?, ?',prm:'1, '+off+', 10',scan:off+SIZE,sent:SIZE}];
+      R.got=['List<Order>','10 条；总数要自己另查'];
+      R.v= deep ? '只传回 10 行，可数据库得先扫过 999,990 行再丢掉，越往后越慢。' : '数据库只扫 '+fmt(off+SIZE)+' 行，传回 10 行。干净，就是 count 和参数都得自己写。';
+      R.role= deep ? 'warn' : 'done';
+    } else if(m==='ph'){
+      R.code='PageHelper.startPage('+p+', 10);\nList<Order> list = orderMapper.selectByStatus(1);   // SQL 原样不动\nPageInfo<Order> info = new PageInfo<>(list);';
+      R.sqls=[
+        {t:'插件生成的 count',sql:'SELECT count(0)\nFROM t_order\nWHERE status = ?',prm:'1',scan:N,sent:1},
+        {t:'插件改写的分页 SQL',sql:BASE+(off?'\n LIMIT ?, ?':'\n LIMIT ?'),prm:off?'1, '+off+', 10':'1, 10',scan:off+SIZE,sent:SIZE}
+      ];
+      R.got=['Page<Order>，包成 PageInfo','10 条，total = 1,000,000，pages = 100,000'];
+      R.v='你的 SQL 一个字没改，插件替你发了两条：先 count，把 1,000,000 行数一遍；再在原 SQL 后面加 LIMIT。'+(off?'':'第 1 页偏移量是 0，只加 LIMIT ?。')+(deep?'翻到这么后面，分页那条也一样慢。':'');
+      R.role= deep ? 'warn' : 'done';
+    } else if(m==='mp'){
+      R.code='Page<Order> page = orderMapper.selectPage(new Page<>('+p+', 10),\n        Wrappers.<Order>lambdaQuery()\n                .eq(Order::getStatus, 1)\n                .orderByAsc(Order::getId));';
+      R.sqls=[
+        {t:'插件生成的 count',sql:'SELECT COUNT(*) AS total\nFROM t_order\nWHERE (status = ?)',prm:'1',scan:N,sent:1},
+        {t:'插件改写的分页 SQL',sql:'SELECT id,order_no,amount\nFROM t_order\nWHERE (status = ?)\nORDER BY id ASC'+(off?' LIMIT ?,?':' LIMIT ?'),prm:off?'1, '+off+', 10':'1, 10',scan:off+SIZE,sent:SIZE}
+      ];
+      R.got=['IPage<Order>','records 10 条，total = 1,000,000，pages = 100,000'];
+      R.v='和 PageHelper 一样是两条 SQL：先 count，再加 LIMIT。区别是 Page 对象当参数传进去，不靠线程上的便签。'+(deep?'深分页一样慢。':'');
+      R.role= deep ? 'warn' : 'done';
+    } else {
+      var first = p===1;
+      R.code= first ? 'List<Order> list = orderMapper.selectAfter(1, null, 10);   // 第一页没有 lastId'
+                    : 'List<Order> list = orderMapper.selectAfter(1, lastId, 10);\n// lastId 是上一页最后一条的 id，前端翻页时带回来';
+      R.sqls=[{t:'唯一一条 SQL',sql: first ? BASE+'\nLIMIT ?' : 'SELECT id, order_no, amount\nFROM t_order\nWHERE status = ? AND id > ?\nORDER BY id\nLIMIT ?',prm: first ? '1, 10' : '1, lastId, 10',scan:SIZE,sent:SIZE}];
+      R.got=['List<Order>','10 条；只能一页页往后翻，不能直接跳到第 N 页'];
+      R.v='直接从上一页最后那个 id 往后找，'+(deep?'翻到第 100000 页也':'不管第几页都')+'只扫 10 行。代价是没法跳页，也没有总数。';
+      R.role='done';
+    }
+    return R;
+  }
+  function pct(v){ return Math.max(v/N*100, 0.35).toFixed(3)+'%'; }
+  var curM='ph', curP=3;
+  function renderCmp(){
+    var R=build(curM,curP);
+    $('cCode').textContent=R.code;
+    $('cGot').innerHTML='<b>你拿到的</b>'+esc(R.got[0])+'：'+esc(R.got[1]);
+    $('cSqls').innerHTML=R.sqls.map(function(s,i){
+      return '<div class="sqlc"><div class="sqlc-h"><b>第 '+(i+1)+' 条 · '+esc(s.t)+'</b><span>参数 '+esc(s.prm)+'</span></div>'+
+        '<pre class="sqltxt">'+esc(s.sql)+'</pre>'+
+        '<div class="bars">'+
+          '<div class="bar"><span>数据库扫过</span><span class="track"><span class="fill scan" style="display:block;width:'+pct(s.scan)+'"></span></span><b>'+fmt(s.scan)+' 行</b></div>'+
+          '<div class="bar"><span>传回 Java</span><span class="track"><span class="fill sent" style="display:block;width:'+pct(s.sent)+'"></span></span><b>'+fmt(s.sent)+' 行</b></div>'+
+        '</div></div>';
+    }).join('');
+    var v=$('cVerdict'); v.textContent=R.v; v.setAttribute('data-role', R.role);
+  }
+  document.querySelectorAll('[data-m]').forEach(function(b){
+    b.addEventListener('click', function(){
+      curM=b.getAttribute('data-m');
+      document.querySelectorAll('[data-m]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      renderCmp();
+    });
+  });
+  document.querySelectorAll('[data-p]').forEach(function(b){
+    b.addEventListener('click', function(){
+      curP=parseInt(b.getAttribute('data-p'),10);
+      document.querySelectorAll('[data-p]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      renderCmp();
+    });
+  });
+  renderCmp();
+})();
+</script>
+
+</body>
+</html>
