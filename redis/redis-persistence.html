@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis 持久化 RDB 与 AOF</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: RDB is a photo of the whole memory every few minutes, AOF is a ledger of every write. Main process blue, forked child purple, RDB teal, AOF brown, survived green, lost red. Anchor = the crash lab. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --mp:#3150C4; --mp-tint:#E2E7FA;
+  --cp:#6A3FC0; --cp-tint:#ECE5FA;
+  --rdb:#0D7A69; --rdb-tint:#DCF0EB;
+  --aof:#8A5A2B; --aof-tint:#F3E6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --mp:#90A4FF; --mp-tint:#1D2650;
+    --cp:#B9A0FF; --cp-tint:#2A2148;
+    --rdb:#40C6B0; --rdb-tint:#12352F;
+    --aof:#D9A26B; --aof-tint:#3A2A1A;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --mp:#90A4FF; --mp-tint:#1D2650;
+  --cp:#B9A0FF; --cp-tint:#2A2148;
+  --rdb:#40C6B0; --rdb-tint:#12352F;
+  --aof:#D9A26B; --aof-tint:#3A2A1A;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--mp)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button,input{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--mp);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="mp"]{--rc:var(--mp);--rt:var(--mp-tint)}
+[data-role="cp"]{--rc:var(--cp);--rt:var(--cp-tint)}
+[data-role="rdb"]{--rc:var(--rdb);--rt:var(--rdb-tint)}
+[data-role="aof"]{--rc:var(--aof);--rt:var(--aof-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.duo{margin-top:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h3{color:var(--rc);font-size:26px}
+.way h3 small{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);margin-left:8px}
+.way p{font-size:14.5px}
+.pic{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mem{display:grid;grid-template-columns:repeat(4,14px);gap:3px;padding:6px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--code-bg)}
+.mem i{width:14px;height:14px;border-radius:3px;background:var(--mp)}
+.mem i:nth-child(3n){background:var(--gold)}
+.mem i:nth-child(5n){background:var(--rdb)}
+.arr{color:var(--line-strong);font-weight:700;font-size:20px}
+.pic svg{width:46px;height:46px;color:var(--rc);flex:none}
+.file{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--rt);border:1.5px solid var(--rc)}
+.ledger{font-family:var(--font-mono);font-size:11.5px;line-height:1.5;padding:6px 10px;border-radius:8px;background:var(--code-bg);border:1.5px solid var(--line-strong);min-width:0}
+.ledger span{display:block;white-space:nowrap}
+.ledger span:last-child{color:var(--muted)}
+.loss{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.lrow{display:grid;grid-template-columns:3.4em minmax(0,1fr) 7.5em;gap:8px;align-items:center;font-size:12.5px}
+.lrow > b{font-family:var(--font-mono);font-size:12.5px;color:var(--rc)}
+.ltrk{position:relative;height:20px;border-radius:5px;background:var(--neutral-tint);overflow:hidden}
+.ltrk .ok{position:absolute;top:0;bottom:0;left:0;background:var(--good)}
+.ltrk .lost{position:absolute;top:0;bottom:0;background:var(--bad)}
+.ltrk .cam{position:absolute;top:2px;bottom:2px;width:3px;margin-left:-1.5px;border-radius:2px;background:var(--card)}
+.lrow > span{font-weight:700;color:var(--bad)}
+.lax{display:grid;grid-template-columns:3.4em minmax(0,1fr) 7.5em;gap:8px}
+.lax div{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--cp)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--warn);font-weight:700}
+.t tr.hi > *{background:var(--rdb-tint)}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:6px 12px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+
+/* ---------- steps ---------- */
+.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.sp{border:2px solid var(--rc);border-radius:12px;padding:8px 10px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.sp small{font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--rc)}
+.sp b{font-size:14.5px}
+.sp span{font-size:12.5px;color:var(--muted)}
+.sp code{font-size:11.5px;color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- cow ---------- */
+.cow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.cw{border:1.5px solid var(--line);border-radius:14px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.cw b{font-size:15px}
+.pg-row{display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:8px;align-items:center;font-size:12.5px}
+.pg-row > span{color:var(--rc);font-weight:700}
+.pgs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+.pg{height:30px;border-radius:6px;border:2px solid var(--line-strong);display:grid;place-items:center;font-family:var(--font-mono);font-size:12px;font-weight:700;background:var(--card)}
+.pg.sh{background:var(--neutral-tint)}
+.pg.new{background:var(--mp);border-color:var(--mp);color:var(--on-accent)}
+.pg.old{background:var(--cp-tint);border-color:var(--cp)}
+.cw p{font-size:13px;color:var(--muted)}
+
+/* ---------- aof ---------- */
+.aflow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.af{border:2px solid var(--rc);background:var(--rt);border-radius:12px;padding:6px 12px;font-size:14px;font-weight:600;display:flex;flex-direction:column;line-height:1.35}
+.af small{font-weight:400;font-size:12px;color:var(--muted)}
+.fa{color:var(--line-strong);font-size:20px;font-weight:700}
+.pol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.po{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.po h3{font-family:var(--font-mono);font-size:18px;color:var(--rc)}
+.po h3 small{font-family:var(--font-body);font-size:12px;color:var(--muted);margin-left:6px}
+.po .tk{height:22px;border-radius:5px;background:var(--neutral-tint);position:relative;overflow:hidden}
+.po .tk i{position:absolute;top:3px;bottom:3px;width:2px;background:var(--rc)}
+.po dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;font-size:13px}
+.po dt{color:var(--muted)}
+.po dd{margin:0;font-weight:600}
+.rewrite{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px;align-items:center}
+.rw{border:1.5px solid var(--line);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rw b{font-size:14.5px}
+.rw ol{margin:0;padding-left:2em;font-family:var(--font-mono);font-size:12.5px;line-height:1.7}
+.rw ol li::marker{color:var(--muted)}
+.rw .x{color:var(--muted);text-decoration:line-through}
+.rwa{font-size:28px;color:var(--aof);font-weight:700;text-align:center}
+.rwa small{display:block;font-size:12px;font-weight:500;color:var(--muted)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.lab-row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.lab-row .lbl{font-size:13px;color:var(--muted);flex:none}
+.slider{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.slider input[type=range]{width:min(420px,100%);accent-color:var(--bad)}
+.slider output{font-family:var(--font-mono);font-weight:700;font-size:14px}
+.chartbox{border:1.5px solid var(--line);border-radius:14px;padding:10px;min-width:0;background:var(--card)}
+.chartbox svg{display:block;width:100%;height:auto}
+.c-ax{font-family:var(--font-mono);font-size:10.5px;fill:var(--muted)}
+.c-rl{font-size:12px;font-weight:600;fill:var(--ink)}
+.c-gl{stroke:var(--line);stroke-width:1}
+.c-ok{fill:var(--good)} .c-lost{fill:var(--bad)} .c-after{fill:var(--neutral-tint)}
+.c-snap{fill:var(--rdb)} .c-snapx{fill:var(--rdb);opacity:.35}
+.c-rw{fill:var(--cp)}
+.c-tick{stroke:var(--aof);stroke-width:1}
+.c-band{fill:var(--aof)}
+.c-crash{stroke:var(--bad);stroke-width:2.5}
+.c-dur{stroke:var(--good);stroke-width:2;stroke-dasharray:5 3}
+.c-lb{font-size:11px;font-weight:700;fill:var(--ink)}
+.c-lbs{font-size:10.5px;fill:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;color:var(--ink);line-height:1.15;font-variant-numeric:tabular-nums}
+.tile span{font-size:12.5px}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+
+/* ---------- restart ---------- */
+.boot{display:flex;flex-direction:column;gap:8px}
+.bt{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bt .q{font-size:13.5px;font-weight:700;padding:5px 12px;border-radius:999px;border:2px dashed var(--ink)}
+.bt .af small{font-size:11.5px}
+
+/* ---------- choose ---------- */
+.choose{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ch{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.ch small{font-size:12px;color:var(--muted)}
+.ch b{font-size:16px}
+.ch .pick{font-family:var(--font-mono);font-size:12.5px;font-weight:700;color:var(--rc)}
+.ch p{font-size:13.5px}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .steps,.choose{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .duo,.two,.cow,.eras,.pol{grid-template-columns:1fr}
+  .rewrite{grid-template-columns:1fr}
+  .rwa{transform:rotate(90deg)}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .steps,.choose,.tiles{grid-template-columns:1fr}
+  .lrow,.lax{grid-template-columns:3em minmax(0,1fr) 6em}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-main" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="10" width="40" height="44" rx="6"/>
+    <rect class="k-paper" x="19" y="18" width="26" height="6" rx="2"/>
+    <rect class="k-paper" x="19" y="29" width="26" height="6" rx="2"/>
+    <rect class="k-gold" x="19" y="40" width="14" height="6" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M2 24h8M2 34h8M54 29h8"/>
+  </symbol>
+  <symbol id="i-fork" viewBox="0 0 64 64">
+    <rect fill="currentColor" opacity=".45" x="22" y="4" width="36" height="32" rx="5"/>
+    <rect fill="currentColor" x="6" y="22" width="36" height="34" rx="5"/>
+    <path class="ks-paper" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" d="M16 46V38l8-8M24 30h-6M24 30v6M32 46V38"/>
+  </symbol>
+  <symbol id="i-photo" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="10" width="56" height="44" rx="5"/>
+    <rect class="k-paper" x="9" y="15" width="46" height="34" rx="2"/>
+    <circle class="k-gold" cx="20" cy="25" r="5"/>
+    <path fill="currentColor" d="M9 49l14-14 9 9 8-7 15 12z"/>
+  </symbol>
+  <symbol id="i-book" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 6h38a6 6 0 0 1 6 6v44a2 2 0 0 1-2 2H14a4 4 0 0 1-4-4z"/>
+    <rect class="k-paper" x="16" y="12" width="32" height="40" rx="2"/>
+    <path class="ks-cur" stroke-width="2.5" stroke-linecap="round" d="M21 20h22M21 27h22M21 34h22M21 41h14"/>
+    <rect class="k-gold" x="40" y="44" width="6" height="12" rx="1"/>
+  </symbol>
+  <symbol id="i-disk" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="12" width="52" height="40" rx="6"/>
+    <circle class="k-paper" cx="24" cy="32" r="12"/>
+    <circle fill="currentColor" cx="24" cy="32" r="3"/>
+    <rect class="k-gold" x="42" y="40" width="10" height="5" rx="1.5"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis 持久化 RDB 与 AOF</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS 7 · RDB · AOF · FORK · COPY-ON-WRITE · FSYNC</p>
+  <h1>内存一断电就清零，所以要么拍照，要么记账</h1>
+  <p class="lead">Redis 的数据都在内存里，进程一退出就没了。持久化就是把它存到磁盘上，重启时再读回来。有两种办法：隔一段时间给整个内存拍张照（RDB），或者把每一条写命令记进账本（AOF）。</p>
+
+  <div class="duo">
+    <div class="way" data-role="rdb">
+      <h3>RDB：拍照<small>dump.rdb</small></h3>
+      <div class="pic" aria-hidden="true"><span class="mem"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="arr">→</span><svg viewBox="0 0 64 64"><use href="#i-photo"/></svg><span class="arr">→</span><span class="file">dump.rdb</span></div>
+      <p>某一刻整个内存长什么样，压缩成一个二进制文件。文件小、恢复快，但两张照片之间写入的数据，宕机就丢了。</p>
+    </div>
+    <div class="way" data-role="aof">
+      <h3>AOF：记账<small>appendonly.aof</small></h3>
+      <div class="pic" aria-hidden="true"><span class="ledger"><span>SET stock 100</span><span>DECR stock</span><span>SADD tags a</span><span>…</span></span><span class="arr">→</span><svg viewBox="0 0 64 64"><use href="#i-book"/></svg><span class="arr">→</span><span class="file">appendonly.aof</span></div>
+      <p>每执行一条写命令，就在文件末尾追加一行。重启时从头再执行一遍。丢得少，但文件大、恢复慢。</p>
+    </div>
+  </div>
+  <div class="mini">
+    <b>同样在 12:41 断电，各丢多少</b>
+    <div class="loss">
+      <div class="lrow" data-role="rdb"><b>RDB</b><div class="ltrk" role="img" aria-label="RDB 每 15 分钟拍一次，最后一张在 12:30，丢了 11 分钟"><div class="ok" style="width:50%"></div><div class="lost" style="left:50%;width:18.33%"></div><span class="cam" style="left:0%"></span><span class="cam" style="left:25%"></span><span class="cam" style="left:50%"></span></div><span>丢 11 分钟</span></div>
+      <div class="lrow" data-role="aof"><b>AOF</b><div class="ltrk" role="img" aria-label="AOF 每秒刷盘，只丢最后约 1 秒"><div class="ok" style="width:68.06%"></div><div class="lost" style="left:68.06%;width:3px"></div></div><span>丢约 1 秒</span></div>
+      <div class="lax" aria-hidden="true"><span></span><div><span>12:00</span><span>12:15</span><span>12:30</span><span>12:45</span><span>13:00</span></div><span></span></div>
+    </div>
+    <p>白色竖线是 RDB 拍照的时刻（示意：每 15 分钟一次）；AOF 按默认的每秒刷盘。绿色是重启后还在的数据，红色是丢掉的。</p>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="mp">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-main"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">主进程<code>redis-server</code></div>
+        <p>用一个线程处理所有命令，<b>它一卡，所有客户端都卡</b>。</p>
+        <span class="belong">持久化尽量别让它干重活</span>
+      </div>
+    </div>
+    <div class="who" data-role="cp">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fork"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">子进程<code>fork()</code></div>
+        <p>主进程复制出来的分身，<b>替它把内存写到磁盘</b>。</p>
+        <span class="belong">写 RDB、重写 AOF 都靠它</span>
+      </div>
+    </div>
+    <div class="who" data-role="rdb">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-photo"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">照片<code>dump.rdb</code></div>
+        <p>某一刻的全量数据，<b>紧凑的二进制文件</b>。</p>
+        <span class="belong">适合备份、恢复快</span>
+      </div>
+    </div>
+    <div class="who" data-role="aof">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-book"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">账本<code>appendonly.aof</code></div>
+        <p>每条写命令按顺序追加，<b>重启时从头重放</b>。</p>
+        <span class="belong">丢得少，越记越长</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= RDB ================= -->
+<section id="rdb">
+  <div>
+    <h2>RDB：怎么拍一张不卡的照片</h2>
+    <p class="lead">直接让主进程去写文件（<code>SAVE</code> 命令）会把它卡住几十秒，生产环境不能用。平时用的是 <code>BGSAVE</code>：fork 一个子进程去写，主进程接着处理请求。</p>
+  </div>
+  <div class="steps">
+    <div class="sp" data-role="mp"><small>1</small><b>满足条件，触发</b><span>配置的 <code>save</code> 规则到了、手动 <code>BGSAVE</code>、从节点要全量同步（正常关机时是直接 SAVE）</span></div>
+    <div class="sp" data-role="mp"><small>2</small><b>fork 出子进程</b><span>主进程会停一下，内存越大停得越久，大约每 GB 十几毫秒</span></div>
+    <div class="sp" data-role="cp"><small>3</small><b>子进程写临时文件</b><span>把 fork 那一刻的内存写进 <code>temp-&lt;pid&gt;.rdb</code>，压缩、刷盘</span></div>
+    <div class="sp" data-role="rdb"><small>4</small><b>改名替换</b><span>写完后原子地改名成 <code>dump.rdb</code>，旧照片这时才被替换</span></div>
+  </div>
+  <div class="cow">
+    <div class="cw">
+      <b>刚 fork 完：两个进程共用同一份内存</b>
+      <div class="pg-row" data-role="mp"><span>主进程</span><div class="pgs"><span class="pg sh">1</span><span class="pg sh">2</span><span class="pg sh">3</span><span class="pg sh">4</span><span class="pg sh">5</span><span class="pg sh">6</span></div></div>
+      <div class="pg-row" data-role="cp"><span>子进程</span><div class="pgs"><span class="pg sh">1</span><span class="pg sh">2</span><span class="pg sh">3</span><span class="pg sh">4</span><span class="pg sh">5</span><span class="pg sh">6</span></div></div>
+      <p>fork 只复制页表，不复制数据，所以很快。灰色表示两边指向同一块物理内存。</p>
+    </div>
+    <div class="cw">
+      <b>主进程改了第 3 页：只复制这一页</b>
+      <div class="pg-row" data-role="mp"><span>主进程</span><div class="pgs"><span class="pg sh">1</span><span class="pg sh">2</span><span class="pg new">3′</span><span class="pg sh">4</span><span class="pg sh">5</span><span class="pg sh">6</span></div></div>
+      <div class="pg-row" data-role="cp"><span>子进程</span><div class="pgs"><span class="pg sh">1</span><span class="pg sh">2</span><span class="pg old">3</span><span class="pg sh">4</span><span class="pg sh">5</span><span class="pg sh">6</span></div></div>
+      <p>这叫写时复制（Copy-On-Write）。子进程看到的永远是 fork 那一刻的样子。写得越多，复制的页越多，最坏情况内存接近翻倍。</p>
+    </div>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>什么时候自动拍照</b><span>Redis 7 的默认规则</span></div>
+<pre><code><span class="kw">save</span> 3600 1 300 100 60 10000
+<span class="cm"># 3600 秒内至少 1 次修改，或</span>
+<span class="cm"># 300 秒内至少 100 次修改，或</span>
+<span class="cm"># 60 秒内至少 10000 次修改，就 BGSAVE 一次</span>
+
+<span class="kw">save</span> <span class="cm">""</span>                          <span class="cm"># 关掉 RDB</span>
+<span class="kw">stop-writes-on-bgsave-error</span> yes   <span class="cm"># 拍照失败就拒绝写入</span></code></pre>
+    </div>
+    <div class="mini">
+      <b>RDB 的好处和代价</b>
+      <p><b>好处</b>：一个紧凑的文件，拷走就是一份完整备份；重启时直接加载，比重放命令快得多；平时写盘的活都在子进程，主进程几乎不受影响。</p>
+      <p><b>代价</b>：两次拍照之间的写入，宕机就丢，通常是几分钟；数据量大时 fork 会让主进程停顿，写多时写时复制会多占内存。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= AOF ================= -->
+<section id="aof">
+  <div>
+    <h2>AOF：每一笔都记账</h2>
+    <p class="lead">打开 <code>appendonly yes</code> 后，每条写命令执行完，会先放进内存里的缓冲区，再写进文件。写进文件还不等于落到磁盘：操作系统会先放在自己的缓存里，要等 fsync 才真正写到盘上。</p>
+  </div>
+  <div class="aflow" aria-label="AOF 写入流程">
+    <span class="af" data-role="mp">执行命令<small>SET stock 100</small></span><span class="fa" aria-hidden="true">→</span>
+    <span class="af" data-role="mp">追加到 aof_buf<small>Redis 进程内存</small></span><span class="fa" aria-hidden="true">→</span>
+    <span class="af" data-role="aof">write()<small>进了操作系统缓存，进程挂了也不丢</small></span><span class="fa" aria-hidden="true">→</span>
+    <span class="af" data-role="done">fsync()<small>真正落盘，断电也不丢</small></span>
+  </div>
+  <div class="pol">
+    <div class="po" data-role="bad"><h3>always<small>每条都刷盘</small></h3><div class="tk" aria-hidden="true" id="tkAlways"></div><dl><dt>断电丢</dt><dd>几乎不丢</dd><dt>性能</dt><dd>最慢，每次写都等磁盘</dd></dl></div>
+    <div class="po" data-role="done"><h3>everysec<small>默认，每秒刷一次</small></h3><div class="tk" aria-hidden="true" id="tkEvery"></div><dl><dt>断电丢</dt><dd>约 1 秒（极端情况 2 秒）</dd><dt>性能</dt><dd>好，后台线程去刷</dd></dl></div>
+    <div class="po" data-role="warn"><h3>no<small>交给操作系统</small></h3><div class="tk" aria-hidden="true" id="tkNo"></div><dl><dt>断电丢</dt><dd>Linux 通常最多约 30 秒</dd><dt>性能</dt><dd>最快</dd></dl></div>
+  </div>
+  <div class="note-box"><b>和 MySQL 对比</b><span>这和 MySQL 的 <code>innodb_flush_log_at_trx_commit</code> 是同一个取舍：设成 1 相当于 always，设成 2 相当于 everysec（进程挂了不丢，断电丢约 1 秒）（<a href="../database/db-pool-tx-perf.html">数据库第 01 篇</a>）。不同的是，MySQL 先写日志再改数据，Redis 先执行命令再写日志。</span></div>
+
+  <div>
+    <h3>账本越记越长：AOF 重写</h3>
+    <p class="tip">同一个 key 改了一万次，账本里就有一万行，其实只需要最后一行。文件比上次重写后大一倍、并且超过 64 MB 时（默认），Redis 会 fork 子进程重写一份最短的账本。</p>
+  </div>
+  <div class="rewrite">
+    <div class="rw"><b>重写前（9 条）</b><ol>
+      <li>SET stock 100</li><li>DECR stock</li><li>DECR stock</li><li>DECR stock</li>
+      <li>SADD tags a</li><li>SADD tags b</li><li>SREM tags a</li><li>SET tmp x</li><li>DEL tmp</li>
+    </ol></div>
+    <div class="rwa" aria-hidden="true">→<small>按内存现状重写</small></div>
+    <div class="rw"><b>重写后（2 条）</b><ol>
+      <li>SET stock 97</li><li>SADD tags b</li>
+    </ol><p class="tip">子进程不读旧文件，而是直接看内存里现在是什么，写出能还原它的最少命令。</p></div>
+  </div>
+</section>
+
+<!-- ================= LAB ================= -->
+<section id="lab">
+  <div>
+    <h2>宕机实验台：选一种配置，拖动宕机时刻</h2>
+    <p class="lead">Redis 每秒写入 100 次，跑了 5 分钟。选持久化方式和宕机方式，拖动红线，看重启后能恢复到哪一刻、丢了多少。</p>
+  </div>
+  <div class="lab">
+    <div class="lab-row"><span class="lbl">持久化：</span>
+      <div class="seg-btns" role="group" aria-label="持久化方式">
+        <button data-cfg="none" aria-pressed="false">不持久化</button>
+        <button data-cfg="rdb" aria-pressed="true">只开 RDB</button>
+        <button data-cfg="always" aria-pressed="false">AOF always</button>
+        <button data-cfg="everysec" aria-pressed="false">AOF everysec</button>
+        <button data-cfg="no" aria-pressed="false">AOF no</button>
+        <button data-cfg="mixed" aria-pressed="false">混合持久化</button>
+      </div>
+    </div>
+    <div class="lab-row"><span class="lbl">怎么宕机：</span>
+      <div class="seg-btns" role="group" aria-label="宕机方式">
+        <button data-crash="kill" aria-pressed="false">Redis 进程被 kill -9</button>
+        <button data-crash="power" aria-pressed="true">整台机器断电</button>
+      </div>
+    </div>
+    <div class="slider"><label for="crashT" class="lbl">宕机时刻：</label><input type="range" id="crashT" min="5" max="295" step="1" value="203"><output id="crashOut" for="crashT">第 203 秒</output></div>
+    <div class="chartbox"><svg id="labSvg" viewBox="0 0 640 178" role="img" aria-label="写入时间线：哪些写入在重启后还在，哪些丢了"></svg></div>
+    <div class="tiles" id="labTiles"></div>
+    <p class="verdict" id="labVerdict" data-role="bad"></p>
+    <p class="tip">示意模型：RDB 按 <code>save 60 1000</code> 规则大约每分钟拍一次，每次子进程写 8 秒；混合持久化在第 150 秒做过一次 AOF 重写；断电时 everysec 按丢 1 秒、no 按丢 30 秒算（最坏情况）。</p>
+  </div>
+</section>
+
+<!-- ================= MIXED ================= -->
+<section id="mixed">
+  <div>
+    <h2>混合持久化：照片打底，账本补尾巴</h2>
+    <p class="lead">AOF 重写时，子进程不再写一堆命令，而是直接写一张 RDB 照片当开头，之后的写命令再追加在后面。重启时先加载照片（快），再重放后面那一小段命令（少）。Redis 5 起默认开启（<code>aof-use-rdb-preamble yes</code>），前提是打开了 AOF。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>Redis 7 的 AOF 目录</b><span>多文件 AOF</span></div>
+<pre><code>appendonlydir/
+├── appendonly.aof.1.base.rdb   <span class="cm"># 上次重写时的照片（RDB 格式）</span>
+├── appendonly.aof.1.incr.aof   <span class="cm"># 之后追加的写命令</span>
+└── appendonly.aof.manifest     <span class="cm"># 清单：现在用的是哪几个文件</span></code></pre>
+    </div>
+    <div class="mini boot">
+      <b>重启时先读哪个</b>
+      <div class="bt"><span class="q">appendonly 开了吗？</span></div>
+      <div class="bt"><span class="af" data-role="aof">开了<small>读清单 → 加载 base 照片 → 重放 incr 命令</small></span></div>
+      <div class="bt"><span class="af" data-role="rdb">没开<small>有 dump.rdb 就加载它</small></span><span class="af" data-role="other">都没有<small>空库启动</small></span></div>
+      <p>开了 AOF 就只认 AOF，即使旁边还有一个更新的 dump.rdb 也不会读。</p>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">不持久化</th><th scope="col">只开 RDB</th><th scope="col">AOF everysec</th><th scope="col">AOF always</th><th scope="col">混合（推荐）</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">断电丢多少</th><td class="bad">全部</td><td class="bad">几分钟</td><td class="good">约 1 秒</td><td class="good">几乎不丢</td><td class="good">约 1 秒</td></tr>
+        <tr><th scope="row">进程被 kill 丢多少</th><td class="bad">全部</td><td class="bad">几分钟</td><td class="good">几乎不丢</td><td class="good">几乎不丢</td><td class="good">几乎不丢</td></tr>
+        <tr><th scope="row">文件大小</th><td>—</td><td class="good">小</td><td class="bad">大</td><td class="bad">大</td><td class="mid">中</td></tr>
+        <tr><th scope="row">重启速度</th><td class="good">最快（空的）</td><td class="good">快</td><td class="bad">慢，要逐条重放</td><td class="bad">慢</td><td class="good">快</td></tr>
+        <tr><th scope="row">平时开销</th><td class="good">没有</td><td class="mid">定期 fork</td><td class="mid">每秒刷盘 + 重写时 fork</td><td class="bad">每条写都等磁盘</td><td class="mid">同 everysec</td></tr>
+        <tr><th scope="row">适合</th><td>纯缓存，数据库里都有</td><td>能接受丢几分钟，要做备份</td><td>要少丢数据</td><td>极少用</td><td>大多数需要持久化的场景</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= CHOOSE ================= -->
+<section id="choose">
+  <div>
+    <h2>怎么选</h2>
+    <p class="lead">先问一句：Redis 里的数据丢了，能不能从别处补回来？</p>
+  </div>
+  <div class="choose">
+    <div class="ch" data-role="other"><small>纯缓存，数据库里都有</small><b>可以不持久化</b><span class="pick">save "" · appendonly no</span><p>重启后空着，按需从库里加载。注意预热和击穿（<a href="cache-problems.html">Redis 第 01 篇</a>）。想重启后快点热起来，可以只开 RDB。</p></div>
+    <div class="ch" data-role="rdb"><small>能接受丢几分钟</small><b>只开 RDB</b><span class="pick">save 规则 + 定期拷走 dump.rdb</span><p>比如排行榜、统计数据。RDB 文件拷到别的机器，就是一份备份。</p></div>
+    <div class="ch" data-role="done"><small>会话、计数、分布式锁</small><b>混合持久化</b><span class="pick">appendonly yes · everysec</span><p>最多丢一秒左右，重启也快。官方的建议也是 RDB 和 AOF 一起开。</p></div>
+    <div class="ch" data-role="bad"><small>一条都不能丢</small><b>别只靠 Redis</b><span class="pick">放进数据库</span><p>就算 always，主从复制也是异步的，主节点挂了切到从节点，没同步过去的写入一样会丢。</p></div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>一份常用配置</b><span>redis.conf</span></div>
+<pre><code><span class="kw">save</span> 3600 1 300 100 60 10000      <span class="cm"># RDB 规则（Redis 7 默认）</span>
+<span class="kw">appendonly</span> yes                     <span class="cm"># 默认 no，要手动打开</span>
+<span class="kw">appendfsync</span> everysec               <span class="cm"># always / everysec / no</span>
+<span class="kw">aof-use-rdb-preamble</span> yes           <span class="cm"># 混合持久化</span>
+<span class="kw">auto-aof-rewrite-percentage</span> 100    <span class="cm"># 比上次重写后大一倍就重写</span>
+<span class="kw">auto-aof-rewrite-min-size</span> 64mb     <span class="cm"># 小于这个大小不重写</span>
+<span class="kw">aof-load-truncated</span> yes             <span class="cm"># 文件末尾不完整时，截掉最后一条后照常启动</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>Redis 6 和 Redis 7</h2>
+    <p class="lead">Java 这边不用改：持久化是 Redis 服务端的事，Boot 2 还是 Boot 3、JDK 8 还是 17 都一样。版本差异在 Redis 自己身上。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Redis 6.x 及以前</h3><span class="jdk">单文件 AOF</span></div>
+      <ul>
+        <li>AOF 就是一个 <code>appendonly.aof</code> 文件</li>
+        <li>重写期间，主进程把新写入同时攒在一个重写缓冲区里，重写结束时再追加到新文件，多占内存，收尾时还会卡一下</li>
+        <li>默认 RDB 规则是 <code>save 900 1 / 300 10 / 60 10000</code></li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Redis 7.0 起</h3><span class="jdk">多文件 AOF</span></div>
+      <ul>
+        <li>AOF 拆成 base + incr + 清单，放在 <code>appendonlydir</code> 目录</li>
+        <li>重写时主进程直接开一个新的 incr 文件接着写，不再需要重写缓冲区</li>
+        <li>默认 RDB 规则改成 <code>save 3600 1 300 100 60 10000</code></li>
+        <li>可以给 AOF 打时间戳（<code>aof-timestamp-enabled</code>），配合 <code>redis-check-aof</code> 恢复到某个时间点</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note-box"><b>Java 能感受到的</b><span>一是 fork 时的延迟毛刺，客户端超时设得太短会偶尔报错；二是拍照失败后写入被拒，Spring Data Redis 会抛出带 <code>MISCONF</code> 字样的异常。</span></div>
+  <div class="same"><b>没变的：</b><span>RDB 靠 fork + 写时复制</span><span>AOF 三种刷盘策略</span><span>重写按内存现状来写</span><span>开了 AOF 就优先加载 AOF</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">持久化的坑，一半是 fork 带来的，一半是以为“开了就不会丢”。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk</b><p>后台拍照失败（磁盘满了、目录没权限），Redis 默认拒绝一切写入。先修磁盘，再看日志里 BGSAVE 失败的原因。</p></div>
+    <div class="pit" data-role="cp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fork"/></svg><b>每隔几分钟，请求就慢一下</b><p>fork 时主进程停住，实例越大停得越久。<code>INFO stats</code> 里的 <code>latest_fork_usec</code> 能看到上次停了多久。单个实例别太大，内存大就拆成集群。</p></div>
+    <div class="pit" data-role="cp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fork"/></svg><b>一拍照就内存不够，甚至被系统杀掉</b><p>写得多时，写时复制让内存涨很多。<code>maxmemory</code> 要留出余量；启动日志里关于 overcommit 的警告要处理，把 <code>vm.overcommit_memory</code> 设成 1，否则 fork 可能直接失败。</p></div>
+    <div class="pit" data-role="cp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>开了透明大页，fork 后延迟和内存都变差</b><p>透明大页让每次写时复制要复制 2 MB 而不是 4 KB。Redis 启动时检测到它开着会打警告，按提示关掉（新版本 Redis 也会尝试只对自己关掉）。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-main"/></svg><b>主节点重启，从节点的数据全没了</b><p>主节点没开持久化又设置了自动重启：它空着启动，从节点跟它同步，于是也被清空。主节点要么开持久化，要么别自动重启。</p></div>
+    <div class="pit" data-role="aof"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>重启要半小时</b><p>只开 AOF、从没重写过，要把几千万条命令重放一遍。打开自动重写和混合持久化。</p></div>
+    <div class="pit" data-role="aof"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-disk"/></svg><b>Asynchronous AOF fsync is taking too long (disk is busy?)</b><p>磁盘太慢，每秒一次的刷盘跟不上，Redis 开始拖慢写入。换更快的盘，或者别和其他重 IO 的程序共用一块盘。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-book"/></svg><b>误执行了 FLUSHALL</b><p>开了 AOF 且还没重写的话，马上停止 AOF 重写、停掉 Redis，把 AOF 末尾那条 FLUSHALL 删掉再启动，就能找回来。一旦重写了就没了，所以要靠 RDB 备份。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-disk"/></svg><b>断电后 AOF 文件坏了，Redis 起不来</b><p>末尾只写了半条命令时，默认 <code>aof-load-truncated yes</code> 会截掉它照常启动；坏在中间就要用 <code>redis-check-aof --fix</code> 修，修之前先备份。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-photo"/></svg><b>备份和数据放在同一块盘上</b><p>dump.rdb 只在本机，盘坏了一起没。定期把 RDB 拷到别的机器或对象存储，并且真的试着恢复一次。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7 为例，数字均为示意。相关：<a href="cache-problems.html">缓存穿透、击穿与雪崩</a> · <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../database/mysql-mvcc-lock.html">MySQL MVCC 与锁</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var DUR=300, RATE=100, SAVE_SEC=60, BG=8, RW_AT=150;
+function rdbSnaps(){
+  var out=[], last=0;
+  for(var t=1;t<=DUR;t++){
+    var busy=out.length && out[out.length-1].done>t;
+    if(!busy && t-last>SAVE_SEC){ out.push({fork:t, done:t+BG}); last=t+BG; }
+  }
+  return out;
+}
+function crashResult(cfg,crash,type){
+  var durable=0, why='', inflight=null;
+  if(cfg==='none'){ durable=0; why='没开持久化，重启后是一个空库。'; }
+  else if(cfg==='rdb'){
+    var snaps=rdbSnaps(), done=snaps.filter(function(s){ return s.done<=crash; });
+    inflight=snaps.filter(function(s){ return s.fork<=crash && s.done>crash; })[0]||null;
+    if(done.length){ durable=done[done.length-1].fork; why='最后一张拍完的照片是第 '+durable+' 秒 fork 时的内存，之后的写入只在内存里。'; }
+    else { durable=0; why='第一张照片还没拍完，磁盘上什么都没有。'; }
+    if(inflight) why+='第 '+inflight.fork+' 秒开始的那张照片还没写完（要到第 '+inflight.done+' 秒），临时文件作废，用不上。';
+    why+= type==='kill' ? '进程挂了和断电在这里一样：内存里的都没了。' : '';
+  }
+  else if(cfg==='always'){ durable=crash; why='每条写命令都等 fsync 落盘后才算完成，几乎不丢。代价是每次写都要等磁盘。'; }
+  else {
+    var label = cfg==='mixed' ? '混合持久化（AOF 部分按 everysec）' : 'AOF '+cfg;
+    if(type==='kill'){ durable=crash; why=label+'：写命令每轮都已经 write() 进了操作系统缓存，Redis 进程死了，操作系统还在，照样会落盘，几乎不丢。'; }
+    else if(cfg==='no'){ durable=Math.max(0,crash-30); why='AOF no：什么时候落盘由操作系统决定，Linux 一般最多攒 30 秒左右，断电时这些还在缓存里的都丢了。'; }
+    else { durable=Math.max(0,crash-1); why=label+'：后台每秒 fsync 一次，断电丢最后约 1 秒。'; }
+    if(cfg==='mixed') why+= crash>=RW_AT+BG ? '重启时先加载第 '+RW_AT+' 秒重写出来的 base 照片，再重放之后的命令，比纯 AOF 快。' : '这时还没做过重写，重启要重放全部命令；第 '+RW_AT+' 秒重写之后，开头就会变成一张照片。';
+  }
+  var lost=crash-durable;
+  return {durable:durable, lostSec:lost, lostWrites:lost*RATE, kept:durable*RATE, why:why, inflight:inflight};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function fmt(v){ return Math.round(v).toLocaleString('en-US'); }
+
+  /* fsync tick strips for the three policies */
+  function ticks(id,every){ var h=''; for(var s=0;s<=60;s+=every) h+='<i style="left:'+(s/60*100)+'%"></i>'; $(id).innerHTML=h; }
+  (function(){ var h=''; for(var i=0;i<=120;i++) h+='<i style="left:'+(i/120*100)+'%;opacity:.8"></i>'; $('tkAlways').innerHTML=h; })();
+  ticks('tkEvery',1); ticks('tkNo',30);
+
+  /* lab */
+  var cfg='rdb', type='power';
+  var NAMES={none:'不持久化',rdb:'只开 RDB',always:'AOF always',everysec:'AOF everysec',no:'AOF no',mixed:'混合持久化'};
+  var RESTART={none:['最快','空库，什么都不用读'],rdb:['快','直接加载照片'],always:['慢','逐条重放所有命令'],everysec:['慢','逐条重放所有命令'],no:['慢','逐条重放所有命令'],mixed:['快','加载照片 + 重放一小段']};
+  function render(){
+    var crash=parseInt($('crashT').value,10), r=crashResult(cfg,crash,type);
+    $('crashOut').textContent='第 '+crash+' 秒';
+    var W=640, L=86, R=14, X=function(t){ return L+t/DUR*(W-L-R); };
+    var h='';
+    // row 1: writes
+    h+='<text class="c-rl" x="0" y="34">写入</text>';
+    h+='<rect class="c-ok" x="'+X(0)+'" y="20" width="'+Math.max(0,X(r.durable)-X(0)).toFixed(1)+'" height="22" rx="3"/>';
+    h+='<rect class="c-lost" x="'+X(r.durable).toFixed(1)+'" y="20" width="'+Math.max(2,X(crash)-X(r.durable)).toFixed(1)+'" height="22"/>';
+    h+='<rect class="c-after" x="'+X(crash).toFixed(1)+'" y="20" width="'+(X(DUR)-X(crash)).toFixed(1)+'" height="22" rx="3"/>';
+    h+='<text class="c-lbs" x="'+((X(crash)+X(DUR))/2).toFixed(1)+'" y="35" text-anchor="middle">宕机后</text>';
+    // row 2: persistence events
+    h+='<text class="c-rl" x="0" y="84">落盘</text>';
+    if(cfg==='rdb'){
+      rdbSnaps().forEach(function(s){
+        var ok=s.done<=crash, cls=ok?'c-snap':'c-snapx';
+        if(s.fork>crash) return;
+        h+='<rect class="'+cls+'" x="'+X(s.fork).toFixed(1)+'" y="68" width="'+(X(Math.min(s.done,DUR))-X(s.fork)).toFixed(1)+'" height="24" rx="3"/>';
+        h+='<text class="c-lbs" x="'+X(s.fork).toFixed(1)+'" y="106">'+(ok?'拍照 '+s.fork+'s':'没拍完')+'</text>';
+      });
+    } else if(cfg==='always'){
+      h+='<rect class="c-band" x="'+X(0)+'" y="74" width="'+(X(crash)-X(0)).toFixed(1)+'" height="12" rx="3" opacity=".8"/><text class="c-lbs" x="'+X(0)+'" y="106">每条写入都 fsync</text>';
+    } else if(cfg==='everysec' || cfg==='mixed'){
+      for(var s=1;s<=crash;s++) h+='<line class="c-tick" x1="'+X(s).toFixed(1)+'" y1="72" x2="'+X(s).toFixed(1)+'" y2="88"/>';
+      h+='<text class="c-lbs" x="'+X(0)+'" y="106">每秒 fsync 一次</text>';
+      if(cfg==='mixed' && RW_AT<crash){ h+='<rect class="c-rw" x="'+X(RW_AT).toFixed(1)+'" y="66" width="'+(X(RW_AT+BG)-X(RW_AT)).toFixed(1)+'" height="28" rx="3"/><text class="c-lbs" x="'+X(RW_AT).toFixed(1)+'" y="118">AOF 重写：写出新的 base 照片</text>'; }
+    } else if(cfg==='no'){
+      for(var s2=30;s2<=crash;s2+=30) h+='<line class="c-tick" x1="'+X(s2).toFixed(1)+'" y1="70" x2="'+X(s2).toFixed(1)+'" y2="90" style="stroke-width:2"/>';
+      h+='<text class="c-lbs" x="'+X(0)+'" y="106">操作系统大约每 30 秒刷一次</text>';
+    } else {
+      h+='<text class="c-lbs" x="'+X(0)+'" y="84">什么都不写</text>';
+    }
+    // markers
+    h+='<line class="c-crash" x1="'+X(crash).toFixed(1)+'" y1="10" x2="'+X(crash).toFixed(1)+'" y2="132"/>';
+    var crashLeft = X(crash)>W-110;
+    h+='<text class="c-lb" x="'+(X(crash)+(crashLeft?-5:5)).toFixed(1)+'" y="14" text-anchor="'+(crashLeft?'end':'start')+'" style="fill:var(--bad)">宕机</text>';
+    if(r.durable<crash){
+      h+='<line class="c-dur" x1="'+X(r.durable).toFixed(1)+'" y1="14" x2="'+X(r.durable).toFixed(1)+'" y2="132"/>';
+      var dl = X(r.durable)<L+70;
+      h+='<text class="c-lb" x="'+(X(r.durable)+(dl?5:-5)).toFixed(1)+'" y="57" text-anchor="'+(dl?'start':'end')+'" style="fill:var(--good)">恢复到这里</text>';
+    }
+    // axis
+    for(var t=0;t<=DUR;t+=60){ h+='<line class="c-gl" x1="'+X(t)+'" y1="138" x2="'+X(t)+'" y2="142"/><text class="c-ax" x="'+X(t)+'" y="156" text-anchor="middle">'+t+' s</text>'; }
+    h+='<line class="c-gl" x1="'+X(0)+'" y1="138" x2="'+X(DUR)+'" y2="138"/>';
+    $('labSvg').innerHTML=h;
+    var rs=RESTART[cfg];
+    $('labTiles').innerHTML=
+      '<div class="tile" data-role="'+(r.lostSec>5?'bad':(r.lostSec>0?'warn':'done'))+'"><small>丢了多久的写入</small><b>'+(r.lostSec===0?'几乎没丢':r.lostSec+' 秒')+'</b><span>宕机前最后这段</span></div>'+
+      '<div class="tile" data-role="'+(r.lostWrites>500?'bad':(r.lostWrites>0?'warn':'done'))+'"><small>丢了多少次写入</small><b>'+fmt(r.lostWrites)+'</b><span>每秒 100 次</span></div>'+
+      '<div class="tile" data-role="rdb"><small>重启后恢复到</small><b>第 '+r.durable+' 秒</b><span>'+fmt(r.kept)+' 次写入还在</span></div>'+
+      '<div class="tile" data-role="other"><small>重启速度</small><b>'+rs[0]+'</b><span>'+rs[1]+'</span></div>';
+    var v=$('labVerdict');
+    v.setAttribute('data-role', r.lostSec>5?'bad':(r.lostSec>0?'warn':'done'));
+    v.textContent=NAMES[cfg]+' · '+(type==='kill'?'进程被 kill':'机器断电')+'：'+r.why;
+  }
+  document.querySelectorAll('[data-cfg]').forEach(function(b){ b.addEventListener('click',function(){
+    cfg=b.getAttribute('data-cfg');
+    document.querySelectorAll('[data-cfg]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+    render();
+  }); });
+  document.querySelectorAll('[data-crash]').forEach(function(b){ b.addEventListener('click',function(){
+    type=b.getAttribute('data-crash');
+    document.querySelectorAll('[data-crash]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+    render();
+  }); });
+  $('crashT').addEventListener('input',render);
+  render();
+})();
+</script>
+
+</body>
+</html>
