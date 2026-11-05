@@ -1,0 +1,1057 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>MySQL MVCC 与锁</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: readers look at a photo (snapshot), writers queue for the key (lock). Trx tags blue, undo brown, Read View purple, locks orange, visible green, blocked red. Two interactives: MVCC stepper and lock map. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --tg:#3150C4; --tg-tint:#E2E7FA;
+  --un:#8A5A2B; --un-tint:#F3E6D8;
+  --rv:#6A3FC0; --rv-tint:#ECE5FA;
+  --lk:#C2410C; --lk-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F4A651;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --tg:#90A4FF; --tg-tint:#1D2650;
+    --un:#D9A26B; --un-tint:#3A2A1A;
+    --rv:#B9A0FF; --rv-tint:#2A2148;
+    --lk:#FB923C; --lk-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F4A651;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --tg:#90A4FF; --tg-tint:#1D2650;
+  --un:#D9A26B; --un-tint:#3A2A1A;
+  --rv:#B9A0FF; --rv-tint:#2A2148;
+  --lk:#FB923C; --lk-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F4A651;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--tg)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--tg);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="tg"]{--rc:var(--tg);--rt:var(--tg-tint)}
+[data-role="un"]{--rc:var(--un);--rt:var(--un-tint)}
+[data-role="rv"]{--rc:var(--rv);--rt:var(--rv-tint)}
+[data-role="lk"]{--rc:var(--lk);--rt:var(--lk-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none} .ks-ink{stroke:var(--ink);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.mx{margin-top:20px;display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1fr) minmax(0,1fr);gap:8px;max-width:760px}
+.mx-h{display:flex;align-items:center;justify-content:center;text-align:center;font-size:14.5px;color:var(--muted);padding:6px}
+.mx-h b{color:var(--ink);font-size:17px;margin:0 2px}
+.mx-c{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;border:2px solid var(--rc);background:var(--rt);min-width:0}
+.mx-c svg{width:44px;height:44px;flex:none;color:var(--rc)}
+.mx-c div{display:flex;flex-direction:column;min-width:0}
+.mx-c b{font-size:17px;color:var(--rc)}
+.mx-c span{font-size:13px}
+.mx-note{font-size:13.5px;color:var(--muted);max-width:52em}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--lk)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:680px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t tr.hi > *{background:var(--rv-tint)}
+.seg-btns{display:inline-flex;border:1.5px solid var(--line-strong);border-radius:999px;overflow:hidden;flex:none}
+.seg-btns button{border:0;background:var(--card);padding:5px 14px;font-size:13.5px;cursor:pointer}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.btn{font-size:14.5px;padding:8px 14px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.pbtn{font-size:13px;padding:5px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer;text-align:left}
+.pbtn[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+
+/* ---------- row ---------- */
+.chain{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
+.ver{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:10px 14px;display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 180px}
+.ver small{font-size:12px;color:var(--rc);font-weight:700}
+.ver b{font-family:var(--font-display);font-weight:400;font-size:26px;line-height:1.1}
+.ver code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.ver.gone{border-style:dashed;background:transparent;color:var(--muted)}
+.ver.gone b{font-size:18px}
+.rp{align-self:center;font-family:var(--font-mono);font-size:11.5px;color:var(--un);display:flex;flex-direction:column;align-items:center;flex:none}
+.rp i{font-style:normal;font-size:22px;line-height:1}
+
+/* ---------- read view ---------- */
+.rvwrap{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:16px;align-items:start}
+.rvex{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.rvf{display:flex;flex-wrap:wrap;gap:6px}
+.rvf span{font-family:var(--font-mono);font-size:12px;padding:3px 9px;border-radius:7px;background:var(--rv-tint);border:1px solid var(--rv);overflow-wrap:anywhere}
+.ids{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:4px}
+.idc{border-radius:8px;border:2px solid var(--rc);background:var(--rt);text-align:center;padding:4px 0;display:flex;flex-direction:column;line-height:1.2}
+.idc b{font-family:var(--font-mono);font-size:12.5px}
+.idc span{font-size:11px;color:var(--rc);font-weight:700}
+.zone{border-radius:8px;padding:6px 8px;font-size:12px;background:var(--neutral-tint);min-width:0}
+.zone b{display:block;font-size:12.5px}
+.z1{grid-column:1 / span 2} .z2{grid-column:3 / span 5} .z3{grid-column:8 / span 2}
+.rules{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.rules li::marker{font-family:var(--font-mono);font-weight:700;color:var(--rv)}
+.when{display:flex;flex-direction:column;gap:10px}
+.wrow{display:grid;grid-template-columns:3em minmax(0,1fr);gap:4px 12px;align-items:center;padding:10px 12px;border-radius:14px;background:var(--card);border:1.5px solid var(--line)}
+.wrow > b{font-family:var(--font-mono);font-size:16px;color:var(--rv);grid-row:span 2}
+.evs{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ev{font-family:var(--font-mono);font-size:12px;padding:3px 8px;border-radius:7px;border:1.5px solid var(--line-strong);display:inline-flex;align-items:center;gap:5px}
+.ev svg{width:16px;height:16px;color:var(--rv)}
+.ev.cam{border-color:var(--rv);background:var(--rv-tint)}
+.ev.reuse{border-style:dashed;border-color:var(--rv)}
+.ev.oth{border-color:var(--tg);background:var(--tg-tint)}
+.wrow p{font-size:13.5px;color:var(--muted)}
+
+/* ---------- mvcc stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-top .lbl{font-size:13px;color:var(--muted)}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.cap{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--rv-tint);border:2px solid var(--rv);min-height:3.4em}
+.mvb{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,.8fr) minmax(0,.95fr);gap:14px;align-items:start}
+.lanes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;min-width:0}
+.lr{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:start}
+.lr > i{font-style:normal;font-family:var(--font-mono);font-size:11.5px;color:var(--muted);padding-top:5px;text-align:right}
+.lr.hd{font-size:13px;font-weight:700}
+.lr.hd span{padding:0 6px}
+.la,.lb{min-width:0;border-radius:8px;padding:4px 6px;font-family:var(--font-mono);font-size:11.5px;line-height:1.5;overflow-wrap:anywhere}
+.la:not(:empty){background:var(--tg-tint)}
+.lb:not(:empty){background:var(--un-tint)}
+.la em,.lb em{font-style:normal;font-family:var(--font-body);font-weight:700;color:var(--good);display:block;font-size:12.5px}
+.lr.fut .la,.lr.fut .lb{opacity:.38}
+.lr.cur .la:not(:empty),.lr.cur .lb:not(:empty){outline:2.5px solid var(--ink);outline-offset:0}
+.vchain{display:flex;flex-direction:column;gap:2px;min-width:0}
+.vc{border:2px solid var(--rc);border-radius:12px;background:var(--rt);padding:7px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.vc small{font-size:11.5px;color:var(--muted)}
+.vc b{font-size:16px}
+.vc code{font-size:11.5px}
+.vc .stt{font-size:11.5px;font-weight:700;color:var(--rc)}
+.lockb{display:inline-flex;align-items:center;gap:4px;align-self:flex-start;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--lk);color:var(--on-accent)}
+.wv{font-size:12px;font-weight:700;align-self:flex-start;padding:1px 8px;border-radius:999px}
+.wv.y{background:var(--good);color:var(--on-accent)}
+.wv.n{background:var(--bad);color:var(--on-accent)}
+.vchain .rp2{font-family:var(--font-mono);font-size:11px;color:var(--un);text-align:center}
+.viewc{display:flex;flex-direction:column;gap:8px;min-width:0}
+.vbox{border:2px solid var(--rv);border-radius:12px;padding:8px 10px;background:var(--rv-tint);display:flex;flex-direction:column;gap:4px}
+.vbox.none{border-style:dashed;background:transparent;color:var(--muted);font-size:13px}
+.vbox small{font-size:12px;font-weight:700;color:var(--rv)}
+.vbox dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;font-size:12px}
+.vbox dt{font-family:var(--font-mono);color:var(--muted)}
+.vbox dd{margin:0;font-family:var(--font-mono);font-weight:600;overflow-wrap:anywhere}
+.res{border-radius:12px;padding:8px 12px;background:var(--good-tint);border:2px solid var(--good);font-size:14px}
+.res b{font-family:var(--font-display);font-weight:400;font-size:30px;color:var(--good);line-height:1.1;margin-left:4px}
+.res.upd{background:var(--tg-tint);border-color:var(--tg)}
+.res.upd b{color:var(--tg)}
+.res.none{background:transparent;border:1.5px dashed var(--line-strong);color:var(--muted);font-size:13px}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* ---------- snapshot vs current ---------- */
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.k2{border:2px solid var(--rc);border-radius:16px;padding:14px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
+.k2 h3{color:var(--rc);font-size:21px}
+.k2 .sqls{display:flex;flex-wrap:wrap;gap:6px}
+.k2 .sqls code{font-size:12px;padding:3px 8px;border-radius:7px;background:var(--rt);border:1px solid var(--rc)}
+.k2 ul{margin:0;padding-left:1.1em;font-size:14px;display:flex;flex-direction:column;gap:4px}
+
+/* ---------- lock kinds ---------- */
+.kinds{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.kd{border:1.5px solid var(--line);border-radius:14px;background:var(--card);padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.kd b{font-size:15.5px}
+.kd code{font-size:11.5px;color:var(--muted)}
+.kd p{font-size:13.5px}
+.kd p.sm{font-size:12.5px;color:var(--muted)}
+.mini-line{display:flex;gap:2px;align-items:stretch;overflow:hidden}
+.ml-g{flex:1 1 0;height:28px;border-radius:5px;border:1.5px dashed var(--line-strong)}
+.ml-r{flex:none;width:30px;height:28px;border-radius:6px;border:2px solid var(--line-strong);display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;font-weight:700;background:var(--card)}
+.ml-g.on{border:2px solid var(--lk);background:repeating-linear-gradient(135deg,var(--lk) 0 2px,transparent 2px 7px),var(--lk-tint)}
+.ml-r.on{background:var(--lk);border-color:var(--lk);color:var(--on-accent)}
+.ml-g.ii{border:2px solid var(--tg);background:var(--tg-tint);display:grid;place-items:center;font-size:10.5px;font-weight:700;color:var(--tg)}
+.tbl-kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.compat{display:grid;grid-template-columns:auto repeat(2,minmax(0,1fr));gap:4px;font-size:13px;align-items:center}
+.compat > span{text-align:center;font-family:var(--font-mono);font-weight:700}
+.compat .y{background:var(--good-tint);color:var(--good);border-radius:6px;padding:2px 0}
+.compat .n{background:var(--bad-tint);color:var(--bad);border-radius:6px;padding:2px 0}
+.key-box{display:flex;gap:14px;align-items:center;padding:14px 16px;border-radius:16px;border:2px solid var(--lk);background:var(--lk-tint)}
+.key-box svg{width:52px;height:52px;flex:none;color:var(--lk)}
+.key-box p{font-size:15px}
+
+/* ---------- lock map ---------- */
+.lm{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.lm-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.lm-top .lbl{font-size:13px;color:var(--muted)}
+.qs{display:flex;flex-wrap:wrap;gap:6px}
+.qs .pbtn{font-family:var(--font-mono);font-size:12px}
+.lm-sql{font-family:var(--font-mono);font-size:13.5px;padding:8px 12px;border-radius:10px;background:var(--code-bg);border:1.5px solid var(--line);overflow-x:auto;white-space:nowrap}
+.lm-note{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--lk-tint);border:2px solid var(--lk)}
+.lm-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start}
+.lines{display:flex;flex-direction:column;gap:12px;min-width:0}
+.ixrow{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ixrow > span{font-size:13px;color:var(--muted)}
+.ixrow > span b{color:var(--ink);font-family:var(--font-mono)}
+.ixscroll{overflow-x:auto;padding-bottom:2px}
+.ixline{display:flex;gap:3px;align-items:stretch;width:max-content}
+.gp{width:50px;height:46px;border-radius:7px;border:1.5px dashed var(--line-strong);display:grid;place-items:center}
+.gp span{font-family:var(--font-mono);font-size:10px;color:var(--muted);background:var(--card);padding:0 3px;border-radius:4px;white-space:nowrap}
+.gp.on{border:2px solid var(--lk);background:repeating-linear-gradient(135deg,var(--lk) 0 2px,transparent 2px 8px),var(--lk-tint)}
+.gp.on span{color:var(--ink);font-weight:700}
+.rc2{width:46px;height:46px;border-radius:8px;border:2px solid var(--line-strong);background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.1}
+.rc2 b{font-family:var(--font-mono);font-size:14px}
+.rc2 small{font-size:9.5px;color:var(--muted)}
+.rc2.on{background:var(--lk);border-color:var(--lk);color:var(--on-accent)}
+.rc2.on small{color:var(--on-accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted);align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:16px;height:14px;border-radius:3px}
+.lg-r{background:var(--lk)}
+.lg-g{border:2px solid var(--lk);background:repeating-linear-gradient(135deg,var(--lk) 0 2px,transparent 2px 6px),var(--lk-tint)}
+.dl{margin:0;padding:10px 12px;border-radius:12px;background:var(--console-bg);color:var(--console-fg);font-family:var(--font-mono);font-size:11.5px;line-height:1.6;overflow-x:auto;white-space:pre}
+.dl .h{color:var(--console-dim)}
+.dl .x{color:var(--console-hi)}
+.tests{display:flex;flex-direction:column;gap:8px;min-width:0}
+.tests h4{margin:0;font-size:14px}
+.tgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.tc{border-radius:10px;padding:5px 9px;border:1.5px solid var(--rc);background:var(--rt);display:flex;flex-direction:column;min-width:0}
+.tc code{font-size:11px;overflow-wrap:anywhere}
+.tc b{font-size:12.5px;color:var(--rc)}
+.tc span{font-size:11px;color:var(--muted)}
+.tdata{font-size:12.5px;color:var(--muted)}
+.tdata code{color:var(--ink)}
+
+/* ---------- deadlock ---------- */
+.dls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.dlk{border:1.5px solid var(--line);border-radius:16px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.dlk h3{font-size:20px}
+.tt{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(0,1fr);gap:4px 6px;font-size:12px}
+.tt .h{font-weight:700;font-size:13px}
+.tt i{font-style:normal;font-family:var(--font-mono);color:var(--muted);font-size:11px;padding-top:4px}
+.tt .c{border-radius:8px;padding:4px 7px;min-width:0;overflow-wrap:anywhere}
+.tt .c code{font-size:11px}
+.tt .c em{font-style:normal;display:block;font-weight:700;font-size:11.5px}
+.tt .ok{background:var(--good-tint)} .tt .ok em{color:var(--good)}
+.tt .wt{background:var(--warn-tint)} .tt .wt em{color:var(--warn)}
+.tt .dd{background:var(--bad-tint)} .tt .dd em{color:var(--bad)}
+.dlk .fix{font-size:13.5px;padding:8px 10px;border-radius:10px;background:var(--good-tint)}
+.errs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kinds{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mvb{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .mvb .lanes{grid-column:1 / -1}
+}
+@media (max-width:900px){
+  .rvwrap,.two,.lm-grid,.dls,.errs,.eras,.tbl-kinds{grid-template-columns:1fr}
+  .minis{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .mvb{grid-template-columns:1fr}
+  .mx{grid-template-columns:minmax(0,.6fr) minmax(0,1fr) minmax(0,1fr)}
+  .mx-c{flex-direction:column;align-items:flex-start;gap:6px;padding:10px}
+  .mx-c svg{width:34px;height:34px}
+  .chain{flex-direction:column}
+  .ver{flex-basis:auto}
+  .rp{flex-direction:row;gap:6px}
+  .rp i{transform:rotate(90deg)}
+}
+@media (max-width:520px){
+  .kinds{grid-template-columns:1fr}
+  .ids{gap:2px}
+  .idc b{font-size:11px}
+  .zone{font-size:11px;padding:4px 5px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-tag" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M6 30L30 6h24a4 4 0 0 1 4 4v24L34 58a4 4 0 0 1-5.6 0L6 35.6a4 4 0 0 1 0-5.6z"/>
+    <circle class="k-paper" cx="46" cy="18" r="5"/>
+    <path class="ks-paper" stroke-width="3.5" stroke-linecap="round" d="M20 33l11 11M27 26l11 11"/>
+  </symbol>
+  <symbol id="i-stack" viewBox="0 0 64 64">
+    <rect fill="currentColor" opacity=".4" x="18" y="6" width="40" height="30" rx="4"/>
+    <rect fill="currentColor" opacity=".7" x="12" y="16" width="40" height="30" rx="4"/>
+    <rect fill="currentColor" x="6" y="26" width="40" height="32" rx="4"/>
+    <path class="ks-paper" stroke-width="3.5" stroke-linecap="round" d="M14 38h24M14 47h16"/>
+  </symbol>
+  <symbol id="i-cam" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M20 18l5-8h14l5 8z"/>
+    <rect fill="currentColor" x="4" y="17" width="56" height="39" rx="6"/>
+    <circle class="k-paper" cx="32" cy="37" r="12.5"/>
+    <circle fill="currentColor" cx="32" cy="37" r="7"/>
+    <rect class="k-gold" x="47" y="23" width="8" height="5" rx="1.5"/>
+  </symbol>
+  <symbol id="i-lock" viewBox="0 0 64 64">
+    <path class="ks-ink" stroke-width="5" d="M20 29v-8a12 12 0 0 1 24 0v8"/>
+    <rect fill="currentColor" x="10" y="27" width="44" height="33" rx="5"/>
+    <circle class="k-gold" cx="32" cy="42" r="5"/>
+    <rect class="k-gold" x="30" y="44" width="4" height="9" rx="1.5"/>
+  </symbol>
+  <symbol id="i-cycle" viewBox="0 0 64 64">
+    <path class="ks-cur" stroke-width="6" stroke-linecap="round" d="M12 32a20 20 0 0 1 34-14"/>
+    <path fill="currentColor" d="M54 8v20H34z"/>
+    <path class="ks-cur" stroke-width="6" stroke-linecap="round" d="M52 32a20 20 0 0 1-34 14"/>
+    <path fill="currentColor" d="M10 56V36h20z"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>数据库</span><span aria-hidden="true">/</span><span class="tb-here">MySQL MVCC 与锁</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">MYSQL 8 · INNODB · MVCC · READ VIEW · RECORD / GAP / NEXT-KEY LOCK</p>
+  <h1>读的人看照片，写的人排队拿钥匙</h1>
+  <p class="lead">InnoDB 让读和写尽量互不打扰。普通 SELECT 不加锁，看的是某一刻拍下的“照片”，这叫 MVCC（多版本并发控制）。改数据的人要先拿到这一行的锁，同一行同一时刻只能一个人改。</p>
+
+  <div class="mx" role="table" aria-label="读写之间要不要等">
+    <div class="mx-h" role="columnheader"></div>
+    <div class="mx-h" role="columnheader">后来一个<b>读</b></div>
+    <div class="mx-h" role="columnheader">后来一个<b>写</b></div>
+    <div class="mx-h" role="rowheader">先有人在<b>读</b></div>
+    <div class="mx-c" data-role="done" role="cell"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg><div><b>不用等</b><span>各看各的照片</span></div></div>
+    <div class="mx-c" data-role="done" role="cell"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg><div><b>不用等</b><span>读的人没加锁，照写</span></div></div>
+    <div class="mx-h" role="rowheader">先有人在<b>写</b></div>
+    <div class="mx-c" data-role="done" role="cell"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-stack"/></svg><div><b>不用等</b><span>去读改之前的旧版本</span></div></div>
+    <div class="mx-c" data-role="bad" role="cell"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><div><b>排队</b><span>等前一个提交或回滚</span></div></div>
+  </div>
+  <p class="mx-note">这里的“读”指普通 SELECT。<code>SELECT … FOR UPDATE</code>、<code>FOR SHARE</code>、UPDATE、DELETE、INSERT 都要拿锁，算“写”那一边。</p>
+
+  <div class="cast">
+    <div class="who" data-role="tg">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-tag"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">行标签<code>DB_TRX_ID · DB_ROLL_PTR</code></div>
+        <p>每一行背后藏着两样东西：<b>最后是哪个事务改的</b>，<b>旧版本在哪</b>。</p>
+        <span class="belong">每一行都有，SELECT 看不到</span>
+      </div>
+    </div>
+    <div class="who" data-role="un">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-stack"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">旧版本<code>undo log</code></div>
+        <p>改之前的样子都留着，<b>串成一条版本链</b>。</p>
+        <span class="belong">没人要看了才清掉</span>
+      </div>
+    </div>
+    <div class="who" data-role="rv">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">照片<code>Read View</code></div>
+        <p>记下拍照那一刻<b>哪些事务还没提交</b>，决定版本链上哪一个你看得见。</p>
+        <span class="belong">RC 每条 SELECT 拍一次，RR 只拍一次</span>
+      </div>
+    </div>
+    <div class="who" data-role="lk">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">锁<code>Record · Gap · Next-Key</code></div>
+        <p><b>加在索引上</b>，写和写之间靠它排队。</p>
+        <span class="belong">提交或回滚才放</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= ROW ================= -->
+<section id="row">
+  <div>
+    <h2>每一行背后：隐藏列和版本链</h2>
+    <p class="lead">InnoDB 改一行时，不会把旧值直接抹掉。旧值先写进 undo 日志，新行上记下“是我改的”和“旧版本在哪”。改几次，就串出一条链。</p>
+  </div>
+  <div class="chain">
+    <div class="ver" data-role="tg"><small>表里的这一行（最新）</small><b>balance = 40</b><code>DB_TRX_ID = 201</code></div>
+    <div class="rp" aria-hidden="true"><i>→</i>roll_ptr</div>
+    <div class="ver" data-role="un"><small>undo 里的旧版本</small><b>balance = 50</b><code>DB_TRX_ID = 200</code></div>
+    <div class="rp" aria-hidden="true"><i>→</i>roll_ptr</div>
+    <div class="ver" data-role="un"><small>undo 里更旧的版本</small><b>balance = 100</b><code>DB_TRX_ID = 90</code></div>
+    <div class="rp" aria-hidden="true"><i>→</i></div>
+    <div class="ver gone" data-role="other"><small>再往前</small><b>没人要看了</b><code>后台 purge 线程已经清掉</code></div>
+  </div>
+  <div class="minis">
+    <div class="mini"><b><code>DB_TRX_ID</code> · 6 字节</b><p>最后一次插入或修改这一行的事务 ID。事务 ID 只增不减，越大越晚。</p></div>
+    <div class="mini"><b><code>DB_ROLL_PTR</code> · 7 字节</b><p>回滚指针，指向 undo 日志里的上一个版本。回滚时用它恢复，MVCC 读旧版本时也顺着它找。</p></div>
+    <div class="mini"><b><code>DB_ROW_ID</code> · 6 字节</b><p>只有表没有主键、也没有非空唯一键时才有，InnoDB 用它自己造一个聚簇索引。</p></div>
+  </div>
+  <div class="note-box"><b>删除也一样</b><span>DELETE 不会马上把行删掉，只打一个删除标记。等后台的 purge 线程确认没有哪张照片还需要它，才真正删掉，undo 里的旧版本也是这样清的。</span></div>
+</section>
+
+<!-- ================= READ VIEW ================= -->
+<section id="view">
+  <div>
+    <h2>照片怎么决定你看得见哪个版本</h2>
+    <p class="lead">普通 SELECT 第一次执行时，InnoDB 给你拍一张照片（Read View）。照片上只记四个数，然后拿它去比版本链上每个版本的 DB_TRX_ID。</p>
+  </div>
+  <div class="rvwrap">
+    <div class="rvex">
+      <div class="rvf"><span>m_ids = [200, 203]</span><span>min_trx_id = 200</span><span>max_trx_id = 205</span><span>creator_trx_id = 0</span></div>
+      <div class="ids" aria-label="事务 198 到 206 的版本是否看得见">
+        <div class="idc" data-role="done"><b>198</b><span>看得见</span></div>
+        <div class="idc" data-role="done"><b>199</b><span>看得见</span></div>
+        <div class="idc" data-role="bad"><b>200</b><span>看不见</span></div>
+        <div class="idc" data-role="done"><b>201</b><span>看得见</span></div>
+        <div class="idc" data-role="done"><b>202</b><span>看得见</span></div>
+        <div class="idc" data-role="bad"><b>203</b><span>看不见</span></div>
+        <div class="idc" data-role="done"><b>204</b><span>看得见</span></div>
+        <div class="idc" data-role="bad"><b>205</b><span>看不见</span></div>
+        <div class="idc" data-role="bad"><b>206</b><span>看不见</span></div>
+        <div class="zone z1"><b>&lt; 200</b>拍照前就提交了</div>
+        <div class="zone z2"><b>200 ～ 204</b>查名单：在 m_ids 里的还没提交</div>
+        <div class="zone z3"><b>≥ 205</b>拍照后才开始</div>
+      </div>
+      <p class="tip"><code>m_ids</code>：拍照时还没提交的事务。<code>min_trx_id</code>：名单里最小的。<code>max_trx_id</code>：下一个要分配的事务 ID。<code>creator_trx_id</code>：自己的事务 ID，只读过、没改过数据时是 0。</p>
+    </div>
+    <div class="mini">
+      <b>拿一个版本的 DB_TRX_ID 去比</b>
+      <ol class="rules">
+        <li>等于自己的 ID：自己改的，<b>看得见</b></li>
+        <li>小于 min_trx_id：拍照前就提交了，<b>看得见</b></li>
+        <li>大于等于 max_trx_id：拍照后才开始，<b>看不见</b></li>
+        <li>在 m_ids 名单里：拍照时还没提交，<b>看不见</b>；不在名单里就<b>看得见</b></li>
+      </ol>
+      <p>看不见，就顺着 roll_ptr 找上一个版本，再比一次，直到找到看得见的那个。</p>
+    </div>
+  </div>
+  <div class="when">
+    <div class="wrow"><b>RC</b><div class="evs"><span class="ev">BEGIN</span><span class="ev cam"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg>SELECT 拍一张</span><span class="ev oth">别人提交了</span><span class="ev cam"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg>SELECT 再拍一张</span><span class="ev">COMMIT</span></div><p>读已提交：每条 SELECT 重新拍，所以能看到别人刚提交的数据。</p></div>
+    <div class="wrow"><b>RR</b><div class="evs"><span class="ev">BEGIN</span><span class="ev cam"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg>SELECT 拍一张</span><span class="ev oth">别人提交了</span><span class="ev reuse"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg>SELECT 用老照片</span><span class="ev">COMMIT</span></div><p>可重复读（MySQL 默认）：第一条 SELECT 拍的照片用到事务结束，同样的查询结果不变。</p></div>
+  </div>
+  <p class="tip">RR 的照片在第一条 SELECT 时才拍，不是在 BEGIN 时。想在开始时就拍，用 <code>START TRANSACTION WITH CONSISTENT SNAPSHOT</code>。</p>
+</section>
+
+<!-- ================= MVCC STEPPER ================= -->
+<section id="mvcc">
+  <div>
+    <h2>MVCC 实验台</h2>
+    <p class="lead">两个事务同时碰账户 1 的余额。一步步走，看版本链怎么长、照片怎么拍、A 每次读到什么。切换 RC 和 RR，对比第 4 步。</p>
+  </div>
+  <div class="stage" id="mv">
+    <div class="st-top">
+      <span class="lbl">隔离级别：</span>
+      <div class="seg-btns" role="group" aria-label="隔离级别">
+        <button id="lvRR" data-lv="RR" aria-pressed="true">RR（默认）</button>
+        <button id="lvRC" data-lv="RC" aria-pressed="false">RC</button>
+      </div>
+      <span class="st-pos" id="mvPos"></span>
+    </div>
+    <p class="cap" id="mvCap" aria-live="polite"></p>
+    <div class="mvb">
+      <ol class="lanes" id="mvLanes"></ol>
+      <div class="vchain" id="mvChain"></div>
+      <div class="viewc" id="mvView"></div>
+    </div>
+    <div class="ctrl">
+      <button class="btn" id="mvPrev">← 上一步</button>
+      <button class="btn primary" id="mvNext">下一步 →</button>
+      <button class="btn" id="mvAuto">▶ 自动播放</button>
+      <button class="btn" id="mvReset">从头来</button>
+    </div>
+    <div class="tbl-wrap">
+      <table class="t" id="mvSum"></table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SNAPSHOT vs CURRENT ================= -->
+<section id="cur">
+  <div>
+    <h2>快照读和当前读</h2>
+    <p class="lead">同一个事务里，有的语句看照片，有的语句看最新数据。实验台第 5 步的“读到 100，扣完却是 40”就是这么来的。</p>
+  </div>
+  <div class="two">
+    <div class="k2" data-role="rv">
+      <h3>快照读：看照片</h3>
+      <div class="sqls"><code>SELECT …</code></div>
+      <ul><li>按照片规则走版本链，可能读到旧版本</li><li>不加锁，不会被别人的锁挡住</li></ul>
+    </div>
+    <div class="k2" data-role="lk">
+      <h3>当前读：看最新，并加锁</h3>
+      <div class="sqls"><code>SELECT … FOR UPDATE</code><code>SELECT … FOR SHARE</code><code>UPDATE</code><code>DELETE</code><code>INSERT</code></div>
+      <ul><li>读最新提交的版本，不管照片</li><li>读到的行要加锁，有人锁着就排队</li></ul>
+    </div>
+  </div>
+  <div class="note-box"><b>PostgreSQL 不一样</b><span>同样的剧情在 PostgreSQL 的 REPEATABLE READ 下，A 的 UPDATE 会直接报错 <code>could not serialize access due to concurrent update</code>，要求应用重试；MySQL 则读最新值继续改。另外 PostgreSQL 把旧版本留在表里（靠 VACUUM 清），也没有间隙锁。</span></div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">隔离级别</th><th scope="col">普通 SELECT 看到什么</th><th scope="col">当前读加什么锁</th><th scope="col">幻读（多出来的行）</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">READ UNCOMMITTED</th><td>最新版本，连没提交的也看得到</td><td>只锁行</td><td>有</td></tr>
+        <tr><th scope="row">READ COMMITTED</th><td>每条 SELECT 新拍一张照片</td><td>只锁行，不锁间隙</td><td>有</td></tr>
+        <tr class="hi"><th scope="row">REPEATABLE READ（默认）</th><td>第一条 SELECT 拍的照片，用到事务结束</td><td>临键锁：锁行，也锁行前面的间隙</td><td>快照读看不到；当前读靠间隙锁挡住插入</td></tr>
+        <tr><th scope="row">SERIALIZABLE</th><td>关掉自动提交时，普通 SELECT 也变成 FOR SHARE，要加锁</td><td>同 RR</td><td>没有</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tip">RR 下也不是完全没有幻读：先快照读看到 3 行，别人插入并提交了 1 行，再用 UPDATE 改“所有行”，会改到 4 行，之后快照读也能看到这第 4 行（自己改过的，看得见）。Spring 里 <code>@Transactional(isolation = Isolation.READ_COMMITTED)</code> 只改这一个事务的级别，结束后 Spring 会把连接改回去（<a href="../spring/spring-aop-tx.html">Spring 第 02 篇</a>）。</p>
+</section>
+
+<!-- ================= LOCK KINDS ================= -->
+<section id="locks">
+  <div>
+    <h2>锁有哪几种</h2>
+    <p class="lead">行锁有四种，区别在于锁的是一条记录，还是两条记录之间的空隙。下面的小图里，方块是索引上的记录，虚线框是记录之间的间隙。</p>
+  </div>
+  <div class="key-box"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><p><b>InnoDB 的锁加在索引上，不是加在“行”上。</b>WHERE 条件用得上索引，就只锁扫到的那几条；用不上索引，就只能把主键索引从头扫到尾，扫到一条锁一条，RR 下连间隙一起锁，等于锁了整张表。</p></div>
+  <div class="kinds">
+    <div class="kd">
+      <b>记录锁</b><code>Record Lock · X,REC_NOT_GAP</code>
+      <div class="mini-line" aria-hidden="true"><span class="ml-g"></span><span class="ml-r">5</span><span class="ml-g"></span><span class="ml-r on">10</span><span class="ml-g"></span><span class="ml-r">15</span><span class="ml-g"></span></div>
+      <p>只锁住 10 这一条，别人不能改它、删它。</p>
+    </div>
+    <div class="kd">
+      <b>间隙锁</b><code>Gap Lock · X,GAP</code>
+      <div class="mini-line" aria-hidden="true"><span class="ml-g"></span><span class="ml-r">5</span><span class="ml-g"></span><span class="ml-r">10</span><span class="ml-g on"></span><span class="ml-r">15</span><span class="ml-g"></span></div>
+      <p>锁住 10 和 15 之间的空隙，<b>只挡插入</b>。间隙锁之间互不冲突，两个事务可以同时锁同一个间隙。</p>
+    </div>
+    <div class="kd">
+      <b>临键锁</b><code>Next-Key Lock · X</code>
+      <div class="mini-line" aria-hidden="true"><span class="ml-g"></span><span class="ml-r">5</span><span class="ml-g on"></span><span class="ml-r on">10</span><span class="ml-g"></span><span class="ml-r">15</span><span class="ml-g"></span></div>
+      <p>记录 + 它前面的间隙，写作 (5, 10]。RR 下当前读默认加的就是它。</p>
+    </div>
+    <div class="kd">
+      <b>插入意向锁</b><code>Insert Intention</code>
+      <div class="mini-line" aria-hidden="true"><span class="ml-g"></span><span class="ml-r">5</span><span class="ml-g"></span><span class="ml-r">10</span><span class="ml-g ii">12</span><span class="ml-r">15</span><span class="ml-g"></span></div>
+      <p>INSERT 前在间隙里打的招呼。碰上别人的间隙锁就得等；两个插入只要位置不同，互不影响。</p>
+    </div>
+  </div>
+  <div class="tbl-kinds">
+    <div class="mini">
+      <b>共享锁 S 和排他锁 X</b>
+      <div class="compat" role="table" aria-label="S 锁和 X 锁的兼容性">
+        <span></span><span>后来 S</span><span>后来 X</span>
+        <span>先有 S</span><span class="y">可以</span><span class="n">等</span>
+        <span>先有 X</span><span class="n">等</span><span class="n">等</span>
+      </div>
+      <p><code>FOR SHARE</code> 加 S，<code>FOR UPDATE</code>、UPDATE、DELETE 加 X。</p>
+    </div>
+    <div class="mini">
+      <b>意向锁 IS / IX（表级）</b>
+      <p>加行锁前，先在表上挂个牌子“表里有人锁了行”。它只是给要锁整张表的人（比如 <code>LOCK TABLES … WRITE</code>）看的，IX 和 IX 互不冲突，不会让行锁之间多排队。</p>
+    </div>
+    <div class="mini">
+      <b>元数据锁 MDL 和自增锁</b>
+      <p>增删改查会自动拿 MDL 读锁，用到事务结束；ALTER TABLE 要 MDL 写锁，得等前面所有事务结束。自增锁最多锁到语句结束，8.0 默认只是一瞬间的轻量锁。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LOCK MAP ================= -->
+<section id="map">
+  <div>
+    <h2>锁地图：一条语句锁了哪些地方</h2>
+    <p class="lead">选一条语句，看它在两棵索引上锁了哪些记录和间隙，再看另一个事务的插入和修改会不会被挡住。以 MySQL 8.0.18 之后为准，右边是 <code>performance_schema.data_locks</code> 里能查到的样子。</p>
+  </div>
+  <div class="lm" id="lm">
+    <p class="tdata">示例表：<code>t(id 主键, c 普通索引 idx_c, name 没有索引)</code>，五行数据 <code>(5,5,张三) (10,10,李四) (15,15,王五) (20,20,赵六) (25,25,孙七)</code></p>
+    <div class="lm-top">
+      <span class="lbl">隔离级别：</span>
+      <div class="seg-btns" role="group" aria-label="锁地图的隔离级别">
+        <button id="lmRR" data-lmlv="RR" aria-pressed="true">RR（默认）</button>
+        <button id="lmRC" data-lmlv="RC" aria-pressed="false">RC</button>
+      </div>
+    </div>
+    <div class="qs" role="group" aria-label="选一条语句" id="lmQs"></div>
+    <div class="lm-sql" id="lmSql"></div>
+    <p class="lm-note" id="lmNote"></p>
+    <div class="lm-grid">
+      <div class="lines">
+        <div class="ixrow"><span><b>PRIMARY</b>（主键 id）</span><div class="ixscroll"><div class="ixline" id="lnPk"></div></div></div>
+        <div class="ixrow"><span><b>idx_c</b>（普通索引 c）</span><div class="ixscroll"><div class="ixline" id="lnC"></div></div></div>
+        <div class="legend"><span><i class="lg-r"></i>记录被锁</span><span><i class="lg-g"></i>间隙被锁</span><span>两个挨着都锁 = 临键锁</span></div>
+      </div>
+      <pre class="dl" id="lmDl" aria-label="data_locks 查询结果"></pre>
+    </div>
+    <div class="tests">
+      <h4>另一个事务这时来做这些事：</h4>
+      <div class="tgrid" id="lmIns"></div>
+      <div class="tgrid" id="lmUpd"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DEADLOCK ================= -->
+<section id="dead">
+  <div>
+    <h2>等锁和死锁</h2>
+    <p class="lead">拿不到锁就等。两个事务互相等对方手里的锁，就是死锁：InnoDB 发现后立刻挑一个回滚，让另一个继续。</p>
+  </div>
+  <div class="dls">
+    <div class="dlk">
+      <h3>交叉加锁</h3>
+      <div class="tt">
+        <span></span><span class="h">事务 A</span><span class="h">事务 B</span>
+        <i>1</i><span class="c ok"><code>UPDATE … WHERE id = 1</code><em>拿到 1 的锁</em></span><span></span>
+        <i>2</i><span></span><span class="c ok"><code>UPDATE … WHERE id = 2</code><em>拿到 2 的锁</em></span>
+        <i>3</i><span class="c wt"><code>UPDATE … WHERE id = 2</code><em>等 B 放开 2</em></span><span></span>
+        <i>4</i><span></span><span class="c dd"><code>UPDATE … WHERE id = 1</code><em>等 A 放开 1：死锁，B 被回滚</em></span>
+      </div>
+      <p class="fix">解法：大家按同一个顺序加锁，比如批量更新前按主键排好序。</p>
+    </div>
+    <div class="dlk">
+      <h3>先查后插（RR 下很常见）</h3>
+      <div class="tt">
+        <span></span><span class="h">事务 A</span><span class="h">事务 B</span>
+        <i>1</i><span class="c ok"><code>SELECT … WHERE id = 12 FOR UPDATE</code><em>没这行，拿到间隙锁 (10,15)</em></span><span></span>
+        <i>2</i><span></span><span class="c ok"><code>SELECT … WHERE id = 12 FOR UPDATE</code><em>间隙锁不冲突，也拿到</em></span>
+        <i>3</i><span class="c wt"><code>INSERT … id = 12</code><em>被 B 的间隙锁挡住</em></span><span></span>
+        <i>4</i><span></span><span class="c dd"><code>INSERT … id = 12</code><em>被 A 的间隙锁挡住：死锁</em></span>
+      </div>
+      <p class="fix">解法：不要先查再插，直接 INSERT，靠唯一键冲突判断“已经有了”；或者这类业务用 RC。</p>
+    </div>
+  </div>
+  <div class="errs">
+    <div class="mini"><b>1213 · Deadlock found when trying to get lock; try restarting transaction</b><p>死锁，InnoDB 回滚改动行数少的那个事务。默认开着死锁检测（<code>innodb_deadlock_detect</code>），立刻就报。</p></div>
+    <div class="mini"><b>1205 · Lock wait timeout exceeded; try restarting transaction</b><p>不是死锁，只是等太久：默认等 50 秒（<code>innodb_lock_wait_timeout</code>）。默认只回滚这一条语句，事务还开着。</p></div>
+  </div>
+  <p class="tip">在 Spring 里，这两个错误都会变成 <code>PessimisticLockingFailureException</code> 的子类，可以统一捕获后重试整个事务。</p>
+  <div class="codebox">
+    <div class="code-bar"><b>现场怎么查</b><span>MySQL 8.0</span></div>
+<pre><code><span class="cm">-- 谁拿着什么锁</span>
+SELECT ENGINE_TRANSACTION_ID, INDEX_NAME, LOCK_TYPE, LOCK_MODE, LOCK_DATA
+FROM performance_schema.data_locks;
+
+<span class="cm">-- 谁在等谁，被谁挡住</span>
+SELECT * FROM sys.innodb_lock_waits;
+
+<span class="cm">-- 开着没提交的事务，最老的排前面</span>
+SELECT trx_id, trx_started, trx_mysql_thread_id FROM information_schema.innodb_trx ORDER BY trx_started;
+
+<span class="cm">-- 最近一次死锁的现场：看 LATEST DETECTED DEADLOCK 那一段</span>
+SHOW ENGINE INNODB STATUS;
+<span class="cm">-- 想把每次死锁都记进错误日志</span>
+SET GLOBAL innodb_print_all_deadlocks = ON;</code></pre>
+  </div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>MySQL 5.7 和 8.0</h2>
+    <p class="lead">MVCC 和锁的规则两边一样。变化在查看工具、新语法和 undo 的存放位置。JDK 8 还是 17 不影响这些，影响的是驱动。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>MySQL 5.7</h3><span class="jdk">Boot 2 常见</span></div>
+      <ul>
+        <li>看锁用 <code>information_schema.INNODB_LOCKS</code>，只显示有人在等的锁</li>
+        <li>加共享锁写 <code>LOCK IN SHARE MODE</code></li>
+        <li>undo 默认放在系统表空间 ibdata1，长事务把它撑大后不会缩回去</li>
+        <li><code>innodb_autoinc_lock_mode</code> 默认 1</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>MySQL 8.0</h3><span class="jdk">Boot 3 常见</span></div>
+      <ul>
+        <li>看锁改用 <code>performance_schema.data_locks</code>，持有的锁全看得到；老的 INNODB_LOCKS 删了</li>
+        <li>新增 <code>FOR SHARE</code>、<code>NOWAIT</code>、<code>SKIP LOCKED</code>，多个消费者抢任务时用 SKIP LOCKED 跳过别人锁着的行</li>
+        <li>undo 默认放在独立的 undo 表空间，可以自动截断</li>
+        <li><code>innodb_autoinc_lock_mode</code> 默认 2（binlog 默认改成 ROW 格式了）</li>
+        <li>8.0.18 起，范围查询顺带多锁一条范围外记录的情况，大部分修掉了</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note-box"><b>驱动</b><span>Boot 2 用 8.0 版驱动 <code>mysql:mysql-connector-java</code>，Boot 3 只认新坐标 <code>com.mysql:mysql-connector-j</code>。MySQL 8 把变量 <code>tx_isolation</code> 改名成 <code>transaction_isolation</code>，老的 5.1 驱动连 8.0 会报 <code>Unknown system variable 'tx_isolation'</code>。</span></div>
+  <div class="same"><b>没变的：</b><span>隐藏列 + undo 版本链</span><span>照片的四个数和判断规则</span><span>默认 RR</span><span>临键锁和间隙锁</span><span>死锁检测</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">锁的问题，多半是锁得太多、锁得太久，或者加锁顺序乱了。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="lk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>一条 UPDATE，整张表都改不动了</b><p>WHERE 里的列没有索引，RR 下扫到的每一行和间隙都锁上了。给条件列建索引，用 EXPLAIN 确认走了索引。</p></div>
+    <div class="pit" data-role="lk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>明明有索引，还是锁了全表</b><p>字符串列用数字去比，比如 <code>WHERE phone = 13800000000</code>，MySQL 要把每一行转成数字再比，索引用不上。参数类型要和列一致。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cycle"/></svg><b>“没有就插入”，高峰期一直报 1213</b><p>先 <code>FOR UPDATE</code> 查一条不存在的记录再插入，两个请求拿到同一个间隙锁，互相挡住对方的插入。直接 INSERT，靠唯一键判断。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cycle"/></svg><b>批量更新时偶尔死锁</b><p>两个事务按不同顺序更新同几行。更新前按主键排序，大家用同一个顺序加锁。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cycle"/></svg><b>很多请求同时插同一个唯一键，也会死锁</b><p>重复键冲突时，等着的事务会在那条记录上加 S 锁。第一个事务一回滚，后面几个都拿着 S 锁再要 X 锁，互相卡住。用 <code>INSERT … ON DUPLICATE KEY UPDATE</code> 或在应用层去重。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>Lock wait timeout exceeded（1205）</b><p>有事务拿着行锁很久不提交，多半是事务里调了外部接口。用 <code>sys.innodb_lock_waits</code> 找到挡路的那个（<a href="db-pool-tx-perf.html">数据库第 01 篇</a>讲了怎么缩短事务）。</p></div>
+    <div class="pit" data-role="tg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-tag"/></svg><b>两个人同时扣钱，有一笔没扣上</b><p>先 SELECT 读到 100，在 Java 里算出 90，再 <code>SET balance = 90</code>，把别人刚扣的覆盖掉了。改成 <code>SET balance = balance - 10 WHERE id = ? AND balance &gt;= 10</code> 并检查影响行数，或者先 <code>FOR UPDATE</code>，或者加 version 字段做乐观锁。</p></div>
+    <div class="pit" data-role="rv"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cam"/></svg><b>以为换成 RC 就没有锁了</b><p>RC 只是没有间隙锁，行锁一样有，两个人改同一行照样排队。RC 换来的是更少的锁冲突和死锁，代价是同一事务里两次读可能不一样。</p></div>
+    <div class="pit" data-role="un"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-stack"/></svg><b>库越用越慢，ibdata1 越来越大</b><p>有个事务开了几个小时没提交，它的照片还要看旧版本，purge 一直清不掉。<code>SHOW ENGINE INNODB STATUS</code> 里的 History list length 会越来越大。查 <code>innodb_trx</code> 找出它。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>加个字段，整张表的查询都卡住了</b><p>ALTER TABLE 在等一个没提交的事务放开 MDL，排在它后面的所有查询都显示 <code>Waiting for table metadata lock</code>。改表前先查长事务，并把 <code>lock_wait_timeout</code> 设短一点（默认一年）。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 MySQL 8.0 InnoDB 为准。相关：<a href="db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../spring/spring-aop-tx.html">Spring AOP 与事务</a> · <a href="../mybatis/mybatis-spring-tx.html">MyBatis 与 Spring 事务</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+function visible(v,id){
+  if(id===v.creator) return [true,'自己改的'];
+  if(id<v.min) return [true,'拍照前就提交了'];
+  if(id>=v.max) return [false,'拍照后才开始'];
+  if(v.m_ids.indexOf(id)>=0) return [false,'拍照时还没提交'];
+  return [true,'拍照时已经提交'];
+}
+function snap(s){
+  var ids=s.active.filter(function(x){return x!==s.ids.A;}).sort(function(a,b){return a-b;});
+  return {m_ids:ids, min:ids.length?ids[0]:s.next, max:s.next, creator:s.ids.A, at:s.step, creator0:s.ids.A};
+}
+function commitTx(s,who){
+  var id=s.ids[who];
+  s.active=s.active.filter(function(x){return x!==id;});
+  s.chain.forEach(function(v){ if(v.trx===id) v.done=true; });
+  if(s.lock===who) s.lock=null;
+}
+function doSelect(s,level){
+  if(level==='RC' || !s.view){ s.view=snap(s); s.fresh=true; } else s.fresh=false;
+  s.walk=[];
+  for(var i=0;i<s.chain.length;i++){
+    var v=s.chain[i], r=visible(s.view,v.trx);
+    s.walk.push({trx:v.trx, ok:r[0], why:r[1]});
+    if(r[0]){ s.res=v.val; break; }
+  }
+}
+function mvAt(level,pos){
+  var s={step:0,next:200,active:[],chain:[{trx:90,val:100,done:true}],lock:null,ids:{A:0,B:0},view:null,fresh:false,walk:null,res:null,cur:null};
+  for(var i=1;i<=pos;i++){
+    s.step=i; s.walk=null; s.res=null; s.cur=null; s.fresh=false;
+    if(level==='RC') s.view=null;
+    if(i===1){ s.ids.B=s.next++; s.active.push(s.ids.B); s.chain.unshift({trx:s.ids.B,val:50,done:false}); s.lock='B'; }
+    else if(i===2||i===4||i===6){ doSelect(s,level); }
+    else if(i===3){ commitTx(s,'B'); }
+    else if(i===5){
+      if(!s.ids.A){ s.ids.A=s.next++; s.active.push(s.ids.A); if(s.view) s.view.creator=s.ids.A; }
+      var latest=s.chain[0].val;
+      s.chain.unshift({trx:s.ids.A,val:latest-10,done:false}); s.lock='A'; s.cur={read:latest,wrote:latest-10};
+    }
+    else if(i===7){ commitTx(s,'A'); s.view=null; }
+  }
+  return s;
+}
+
+var VALS=[5,10,15,20,25];
+function gapOf(v){ var g=0; for(var i=0;i<VALS.length;i++) if(VALS[i]<v) g=i+1; return g; }
+function gapName(g){ return '('+(g===0?'−∞':VALS[g-1])+','+(g===VALS.length?'+∞':VALS[g])+')'; }
+function E(){ return {rec:[],gap:[]}; }
+var LCASES=[
+ {k:'a', label:'id = 10', sql:'SELECT * FROM t WHERE id = 10 FOR UPDATE;',
+  RR:{pk:{rec:[10],gap:[]}, c:E(), dl:[['PRIMARY','X,REC_NOT_GAP','10']], note:'主键是唯一的，等值查到了，就只锁这一条记录，不锁间隙。'},
+  RC:{pk:{rec:[10],gap:[]}, c:E(), dl:[['PRIMARY','X,REC_NOT_GAP','10']], note:'和 RR 一样，只锁这一条。'}},
+ {k:'b', label:'id = 12（不存在）', sql:'SELECT * FROM t WHERE id = 12 FOR UPDATE;',
+  RR:{pk:{rec:[],gap:[2]}, c:E(), dl:[['PRIMARY','X,GAP','15']], note:'12 不存在，锁住它所在的间隙 (10,15)，不让别人插入 11 到 14。15 这一行本身没锁，可以改。'},
+  RC:{pk:E(), c:E(), dl:[], note:'RC 没有间隙锁：查不到就什么都不锁，别人可以插入 12。'}},
+ {k:'c', label:'id > 20', sql:'SELECT * FROM t WHERE id > 20 FOR UPDATE;',
+  RR:{pk:{rec:[25],gap:[4,5]}, c:E(), dl:[['PRIMARY','X','25'],['PRIMARY','X','supremum pseudo-record']], note:'从 25 开始往后扫：25 加临键锁 (20,25]，最后一个间隙 (25,+∞) 也锁上，20 以后谁都插不进来。'},
+  RC:{pk:{rec:[25],gap:[]}, c:E(), dl:[['PRIMARY','X,REC_NOT_GAP','25']], note:'只锁满足条件的 25，后面照样能插入。'}},
+ {k:'d', label:'c = 10（普通索引）', sql:'SELECT * FROM t WHERE c = 10 FOR UPDATE;',
+  RR:{pk:{rec:[10],gap:[]}, c:{rec:[10],gap:[1,2]}, dl:[['idx_c','X','10, 10'],['idx_c','X,GAP','15, 15'],['PRIMARY','X,REC_NOT_GAP','10']], note:'普通索引不唯一，c = 10 可能有好几条，所以 10 两边的间隙 (5,10) 和 (10,15) 都锁上，防止别人再插一条 c = 10；再回主键锁住 id = 10 这一行。'},
+  RC:{pk:{rec:[10],gap:[]}, c:{rec:[10],gap:[]}, dl:[['idx_c','X,REC_NOT_GAP','10, 10'],['PRIMARY','X,REC_NOT_GAP','10']], note:'只锁 idx_c 上的 10 和主键上的 10，不锁间隙。'}},
+ {k:'e', label:'name = 王五（没有索引）', sql:"UPDATE t SET name = '老王' WHERE name = '王五';",
+  RR:{pk:{rec:[5,10,15,20,25],gap:[0,1,2,3,4,5]}, c:E(), dl:[['PRIMARY','X','5'],['PRIMARY','X','10'],['PRIMARY','X','15'],['PRIMARY','X','20'],['PRIMARY','X','25'],['PRIMARY','X','supremum pseudo-record']], note:'name 没有索引，只能把主键从头扫到尾，扫到的每一行、每个间隙都锁上，只想改一行，却锁了整张表。'},
+  RC:{pk:{rec:[15],gap:[]}, c:E(), dl:[['PRIMARY','X,REC_NOT_GAP','15']], note:'RC 下同样扫遍全表、逐行加锁，但不满足条件的行判断完就放掉，最后只剩 15。'}}
+];
+function testInsert(L,v){
+  var g=gapOf(v);
+  if(L.pk.gap.indexOf(g)>=0) return [false,'撞上主键间隙 '+gapName(g)];
+  if(L.c.gap.indexOf(g)>=0) return [false,'撞上 idx_c 间隙 '+gapName(g)];
+  return [true,'间隙 '+gapName(g)+' 没锁'];
+}
+function testUpdate(L,k){
+  return L.pk.rec.indexOf(k)>=0 ? [false,'主键记录 '+k+' 被锁'] : [true,'记录 '+k+' 没锁'];
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- MVCC stepper ---------- */
+  var STEPS=[null,
+    {who:'B', sql:['BEGIN;','UPDATE account SET balance = 50 WHERE id = 1;']},
+    {who:'A', sql:['BEGIN;','SELECT balance FROM account WHERE id = 1;']},
+    {who:'B', sql:['COMMIT;']},
+    {who:'A', sql:['SELECT balance FROM account WHERE id = 1;']},
+    {who:'A', sql:['UPDATE account SET balance = balance - 10 WHERE id = 1;']},
+    {who:'A', sql:['SELECT balance FROM account WHERE id = 1;']},
+    {who:'A', sql:['COMMIT;']}
+  ];
+  var LAST=7, lv='RR', pos=0, timer=null;
+  function caption(level,p){
+    switch(p){
+      case 0: return '账户 1 的余额是 100，是很早以前的事务 90 写进去的。事务 A 和事务 B 要同时碰这一行。';
+      case 1: return 'B 把余额改成 50，还没提交。B 第一次改数据，InnoDB 给它分配事务 ID 200；旧值 100 进了 undo，B 拿着这一行的写锁。';
+      case 2: return 'A 开始读。普通 SELECT 不加锁，B 的写锁挡不住它。A 拍下照片：200 在名单上（还没提交），200 写的 50 看不见，顺着链找到 100。';
+      case 3: return 'B 提交，写锁放开。50 这个版本现在算“已提交”了。';
+      case 4: return level==='RC'
+        ? 'RC：每条 SELECT 重新拍照。新照片里 200 已经提交了，50 看得见，A 读到 50。'
+        : 'RR：还用第 2 步那张老照片。那张照片里 200 没提交，所以还是读到 100。“可重复读”就是这么来的。';
+      case 5: return 'A 扣 10 块。UPDATE 是当前读：不看照片，读最新提交的 50，扣完写成 40。A 第一次改数据，这时才拿到事务 ID 201，也拿到写锁。'
+        + (level==='RR' ? ' 注意：A 刚才读到的是 100，扣完却是 40，不是 90。' : '');
+      case 6: return 'A 再读。最新版本是 A 自己（201）写的，自己改的永远看得见，读到 40。';
+      case 7: return 'A 提交。没有哪张照片还需要 50 和 100 这两个旧版本之后，后台 purge 线程会把它们清掉。';
+    }
+    return '';
+  }
+  function readsOf(level){
+    var out={};
+    [2,4,5,6].forEach(function(p){ var s=mvAt(level,p); out[p]= p===5 ? s.cur.read : s.res; });
+    return out;
+  }
+  var R={RR:readsOf('RR'), RC:readsOf('RC')};
+  function renderSum(){
+    var cols=[[2,'第 2 步 SELECT'],[4,'第 4 步 SELECT'],[5,'第 5 步 UPDATE 读到的'],[6,'第 6 步 SELECT']];
+    var h='<thead><tr><th scope="col">A 拿到的值</th>'+cols.map(function(c){return '<th scope="col">'+c[1]+'</th>';}).join('')+'</tr></thead><tbody>';
+    ['RR','RC'].forEach(function(l){
+      h+='<tr'+(l===lv?' class="hi"':'')+'><th scope="row">'+(l==='RR'?'RR（默认）':'RC')+'</th>'+cols.map(function(c){
+        var v=R[l][c[0]], diff=R.RR[c[0]]!==R.RC[c[0]];
+        return '<td>'+(diff?'<b>'+v+'</b>':v)+(c[0]===5?'（扣完写 '+(v-10)+'）':'')+'</td>';
+      }).join('')+'</tr>';
+    });
+    $('mvSum').innerHTML=h+'</tbody>';
+  }
+  function renderMV(){
+    var s=mvAt(lv,pos);
+    $('mvPos').textContent='第 '+pos+' / '+LAST+' 步';
+    $('mvCap').textContent=caption(lv,pos);
+    // lanes
+    var lh='<li class="lr hd"><i></i><span>事务 A</span><span>事务 B</span></li>';
+    for(var i=1;i<=LAST;i++){
+      var st=STEPS[i], txt=st.sql.map(esc).join('<br>'), ann='';
+      if(i<=pos){
+        if(i===2||i===4||i===6) ann='<em>→ 读到 '+R[lv][i]+'</em>';
+        if(i===5) ann='<em>→ 读最新 '+R[lv][5]+'，写成 '+(R[lv][5]-10)+'</em>';
+      }
+      var cls='lr'+(i===pos?' cur':'')+(i>pos?' fut':'');
+      lh+='<li class="'+cls+'"><i>'+i+'</i><div class="la">'+(st.who==='A'?txt+ann:'')+'</div><div class="lb">'+(st.who==='B'?txt:'')+'</div></li>';
+    }
+    $('mvLanes').innerHTML=lh;
+    // chain
+    var wk={}; (s.walk||[]).forEach(function(w){ wk[w.trx]=w; });
+    var ch='';
+    s.chain.forEach(function(v,idx){
+      if(idx>0) ch+='<div class="rp2">roll_ptr ↓</div>';
+      ch+='<div class="vc" data-role="'+(v.done?'done':'warn')+'"><small>'+(idx===0?'表里的这一行':'undo 里的旧版本')+'</small><b>balance = '+v.val+'</b><code>DB_TRX_ID = '+v.trx+'</code><span class="stt">'+(v.done?'已提交':'未提交')+'</span>';
+      if(idx===0 && s.lock) ch+='<span class="lockb">'+s.lock+' 拿着写锁</span>';
+      if(wk[v.trx]) ch+='<span class="wv '+(wk[v.trx].ok?'y':'n')+'">'+(wk[v.trx].ok?'看得见':'看不见')+'：'+wk[v.trx].why+'</span>';
+      ch+='</div>';
+    });
+    $('mvChain').innerHTML=ch;
+    // view + result
+    var vh='';
+    if(s.view){
+      var label = lv==='RC' ? '这条 SELECT 现拍的照片，用完就扔' : (s.view.at===pos && s.fresh ? '刚拍的照片' : '沿用第 '+s.view.at+' 步拍的照片');
+      var cr = s.view.creator ? (s.view.creator0!==s.view.creator ? '0 → '+s.view.creator+'（A 改了数据，拿到 ID）' : String(s.view.creator)) : '0（A 还没改过数据）';
+      vh+='<div class="vbox"><small>A 的 Read View · '+label+'</small><dl><dt>m_ids</dt><dd>['+s.view.m_ids.join(', ')+']</dd><dt>min_trx_id</dt><dd>'+s.view.min+'</dd><dt>max_trx_id</dt><dd>'+s.view.max+'</dd><dt>creator_trx_id</dt><dd>'+cr+'</dd></dl></div>';
+    } else {
+      var why = pos===LAST ? '事务结束，照片作废' : (lv==='RC' ? (pos<2?'还没拍照':'RC 的照片只活一条 SELECT，现在没有') : '还没拍照：RR 在第一条 SELECT 时才拍');
+      vh+='<div class="vbox none">A 的 Read View：'+why+'</div>';
+    }
+    if(s.res!==null) vh+='<div class="res">A 读到<b>'+s.res+'</b></div>';
+    else if(s.cur) vh+='<div class="res upd">UPDATE 读最新的 '+s.cur.read+'，写成<b>'+s.cur.wrote+'</b></div>';
+    else vh+='<div class="res none">这一步 A 没有读</div>';
+    $('mvView').innerHTML=vh;
+    $('mvPrev').disabled = pos===0;
+    $('mvNext').disabled = pos===LAST;
+    renderSum();
+  }
+  function stopAuto(){ if(timer){ clearInterval(timer); timer=null; } $('mvAuto').textContent='▶ 自动播放'; }
+  function go(p){ pos=Math.max(0,Math.min(LAST,p)); renderMV(); }
+  $('mvPrev').addEventListener('click', function(){ stopAuto(); go(pos-1); });
+  $('mvNext').addEventListener('click', function(){ stopAuto(); go(pos+1); });
+  $('mvReset').addEventListener('click', function(){ stopAuto(); go(0); });
+  $('mvAuto').addEventListener('click', function(){
+    if(timer){ stopAuto(); return; }
+    if(pos===LAST) go(0);
+    $('mvAuto').textContent='❚❚ 暂停';
+    timer=setInterval(function(){ if(pos>=LAST){ stopAuto(); return; } go(pos+1); }, 2400);
+  });
+  document.querySelectorAll('[data-lv]').forEach(function(b){ b.addEventListener('click', function(){
+    lv=b.getAttribute('data-lv');
+    document.querySelectorAll('[data-lv]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+    renderMV();
+  }); });
+  $('mv').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stopAuto(); go(pos+1); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stopAuto(); go(pos-1); e.preventDefault(); }
+  });
+  renderMV();
+
+  /* ---------- lock map ---------- */
+  var lmLv='RR', lmK='d', NAMES={5:'张三',10:'李四',15:'王五',20:'赵六',25:'孙七'};
+  $('lmQs').innerHTML=LCASES.map(function(c){ return '<button class="pbtn" data-q="'+c.k+'" aria-pressed="'+(c.k===lmK)+'">'+esc(c.label)+'</button>'; }).join('');
+  function line(ix, sub){
+    var h='';
+    for(var g=0; g<=VALS.length; g++){
+      h+='<div class="gp'+(ix.gap.indexOf(g)>=0?' on':'')+'"><span>'+gapName(g)+'</span></div>';
+      if(g<VALS.length){ var v=VALS[g]; h+='<div class="rc2'+(ix.rec.indexOf(v)>=0?' on':'')+'"><b>'+v+'</b><small>'+(sub?NAMES[v]:'id '+v)+'</small></div>'; }
+    }
+    return h;
+  }
+  function pad(t,n){ t=String(t); var w=0; for(var i=0;i<t.length;i++) w+= t.charCodeAt(i)>255?2:1; return t+new Array(Math.max(1,n-w+1)).join(' '); }
+  function renderLM(){
+    var C=LCASES.filter(function(c){return c.k===lmK;})[0], L=C[lmLv];
+    $('lmSql').textContent=C.sql;
+    $('lmNote').textContent=L.note;
+    $('lnPk').innerHTML=line(L.pk,true);
+    $('lnC').innerHTML=line(L.c,false);
+    var rows=[['INDEX_NAME','LOCK_TYPE','LOCK_MODE','LOCK_DATA'],['NULL','TABLE','IX','NULL']].concat(L.dl.map(function(d){return [d[0],'RECORD',d[1],d[2]];}));
+    $('lmDl').innerHTML=rows.map(function(r,i){
+      var t=esc(pad(r[0],11)+pad(r[1],10)+pad(r[2],15)+r[3]);
+      return i===0?'<span class="h">'+t+'</span>':(i===1?t:'<span class="x">'+t+'</span>');
+    }).join('\n');
+    $('lmIns').innerHTML=[3,7,12,17,22,30].map(function(v){
+      var r=testInsert(L,v);
+      return '<div class="tc" data-role="'+(r[0]?'done':'bad')+'"><code>INSERT id = '+v+', c = '+v+'</code><b>'+(r[0]?'马上成功':'等锁')+'</b><span>'+esc(r[1])+'</span></div>';
+    }).join('');
+    $('lmUpd').innerHTML=VALS.map(function(k){
+      var r=testUpdate(L,k);
+      return '<div class="tc" data-role="'+(r[0]?'done':'bad')+'"><code>UPDATE … WHERE id = '+k+'</code><b>'+(r[0]?'马上成功':'等锁')+'</b><span>'+esc(r[1])+'</span></div>';
+    }).join('');
+  }
+  document.querySelectorAll('[data-q]').forEach(function(b){ b.addEventListener('click', function(){
+    lmK=b.getAttribute('data-q');
+    document.querySelectorAll('[data-q]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+    renderLM();
+  }); });
+  document.querySelectorAll('[data-lmlv]').forEach(function(b){ b.addEventListener('click', function(){
+    lmLv=b.getAttribute('data-lmlv');
+    document.querySelectorAll('[data-lmlv]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+    renderLM();
+  }); });
+  renderLM();
+})();
+</script>
+
+</body>
+</html>
