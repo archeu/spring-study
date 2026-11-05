@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>MyBatis 缓存与 Caffeine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. A left-to-right strip from the app to the database: Caffeine (teal) → second-level (purple) → first-level (orange) → database (brown); the staging tray is amber. Anchors = the cache lab and the LRU vs W-TinyLFU simulator. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --cf:#0D7A69; --cf-tint:#DCF0EB;
+  --l2:#6A3FC0; --l2-tint:#ECE5FA;
+  --l1:#B85F0C; --l1-tint:#FBE9D5;
+  --db:#8A5A2B; --db-tint:#F3E6D8;
+  --ap:#3150C4; --ap-tint:#E2E7FA;
+  --stg:#9A6B00; --stg-tint:#FBF0CF;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --cf:#40C6B0; --cf-tint:#12352F;
+    --l2:#B9A0FF; --l2-tint:#2A2148;
+    --l1:#F4A651; --l1-tint:#3A2812;
+    --db:#D9A26B; --db-tint:#3A2A1A;
+    --ap:#90A4FF; --ap-tint:#1D2650;
+    --stg:#F2C94C; --stg-tint:#3A3212;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --cf:#40C6B0; --cf-tint:#12352F;
+  --l2:#B9A0FF; --l2-tint:#2A2148;
+  --l1:#F4A651; --l1-tint:#3A2812;
+  --db:#D9A26B; --db-tint:#3A2A1A;
+  --ap:#90A4FF; --ap-tint:#1D2650;
+  --stg:#F2C94C; --stg-tint:#3A3212;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--ap)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--ap);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="cf"]{--rc:var(--cf);--rt:var(--cf-tint)}
+[data-role="l2"]{--rc:var(--l2);--rt:var(--l2-tint)}
+[data-role="l1"]{--rc:var(--l1);--rt:var(--l1-tint)}
+[data-role="db"]{--rc:var(--db);--rt:var(--db-tint)}
+[data-role="ap"]{--rc:var(--ap);--rt:var(--ap-tint)}
+[data-role="stg"]{--rc:var(--stg);--rt:var(--stg-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)} .k-line{fill:var(--line-strong)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none} .ks-line{stroke:var(--line-strong);fill:none} .ks-ink{stroke:var(--ink);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.strip{margin-top:24px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:stretch}
+.lay{border:2px solid var(--rc);background:var(--rt);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.lay-h{display:flex;align-items:center;gap:8px}
+.lay-h svg{width:34px;height:34px;color:var(--rc);flex:none}
+.lay-h b{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--rc);line-height:1.1}
+.lay code{font-size:12px;overflow-wrap:anywhere}
+.lay p{font-size:13px}
+.lay .sc{align-self:flex-start;font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--rc);color:var(--on-accent)}
+.sarr{align-self:center;color:var(--line-strong);font-size:22px;line-height:1}
+.scale{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;font-size:13px;color:var(--muted);margin-top:4px}
+.scale .grad{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--cf),var(--l2),var(--l1),var(--db))}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--l2)} .kw{color:var(--l1)} .st-s{color:var(--cf)} .tg{color:var(--l2)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--l1-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:22px;line-height:1;text-align:center;align-self:center}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.facts{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.facts code{overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t thead th.c1{color:var(--l1)} .t thead th.c2{color:var(--l2)} .t thead th.c3{color:var(--cf)}
+.t tbody th{font-weight:500;white-space:nowrap;color:var(--muted)}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.ctl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,20px);font-weight:500;line-height:1.5;min-width:0;overflow-wrap:anywhere}
+.chip{display:inline-block;font-family:var(--font-mono);font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:6px;background:var(--rc);color:var(--on-accent);overflow-wrap:anywhere;animation:pop .3s ease}
+.chips{display:flex;flex-wrap:wrap;gap:5px;min-height:22px;align-items:center}
+.chips em{font-style:normal;font-size:12.5px;color:var(--muted)}
+@keyframes pop{from{transform:scale(.85);opacity:.2}to{transform:none;opacity:1}}
+
+/* ---------- l1 ---------- */
+.l1pic{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start}
+.sess{border:2px solid var(--ap);border-radius:18px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:10px;min-width:0}
+.sess-h{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--ap)}
+.lc{border:2px solid var(--l1);border-radius:14px;padding:10px 12px;background:var(--l1-tint);display:flex;flex-direction:column;gap:8px;min-width:0}
+.lc-h{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;font-size:13px}
+.lc-h b{color:var(--l1)}
+.kv-row{display:grid;grid-template-columns:minmax(0,1.4fr) auto minmax(0,1fr);gap:8px;align-items:center;font-size:12.5px}
+.ckey{display:flex;flex-wrap:wrap;gap:4px}
+.ckey span{font-family:var(--font-mono);font-size:11px;padding:1px 6px;border-radius:5px;background:var(--card);border:1px solid var(--line-strong);overflow-wrap:anywhere}
+.cval{font-family:var(--font-mono);font-size:11.5px;padding:3px 8px;border-radius:6px;background:var(--card);border:1px solid var(--l1);overflow-wrap:anywhere}
+.keyparts{display:flex;flex-direction:column;gap:6px}
+.kp{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:baseline;font-size:13.5px;padding:6px 10px;border-radius:10px;background:var(--card);border:1.5px solid var(--line)}
+.kp code{font-weight:600;color:var(--l1);overflow-wrap:anywhere}
+.clear{display:flex;flex-wrap:wrap;gap:8px}
+.clear span{font-size:13.5px;padding:4px 12px;border-radius:999px;border:1.5px dashed var(--l1);background:var(--card)}
+
+/* ---------- l2 ---------- */
+.l2grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.ring{border:2.5px solid var(--rc);background:var(--rt);border-radius:18px;padding:7px 10px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.ring > .rl{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--rc);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ring > .rl small{font-family:var(--font-body);font-weight:400;color:var(--muted);font-size:12px}
+.ring.opt{border-style:dashed;background:var(--card)}
+.ring .ring{border-radius:15px}
+.core{border-radius:12px;background:var(--l2);color:var(--on-accent);padding:10px;text-align:center;font-family:var(--font-mono);font-size:12.5px;font-weight:600}
+.core small{display:block;font-family:var(--font-body);font-weight:400;font-size:12px;opacity:.85}
+.stage3{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:center}
+.sbox{border:2px solid var(--rc);background:var(--rt);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.sbox b{font-size:15px}
+.sbox code{font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.sbox small{font-size:12.5px}
+.sarr2{display:flex;flex-direction:column;align-items:center;font-size:12px;color:var(--muted);text-align:center}
+.sarr2 b{font-size:22px;color:var(--line-strong);font-weight:400;line-height:1}
+
+/* ---------- lab ---------- */
+.lab{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.reqline{font-family:var(--font-mono);font-size:13px;padding:8px 12px;border-radius:10px;background:var(--console-bg);color:var(--console-fg);overflow-wrap:anywhere}
+.box{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:background .25s,border-color .25s}
+.box.hl{border-color:var(--rc);background:var(--rt)}
+.box h3{font-family:var(--font-body);font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.box h3 .st{font-weight:500;letter-spacing:0;color:var(--ink);padding:0 8px;border-radius:999px;background:var(--neutral-tint)}
+.row{display:grid;grid-template-columns:4.8em minmax(0,1fr);gap:8px;align-items:center;font-size:12.5px}
+.row > span{color:var(--muted)}
+.off{font-size:13px;color:var(--muted)}
+.flag{font-size:12px;font-weight:700;padding:2px 10px;border-radius:999px;background:var(--bad-tint);color:var(--bad);align-self:flex-start;border:1px dashed var(--bad)}
+.dbrows{display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);font-size:12px}
+.dbrows div{padding:3px 8px;border-radius:6px;background:var(--db-tint);overflow-wrap:anywhere}
+.dbq{display:flex;align-items:baseline;gap:8px;font-size:13px;color:var(--muted)}
+.dbq b{font-family:var(--font-display);font-weight:400;font-size:28px;color:var(--db);line-height:1;font-variant-numeric:tabular-nums}
+.res{display:flex;flex-direction:column;gap:6px;animation:pop .3s ease}
+.src{align-self:flex-start;font-size:12px;font-weight:700;padding:1px 10px;border-radius:999px;background:var(--rc);color:var(--on-accent)}
+.res code{font-size:12.5px;font-weight:600;overflow-wrap:anywhere}
+.res .log{font-family:var(--font-mono);font-size:11.5px;padding:6px 8px;border-radius:8px;background:var(--console-bg);color:var(--gold);overflow-wrap:anywhere}
+.sessgrid{display:grid;gap:12px}
+.sessgrid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+
+/* ---------- vs ---------- */
+.sim2{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.seq{display:flex;flex-wrap:wrap;gap:5px}
+.sq{display:grid;grid-template-rows:auto auto auto;justify-items:center;gap:2px;min-width:34px;padding:4px 4px 3px;border-radius:8px;border:1.5px solid var(--line);font-family:var(--font-mono);font-size:12.5px;font-weight:600;transition:background .2s,border-color .2s}
+.sq.cur{border-color:var(--ink);background:var(--neutral-tint)}
+.sq.fut{opacity:.45}
+.sq i{font-style:normal;font-size:10px;font-weight:700;line-height:1.2;padding:0 4px;border-radius:4px;min-height:12px}
+.sq i.h{background:var(--good);color:var(--on-accent)}
+.sq i.m{background:var(--neutral-tint);color:var(--muted)}
+.sqleg{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--muted)}
+.algos{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:16px;align-items:start}
+.alg{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.alg-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.alg-h h3{color:var(--rc)}
+.score{font-family:var(--font-display);font-size:30px;color:var(--rc);line-height:1;font-variant-numeric:tabular-nums}
+.score small{font-family:var(--font-body);font-size:13px;color:var(--muted)}
+.slots{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
+.slotgrp{display:flex;flex-direction:column;gap:4px}
+.slotgrp > small{font-size:12px;color:var(--muted)}
+.slotrow{display:flex;gap:6px}
+.slot{width:52px;height:46px;border-radius:10px;border:2px dashed var(--line-strong);display:grid;place-items:center;font-family:var(--font-mono);font-weight:700;font-size:14px;position:relative}
+.slot.full{border-style:solid;border-color:var(--rc);background:var(--rt)}
+.slot.hot{background:var(--rc);color:var(--on-accent)}
+.slot sup{position:absolute;top:2px;right:4px;font-size:9.5px;font-weight:600;opacity:.8}
+.lruhint{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);max-width:242px}
+.alg .ev{font-size:13.5px;min-height:3em}
+.freq{display:flex;flex-wrap:wrap;gap:4px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.freq span{padding:0 6px;border-radius:5px;background:var(--neutral-tint)}
+.freq span b{color:var(--ink)}
+.cfcode{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+
+/* ---------- choose ---------- */
+.choose{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.ch{border:2px solid var(--rc);border-radius:16px;padding:14px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
+.ch-h{display:flex;align-items:center;gap:10px}
+.ch-h svg{width:38px;height:38px;color:var(--rc);flex:none}
+.ch-h h3{color:var(--rc)}
+.ch .verdict{align-self:flex-start;font-size:12.5px;font-weight:700;padding:2px 10px;border-radius:999px;background:var(--rt)}
+.ch p{font-size:14px}
+.ch p.dim{color:var(--muted)}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .strip{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
+  .strip .sarr.mid{display:none}
+}
+@media (max-width:900px){
+  .l1pic,.l2grid,.lab,.algos,.cfcode,.eras{grid-template-columns:1fr}
+  .stage3{grid-template-columns:1fr}
+  .sarr2 b{transform:rotate(90deg)}
+  .choose{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .strip{grid-template-columns:1fr}
+  .strip .sarr{transform:rotate(90deg)}
+  .strip .sarr.mid{display:block}
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits,.minis{grid-template-columns:1fr}
+  .kv-row{grid-template-columns:1fr}
+  .kv-row .fa{transform:rotate(90deg)}
+}
+@media (max-width:600px){
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+  .sessgrid.two{grid-template-columns:1fr}
+  .slot{width:46px;height:42px}
+}
+@media (prefers-reduced-motion:reduce){
+  .chip,.res{animation:none}
+  .box,.cap,.sq{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-note" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="11" y="5" width="43" height="55" rx="4"/>
+    <rect class="k-ink" x="6" y="12" width="10" height="4" rx="2"/>
+    <rect class="k-ink" x="6" y="24" width="10" height="4" rx="2"/>
+    <rect class="k-ink" x="6" y="36" width="10" height="4" rx="2"/>
+    <rect class="k-ink" x="6" y="48" width="10" height="4" rx="2"/>
+    <rect class="k-paper" opacity=".85" x="21" y="14" width="25" height="3" rx="1.5"/>
+    <rect class="k-paper" opacity=".85" x="21" y="22" width="19" height="3" rx="1.5"/>
+    <rect class="k-paper" opacity=".85" x="21" y="30" width="22" height="3" rx="1.5"/>
+    <circle class="k-gold" cx="40" cy="47" r="7"/>
+  </symbol>
+  <symbol id="i-files" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="4" width="40" height="58" rx="3"/>
+    <rect class="k-paper" opacity=".22" x="16" y="9" width="32" height="15" rx="2"/>
+    <rect class="k-paper" opacity=".22" x="16" y="26.5" width="32" height="15" rx="2"/>
+    <rect class="k-paper" opacity=".22" x="16" y="44" width="32" height="15" rx="2"/>
+    <rect class="k-paper" x="27" y="14.5" width="10" height="4" rx="2"/>
+    <rect class="k-paper" x="27" y="32" width="10" height="4" rx="2"/>
+    <rect class="k-paper" x="27" y="49.5" width="10" height="4" rx="2"/>
+  </symbol>
+  <symbol id="i-tray" viewBox="0 0 64 64">
+    <rect class="k-paper" x="18" y="6" width="28" height="26" rx="2"/>
+    <rect class="k-line" x="22" y="12" width="20" height="3" rx="1.5"/>
+    <rect class="k-line" x="22" y="18" width="15" height="3" rx="1.5"/>
+    <path fill="currentColor" d="M6 34l8-14h6v14h24V20h6l8 14v22a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4z"/>
+    <path class="k-paper" opacity=".85" d="M11 37h13l3 6h10l3-6h13v16H11z"/>
+  </symbol>
+  <symbol id="i-cup" viewBox="0 0 64 64">
+    <path class="ks-line" stroke-width="3" stroke-linecap="round" d="M20 4c-3 4 3 6 0 10M30 4c-3 4 3 6 0 10M40 4c-3 4 3 6 0 10"/>
+    <path fill="currentColor" d="M6 20h42v18c0 11.5-9.4 21-21 21S6 49.5 6 38z"/>
+    <path class="ks-cur" stroke-width="6" d="M48 26h4a7 7 0 0 1 0 14h-5"/>
+    <rect class="k-paper" opacity=".35" x="12" y="25" width="6" height="20" rx="3"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 14v36c0 5 9.8 9 22 9s22-4 22-9V14z"/>
+    <ellipse fill="currentColor" cx="32" cy="14" rx="22" ry="9"/>
+    <ellipse class="k-paper" opacity=".3" cx="32" cy="14" rx="22" ry="9"/>
+    <path class="ks-paper" opacity=".6" stroke-width="2" d="M10 27c0 5 9.8 9 22 9s22-4 22-9M10 39c0 5 9.8 9 22 9s22-4 22-9"/>
+  </symbol>
+  <symbol id="i-key" viewBox="0 0 64 64">
+    <circle class="ks-cur" cx="19" cy="32" r="11" stroke-width="7"/>
+    <path fill="currentColor" d="M28 28h30v8h-5v9h-7v-9h-5v6h-7v-6h-6z"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>MyBatis</span><span aria-hidden="true">/</span><span class="tb-here">MyBatis 缓存与 Caffeine</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">MYBATIS · LOCAL CACHE · SECOND LEVEL CACHE · CAFFEINE</p>
+  <h1>三层缓存，离数据库越远越快，也越容易旧</h1>
+  <p class="lead">一次查询从左往右找，哪一层有就在哪一层停下。MyBatis 自带两层：一级缓存和二级缓存。Caffeine 是你在 Service 层自己加的一层，有时还挡在它们前面。</p>
+
+  <div class="strip">
+    <div class="lay" data-role="cf"><div class="lay-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cup"/></svg><b>Caffeine</b></div><code>@Cacheable · LoadingCache</code><p>放在 Service 层，命中了连 Mapper 都不调。</p><span class="sc">整个应用 · 你来管</span></div>
+    <span class="sarr" aria-hidden="true">→</span>
+    <div class="lay" data-role="l2"><div class="lay-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><b>二级缓存</b></div><code>&lt;cache/&gt; · 按 namespace</code><p>同一个 Mapper 的所有会话共用。</p><span class="sc">一个 Mapper · 默认关</span></div>
+    <span class="sarr mid" aria-hidden="true">→</span>
+    <div class="lay" data-role="l1"><div class="lay-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-note"/></svg><b>一级缓存</b></div><code>localCache · 按 SqlSession</code><p>会话里的小本子，会话一关就没了。</p><span class="sc">一次会话 · 默认开</span></div>
+    <span class="sarr" aria-hidden="true">→</span>
+    <div class="lay" data-role="db"><div class="lay-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>数据库</b></div><code>MySQL …</code><p>唯一可信的数据。前面几层都只是它的复印件。</p><span class="sc">真数据</span></div>
+  </div>
+  <div class="scale"><span>更快、范围更大、更容易旧</span><span class="grad" aria-hidden="true"></span><span>更慢、更准</span></div>
+
+  <div class="cast">
+    <div class="who" data-role="l1">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-note"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">小本子<code>PerpetualCache（一级）</code></div>
+        <p>每个 SqlSession 一本，<b>其实就是一个 HashMap</b>。</p>
+        <span class="belong">默认开，关不掉，只能缩小范围</span>
+      </div>
+    </div>
+    <div class="who" data-role="l2">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">公共柜子<code>Cache（二级）</code></div>
+        <p>每个 Mapper 一个，<b>所有会话共用</b>。默认 LRU，最多 1024 条。</p>
+        <span class="belong">要在 XML 里写 &lt;cache/&gt;</span>
+      </div>
+    </div>
+    <div class="who" data-role="stg">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-tray"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">暂存区<code>TransactionalCache</code></div>
+        <p>查到的结果先放这儿，<b>会话提交或关闭后</b>才搬进公共柜子。</p>
+        <span class="belong">每个会话一份，回滚就扔掉</span>
+      </div>
+    </div>
+    <div class="who" data-role="cf">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cup"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">Caffeine<code>本地缓存库</code></div>
+        <p>不属于 MyBatis。<b>按业务 key 缓存任何对象</b>，淘汰算法更聪明。</p>
+        <span class="belong">常和 Spring 的 @Cacheable 一起用</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= L1 ================= -->
+<section id="l1">
+  <div>
+    <h2>一级缓存：会话里的小本子</h2>
+    <p class="lead">同一个 SqlSession 里，同样的 SQL、同样的参数再查一次，就直接从小本子里拿，不碰数据库。</p>
+  </div>
+  <div class="l1pic">
+    <div class="sess">
+      <div class="sess-h">SqlSession #1 → Executor</div>
+      <div class="lc">
+        <div class="lc-h"><b>localCache（一级缓存）</b><span>key → 上次查到的结果</span></div>
+        <div class="kv-row">
+          <div class="ckey"><span>OrderMapper.selectById</span><span>0</span><span>2147483647</span><span>SELECT … WHERE id = ?</span><span>7</span><span>SqlSessionFactoryBean</span></div>
+          <span class="fa" aria-hidden="true">→</span>
+          <div class="cval">[Order{id=7, amount=99.00}]</div>
+        </div>
+      </div>
+      <p class="tip">返回的是本子里那个对象本身。你改了它的字段，同一个会话里后面再查，拿到的也是改过的。</p>
+    </div>
+    <div class="keyparts">
+      <b>key 由这六样拼成（CacheKey），一样都不能差：</b>
+      <div class="kp"><code>语句 id</code><span>com.shop.mapper.OrderMapper.selectById</span></div>
+      <div class="kp"><code>offset · limit</code><span>RowBounds，默认 0 和 2147483647</span></div>
+      <div class="kp"><code>SQL</code><span>拼好的最终 SQL，带问号</span></div>
+      <div class="kp"><code>参数值</code><span>每个问号对应的值，这里是 7</span></div>
+      <div class="kp"><code>环境 id</code><span>Spring 里默认是 SqlSessionFactoryBean</span></div>
+    </div>
+  </div>
+  <div>
+    <h3>什么时候整本清空</h3>
+    <div class="clear" style="margin-top:10px">
+      <span>本会话执行任何 insert / update / delete</span>
+      <span>commit</span>
+      <span>rollback</span>
+      <span>close</span>
+      <span>select 上写了 flushCache="true"</span>
+      <span>配了 localCacheScope=STATEMENT：每条语句执行完就清</span>
+    </div>
+  </div>
+  <div class="note-box"><b>在 Spring 里</b><span>没开事务时，每次 Mapper 调用都是一个新会话，用完就关，一级缓存基本用不上。开了事务，整个事务共用一个会话，一级缓存才会命中（<a href="mybatis-spring-tx.html">第 02 篇</a>）。</span></div>
+</section>
+
+<!-- ================= L2 ================= -->
+<section id="l2">
+  <div>
+    <h2>二级缓存：Mapper 的公共柜子</h2>
+    <p class="lead">打开以后，同一个 Mapper 的查询结果，所有会话都能共用。查询顺序是先二级、再一级、最后数据库。</p>
+  </div>
+  <div class="l2grid">
+    <div class="codebox">
+      <div class="code-bar"><code>OrderMapper.xml</code><span>写这一行就打开了</span></div>
+<pre><code><span class="tg">&lt;cache</span>
+  eviction=<span class="st-s">"LRU"</span>        <span class="cm">&lt;!-- 淘汰：LRU / FIFO / SOFT / WEAK，默认 LRU --&gt;</span>
+  size=<span class="st-s">"1024"</span>          <span class="cm">&lt;!-- 最多存多少条，默认 1024 --&gt;</span>
+  flushInterval=<span class="st-s">"60000"</span> <span class="cm">&lt;!-- 每隔多久整个清空，默认不清 --&gt;</span>
+  readOnly=<span class="st-s">"false"</span>      <span class="cm">&lt;!-- false：每次给一份副本，实体要能序列化 --&gt;</span>
+  blocking=<span class="st-s">"false"</span><span class="tg">/&gt;</span>     <span class="cm">&lt;!-- true：同一个 key 同时只放一个人去查库 --&gt;</span>
+
+<span class="cm">&lt;!-- 注解方式：在接口上写 @CacheNamespace --&gt;</span>
+<span class="cm">&lt;!-- 想和别的 Mapper 共用一个柜子：&lt;cache-ref namespace="…UserMapper"/&gt; --&gt;</span></code></pre>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+      <b>柜子本身也是一层层套出来的（从外到里）</b>
+      <div class="ring opt" data-role="l2"><div class="rl"><span>BlockingCache</span><small>blocking="true" 才有</small></div>
+        <div class="ring" data-role="l2"><div class="rl"><span>SynchronizedCache</span><small>加锁，线程安全</small></div>
+          <div class="ring" data-role="l2"><div class="rl"><span>LoggingCache</span><small>打印命中率</small></div>
+            <div class="ring" data-role="l2"><div class="rl"><span>SerializedCache</span><small>存取都序列化，readOnly=false 时</small></div>
+              <div class="ring opt" data-role="l2"><div class="rl"><span>ScheduledCache</span><small>配了 flushInterval 才有</small></div>
+                <div class="ring" data-role="l2"><div class="rl"><span>LruCache</span><small>满了淘汰最久没用的</small></div>
+                  <div class="core">PerpetualCache<small>最里面还是一个 HashMap</small></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h3>结果不是马上进柜子：先进暂存区</h3>
+    <p class="lead">否则一个还没提交、甚至最后会回滚的事务，就会把数据放进大家共用的柜子。</p>
+  </div>
+  <div class="stage3">
+    <div class="sbox" data-role="db"><b>查到的结果</b><code>delegate.query(…)</code><small>先照常放进一级缓存</small></div>
+    <div class="sarr2" aria-hidden="true"><b>→</b>先放这儿</div>
+    <div class="sbox" data-role="stg"><b>暂存区</b><code>TransactionalCache.entriesToAddOnCommit</code><small>每个会话一份，别的会话看不到</small></div>
+    <div class="sarr2" aria-hidden="true"><b>→</b>提交或关闭</div>
+    <div class="sbox" data-role="l2"><b>公共柜子</b><code>二级缓存</code><small>大家都能命中。回滚的话暂存区直接扔掉</small></div>
+  </div>
+  <div class="minis">
+    <div class="mini"><b>改数据时整个清空</b><p>本 Mapper 的 insert / update / delete 默认 <code>flushCache="true"</code>：先在暂存区记一笔“提交时清空”，提交时把整个柜子清掉。</p></div>
+    <div class="mini"><b>默认给副本</b><p><code>readOnly="false"</code> 时，存进去先序列化，取出来再反序列化，每次都是新对象。实体没实现 Serializable 就报错。</p></div>
+    <div class="mini"><b>只在本机内存里</b><p>两台机器各有各的柜子。底座可以用 <code>&lt;cache type="…"/&gt;</code> 换成 Redis，或者换成 Caffeine。</p></div>
+  </div>
+</section>
+
+<!-- ================= LAB ================= -->
+<section id="lab">
+  <div>
+    <h2>缓存实验台</h2>
+    <p class="lead">选一个剧情，一步一步看：每个会话的一级缓存和暂存区里有什么，公共柜子里有什么，数据库被查了几次，最后拿到的是不是新数据。</p>
+  </div>
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-a" data-scene="a" aria-pressed="true">一级缓存</button>
+    <button class="tab" id="sc-b" data-scene="b" aria-pressed="false">二级缓存怎么生效</button>
+    <button class="tab" id="sc-c" data-scene="c" aria-pressed="false">改数据会清柜子</button>
+    <button class="tab" id="sc-d" data-scene="d" aria-pressed="false">联表查询读到旧数据</button>
+    <button class="tab" id="sc-e" data-scene="e" aria-pressed="false">两台机器</button>
+  </div>
+  <div class="reqline" id="reqline">orderMapper.selectById(7)</div>
+  <div class="lab">
+    <div class="col">
+      <div class="sessgrid" id="sessgrid"></div>
+    </div>
+    <div class="col">
+      <div id="l2boxes" class="col"></div>
+      <div class="box" id="box-db" data-role="db"><h3>数据库</h3><div id="dbv"></div></div>
+      <div class="box" id="box-res" data-role="other"><h3>这一步拿到的</h3><div id="resv"></div></div>
+    </div>
+  </div>
+  <div class="cap" id="cap" data-role="ap" aria-live="polite">
+    <div class="cap-n" id="capN">1/5</div>
+    <div class="cap-who"><code id="capCall">selectById(7)</code></div>
+    <div class="cap-say" id="capSay"></div>
+  </div>
+  <div class="ctl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+</section>
+
+<!-- ================= VS ================= -->
+<section id="vs">
+  <div>
+    <h2>和 Caffeine 逐项比</h2>
+    <p class="lead">一级、二级缓存是 MyBatis 替你缓存“某条 SQL 的结果”；Caffeine 是你自己决定缓存什么、缓存多久、什么时候删。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col" class="c1">一级缓存</th><th scope="col" class="c2">二级缓存</th><th scope="col" class="c3">Caffeine</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">是什么</th><td>SqlSession 里的一个 HashMap</td><td>Mapper 级别的缓存，默认是 LRU 包着 HashMap</td><td>独立的本地缓存库</td></tr>
+        <tr><th scope="row">放在哪层</th><td>Executor 里面</td><td>Executor 外面那层 CachingExecutor</td><td>你的代码里，通常是 Service 方法上</td></tr>
+        <tr><th scope="row">缓存什么</th><td>某条 SQL 的结果列表</td><td>同左，按 Mapper 分开存</td><td>任何对象，比如组装好的 OrderVO</td></tr>
+        <tr><th scope="row">key</th><td>CacheKey：语句 + SQL + 参数 …</td><td>同左</td><td>你定，比如订单 id</td></tr>
+        <tr><th scope="row">默认</th><td>开</td><td>关，写 <code>&lt;cache/&gt;</code> 才开</td><td>要自己引依赖、自己配</td></tr>
+        <tr><th scope="row">谁能看到</th><td>只有这一个会话</td><td>这台机器上所有会话</td><td>这台机器上所有线程</td></tr>
+        <tr><th scope="row">满了怎么办</th><td>不会满，会话结束就扔</td><td>LRU（默认）、FIFO、SOFT、WEAK，默认 1024 条</td><td>W-TinyLFU，按条数或按权重限制</td></tr>
+        <tr><th scope="row">过期</th><td>无</td><td><code>flushInterval</code>：到点把整个柜子清空</td><td>每条单独过期：<code>expireAfterWrite</code>、<code>expireAfterAccess</code>；还能 <code>refreshAfterWrite</code> 在后台刷新</td></tr>
+        <tr><th scope="row">数据变了</th><td>本会话增删改就清空</td><td>本 Mapper 增删改就整个清空，别的 Mapper 改了不管</td><td>你自己删，精确到某个 key</td></tr>
+        <tr><th scope="row">拿到的对象</th><td>同一个引用</td><td>默认是反序列化出来的副本</td><td>同一个引用</td></tr>
+        <tr><th scope="row">热点 key 失效那一刻</th><td>不涉及</td><td><code>blocking="true"</code> 时按 key 加锁</td><td><code>get(key, loader)</code>：同一个 key 只加载一次，其他人等着</td></tr>
+        <tr><th scope="row">命中率</th><td>看不到</td><td>DEBUG 日志里打印</td><td><code>recordStats()</code>：命中率、加载耗时、淘汰数</td></tr>
+        <tr><th scope="row">多台机器</th><td>不涉及</td><td>各存各的，会不一致</td><td>也是各存各的，要靠短过期或消息通知删除</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sim2" id="sim2">
+    <h3>同样 4 个格子，LRU 和 W-TinyLFU 谁命中得多</h3>
+    <p class="tip">二级缓存默认用 LRU：满了就淘汰最久没用的。Caffeine 用 W-TinyLFU：新来的先进一个小窗口，想进主区，得比主区里要被淘汰的那个<b>用得更频繁</b>。下面这串访问里，A、B 是热点，中间夹着一串只来一次的 X。</p>
+    <div class="seq" id="seq"></div>
+    <div class="sqleg"><span>每个字母下面：上一行是 LRU，下一行是 W-TinyLFU；绿色是命中</span></div>
+    <div class="algos">
+      <div class="alg" data-role="l2">
+        <div class="alg-h"><h3>LRU</h3><span class="score" id="lruScore">0<small> / 0 命中</small></span></div>
+        <div class="slotgrp"><small>4 格，左边最久没用，右边最近用过</small><div class="slotrow" id="lruSlots"></div></div>
+        <p class="ev" id="lruEv"></p>
+      </div>
+      <div class="alg" data-role="cf">
+        <div class="alg-h"><h3>W-TinyLFU（简化版）</h3><span class="score" id="tlScore">0<small> / 0 命中</small></span></div>
+        <div class="slots">
+          <div class="slotgrp"><small>窗口 1 格</small><div class="slotrow" id="tlWin"></div></div>
+          <div class="slotgrp"><small>主区 3 格（左边最久没用）</small><div class="slotrow" id="tlMain"></div></div>
+        </div>
+        <div class="freq" id="tlFreq"></div>
+        <p class="ev" id="tlEv"></p>
+      </div>
+    </div>
+    <div class="ctl">
+      <button class="btn" id="sPrev">← 上一个</button>
+      <button class="btn primary" id="sNext">下一个 →</button>
+      <button class="btn" id="sPlay">自动播放</button>
+      <button class="btn" id="sReset">从头来</button>
+    </div>
+    <p class="tip">简化版：真实的 Caffeine 用 Count-Min Sketch 估算频次，会定期把频次减半，让过气的热点退场；主区还分成试用区和保护区；窗口默认只占总容量的 1%。这里为了看得清，窗口 1 格、主区 3 格、频次精确计数。</p>
+  </div>
+
+  <div class="cfcode">
+    <div class="codebox">
+      <div class="code-bar"><b>在 Spring Boot 里用</b><span>配合 @Cacheable</span></div>
+<pre><code><span class="cm"># application.yml（还要在启动类上加 @EnableCaching）</span>
+spring:
+  cache:
+    type: caffeine
+    cache-names: orders
+    caffeine:
+      spec: maximumSize=10000,expireAfterWrite=10m,recordStats
+
+<span class="an">@Cacheable</span>(cacheNames = <span class="st-s">"orders"</span>, key = <span class="st-s">"#id"</span>, sync = <span class="kw">true</span>)
+<span class="kw">public</span> OrderVO get(Long id) {          <span class="cm">// 命中就不调 Mapper</span>
+    <span class="kw">return</span> toVO(orderMapper.selectById(id));
+}
+
+<span class="an">@CacheEvict</span>(cacheNames = <span class="st-s">"orders"</span>, key = <span class="st-s">"#id"</span>)
+<span class="kw">public void</span> updateAmount(Long id, BigDecimal amount) {
+    orderMapper.updateAmount(id, amount);   <span class="cm">// 只删这一个 key</span>
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>直接用 Caffeine 的 API</b></div>
+<pre><code>LoadingCache&lt;Long, OrderVO&gt; cache = Caffeine.newBuilder()
+        .maximumSize(<span class="kw">10_000</span>)
+        .expireAfterWrite(<span class="kw">10</span>, TimeUnit.MINUTES)
+        .recordStats()
+        .build(id -&gt; toVO(orderMapper.selectById(id)));  <span class="cm">// 没命中时怎么加载</span>
+
+OrderVO vo = cache.get(<span class="kw">7L</span>);     <span class="cm">// 同一个 key 并发来，只加载一次</span>
+cache.invalidate(<span class="kw">7L</span>);           <span class="cm">// 数据改了就删掉</span>
+<span class="kw">double</span> rate = cache.stats().hitRate();</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CHOOSE ================= -->
+<section id="choose">
+  <div>
+    <h2>怎么选</h2>
+    <p class="lead">大多数项目的做法：一级缓存别管它，二级缓存关着，热点数据在 Service 层用 Caffeine 自己缓存。</p>
+  </div>
+  <div class="choose">
+    <div class="ch" data-role="l1">
+      <div class="ch-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-note"/></svg><h3>一级缓存</h3></div>
+      <span class="verdict">知道它在就行</span>
+      <p>关不掉，也不用关。只要记住：事务里重复查会命中，可能看不到别人刚改的数据。</p>
+      <p class="dim">一定要每次都查库：<code>local-cache-scope=statement</code>。</p>
+    </div>
+    <div class="ch" data-role="l2">
+      <div class="ch-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><h3>二级缓存</h3></div>
+      <span class="verdict">多数时候别开</span>
+      <p>只适合单机部署、读多写少、只查单张表、能容忍短暂旧数据的 Mapper。</p>
+      <p class="dim">一改就清整个 Mapper，联表和多机都会读到旧数据。</p>
+    </div>
+    <div class="ch" data-role="cf">
+      <div class="ch-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cup"/></svg><h3>Caffeine</h3></div>
+      <span class="verdict">热点数据用它</span>
+      <p>字典、配置、商品详情这类读多写少的数据，按业务 key 缓存，数据改了精确删除。</p>
+      <p class="dim">多台机器时配短过期，或者本地 Caffeine + Redis 做两级。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17</h2>
+    <p class="lead">MyBatis 的两层缓存在 3.5.x 里完全一样。差别在 Caffeine 的大版本。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>Caffeine 只能用 2.x，最后一个版本是 2.9.3，Boot 2.7 管理的就是它</li>
+        <li>缓存的值通常是普通 POJO，从 Caffeine 拿到的是同一个引用，别在外面改它</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>Caffeine 3.x，要求 JDK 11+，Boot 3 管理的就是 3.x</li>
+        <li>可以用 <code>record</code> 当缓存的值：天生不可变，Caffeine 返回同一个引用也不怕被改</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>一级缓存跟着会话走</span><span>二级缓存要写 &lt;cache/&gt;</span><span>暂存区提交后才写入</span><span>Spring Cache 的注解和配置</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">缓存的坑几乎都是同一种：数据已经变了，缓存还是旧的。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="l1"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-note"/></svg><b>同一个事务里，读不到别人刚提交的数据</b><p>一级缓存命中了，再加上 MySQL 默认的可重复读。真要读最新的，配 <code>local-cache-scope=statement</code>，或者把这次查询放到事务外。</p></div>
+    <div class="pit" data-role="l1"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-note"/></svg><b>改了查出来的对象，后面再查也变了</b><p>一级缓存和 Caffeine 都返回同一个引用。要改就先复制一份，或者缓存不可变对象。</p></div>
+    <div class="pit" data-role="l2"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><b>CacheException: Error serializing object … NotSerializableException</b><p>开了二级缓存，默认要序列化，实体没实现 <code>Serializable</code>。给实体实现它，或者设 <code>readOnly="true"</code>（之后拿到的是同一个引用）。</p></div>
+    <div class="pit" data-role="l2"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><b>联表查询的二级缓存，读到旧数据</b><p>结果缓存在 OrderMapper 名下，用户表是 UserMapper 改的，清不到这边。用 <code>&lt;cache-ref&gt;</code> 共用一个柜子，或者这条查询 <code>useCache="false"</code>。</p></div>
+    <div class="pit" data-role="l2"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-files"/></svg><b>集群部署，二级缓存各机器不一致</b><p>柜子在各自的 JVM 里。要么关掉，要么换成共享的 Redis，要么设 <code>flushInterval</code> 只容忍几秒。</p></div>
+    <div class="pit" data-role="stg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-tray"/></svg><b>同一个事务里查两次，二级缓存没命中</b><p>正常现象：结果还在暂存区，事务提交后才进柜子。第二次其实是一级缓存命中的。</p></div>
+    <div class="pit" data-role="cf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cup"/></svg><b>@Cacheable 不生效</b><p>没加 <code>@EnableCaching</code>，或者同一个类里自己调自己，没经过代理。和事务注解一样的原因（<a href="../spring/spring-aop-tx.html">Spring 第 02 篇</a>）。</p></div>
+    <div class="pit" data-role="cf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cup"/></svg><b>热点 key 过期那一刻，数据库被打满</b><p>几百个请求同时没命中，同时查库。用 <code>@Cacheable(sync = true)</code> 或 <code>LoadingCache.get(key)</code>，同一个 key 只放一个去查。</p></div>
+    <div class="pit" data-role="cf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cup"/></svg><b>先删了缓存，事务还没提交，旧值又被读回去了</b><p>删除早于提交，另一个线程趁这个空档从库里读到旧值放回缓存。改成提交之后再删，比如用 <code>TransactionAwareCacheManagerProxy</code> 包一下 CacheManager。</p></div>
+    <div class="pit" data-role="cf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-key"/></svg><b>Caffeine 只设了 maximumSize，数据一直不更新</b><p>没设过期，只要不被挤掉就一直是旧的。至少配一个 <code>expireAfterWrite</code> 兜底。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 MyBatis 3.5、Caffeine 2.9 / 3.x、Spring Boot 2 / 3 为例。相关：<a href="mybatis-flow.html">MyBatis 执行流程</a> · <a href="mybatis-spring-tx.html">MyBatis 与 Spring 事务</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ================= cache lab ================= */
+  function S(n,st,c1,stg){ return {n:n,st:st,c1:c1||[],stg:stg}; }
+  function C(n,on,items,flag){ return {n:n,on:on,items:items||[],flag:flag||''}; }
+  var R99='t_order · id=7 · amount=99.00', R88='t_order · id=7 · amount=88.00';
+  var SC={
+    a:{init:{sess:[S('会话 1 · 在事务里','开着',[],null)], l2:[C('OrderMapper 二级缓存',false)], rows:[R99], q:0}, steps:[
+      {call:'orderMapper.selectById(7)', hl:'db', sess:[S('会话 1 · 在事务里','开着',['selectById · 7 → 99.00'],null)], q:1, res:{src:'db',t:'Order{id=7, amount=99.00}'}, say:'没开二级缓存，直接看一级缓存：空的。查数据库，结果记进会话 1 的小本子。'},
+      {call:'orderMapper.selectById(7)', hl:'sess', res:{src:'l1',t:'Order{id=7, amount=99.00}，和上次是同一个对象'}, say:'同一个会话，同样的 SQL 和参数，CacheKey 一样，一级缓存命中。数据库查询次数还是 1。'},
+      {call:'orderMapper.updateAmount(7, 88.00)', hl:'sess', sess:[S('会话 1 · 在事务里','开着',[],null)], rows:[R88+'（未提交）'], q:2, res:{src:'db',t:'更新了 1 行'}, say:'任何增删改，执行前先把本会话的小本子整本清空。'},
+      {call:'orderMapper.selectById(7)', hl:'db', sess:[S('会话 1 · 在事务里','开着',['selectById · 7 → 88.00'],null)], q:3, res:{src:'db',t:'Order{id=7, amount=88.00}'}, say:'本子空了，重新查库。同一个连接，能看到自己还没提交的修改。'},
+      {call:'事务提交', hl:'sess', kind:'done', sess:[S('会话 1 · 在事务里','已提交并关闭',[],null)], rows:[R88], say:'提交时清空一级缓存，会话随后关闭。一级缓存的寿命，就是这一个会话。'}
+    ]},
+    b:{init:{sess:[S('会话 1','开着',[],[]),S('会话 2','开着',[],[])], l2:[C('OrderMapper 二级缓存',true)], rows:[R99], q:0}, steps:[
+      {call:'会话 1：selectById(7)', hl:'db', sess:[S('会话 1','开着',['selectById · 7'],['selectById · 7 → 99.00']),S('会话 2','开着',[],[])], q:1, res:{src:'db',t:'Order{id=7, amount=99.00}'}, say:'先查二级缓存：空。再查会话 1 的一级缓存：空。查数据库。结果放进一级缓存，同时放进会话 1 的暂存区，等提交。'},
+      {call:'会话 2：selectById(7)', hl:'db', sess:[S('会话 1','开着',['selectById · 7'],['selectById · 7 → 99.00']),S('会话 2','开着',['selectById · 7'],['selectById · 7 → 99.00'])], q:2, res:{src:'db',t:'Order{id=7, amount=99.00}'}, say:'会话 1 还没提交，结果还在它自己的暂存区里，别人看不到。会话 2 只好也查一次数据库。'},
+      {call:'会话 1：close', hl:'l2', sess:[S('会话 1','已关闭',[],[]),S('会话 2','开着',['selectById · 7'],['selectById · 7 → 99.00'])], l2:[C('OrderMapper 二级缓存',true,['selectById · 7 → 99.00'])], say:'会话 1 关闭，没改过数据的会话关闭也算提交：暂存区里的结果搬进公共柜子，大家都能用了。'},
+      {call:'会话 2：selectById(7)', hl:'l2', kind:'done', res:{src:'l2',t:'Order{id=7, amount=99.00}，反序列化出来的副本',log:'Cache Hit Ratio [com.shop.mapper.OrderMapper]: 0.3333333333333333'}, say:'先查的是二级缓存，命中了，连会话 2 自己的一级缓存都没轮到。这是第 3 次查柜子、第 1 次命中，日志打出命中率 0.33。'}
+    ]},
+    c:{init:{sess:[S('会话 1','开着',[],[])], l2:[C('OrderMapper 二级缓存',true,['selectById · 7 → 99.00'])], rows:[R99], q:0}, steps:[
+      {call:'会话 1：updateAmount(7, 88.00)', hl:'l2', l2:[C('OrderMapper 二级缓存',true,['selectById · 7 → 99.00'],'会话 1 记了一笔：提交时清空')], rows:[R88+'（未提交）'], q:1, res:{src:'db',t:'更新了 1 行'}, say:'update 默认 flushCache="true"。柜子不会马上清，只在会话 1 的暂存区记一笔“提交时清空”。一级缓存马上清。'},
+      {call:'会话 1：selectById(7)', hl:'db', sess:[S('会话 1','开着',['selectById · 7'],['selectById · 7 → 88.00'])], q:2, res:{src:'db',t:'Order{id=7, amount=88.00}'}, say:'记了“提交时清空”，柜子里那条旧的就当不存在。查数据库拿到 88.00，放进一级缓存和暂存区。'},
+      {call:'会话 1：commit', hl:'l2', kind:'done', sess:[S('会话 1','已提交',[],[])], l2:[C('OrderMapper 二级缓存',true,['selectById · 7 → 88.00'])], rows:[R88], say:'提交时，先把整个柜子清空，再把暂存区里的新结果放进去。之后谁来查都是 88.00。'}
+    ]},
+    d:{init:{sess:[S('会话 1','开着',[],[]),S('会话 2','开着',[],[])], l2:[C('OrderMapper 二级缓存',true,['selectDetail · 7 → 买家 张三']),C('UserMapper 二级缓存',true,['selectById · 1 → 张三'])], rows:['t_user · id=1 · name=张三','t_order · id=7 · user_id=1'], q:0}, steps:[
+      {call:'会话 1：userMapper.updateName(1, "李四")', hl:'l2', l2:[C('OrderMapper 二级缓存',true,['selectDetail · 7 → 买家 张三']),C('UserMapper 二级缓存',true,['selectById · 1 → 张三'],'会话 1 记了一笔：提交时清空')], rows:['t_user · id=1 · name=李四（未提交）','t_order · id=7 · user_id=1'], q:1, res:{src:'db',t:'更新了 1 行'}, say:'改的是用户表。UserMapper 的 update，只会清 UserMapper 自己的柜子。'},
+      {call:'会话 1：commit', hl:'l2', sess:[S('会话 1','已提交',[],[]),S('会话 2','开着',[],[])], l2:[C('OrderMapper 二级缓存',true,['selectDetail · 7 → 买家 张三']),C('UserMapper 二级缓存',true,[])], rows:['t_user · id=1 · name=李四','t_order · id=7 · user_id=1'], say:'提交后 UserMapper 的柜子清空了。OrderMapper 柜子里那条联表查询的结果，没人碰。'},
+      {call:'会话 2：orderMapper.selectDetail(7)', hl:'res', kind:'fail', res:{src:'stale',t:'买家：张三（数据库里早就是李四了）'}, say:'selectDetail 是订单表联用户表查的，结果存在 OrderMapper 名下。它命中了，拿到的还是“张三”。'},
+      {call:'怎么办', hl:'res', kind:'fail', say:'让两个 Mapper 共用一个柜子：在 OrderMapper.xml 里写 <cache-ref namespace="com.shop.mapper.UserMapper"/>；或者联表查询不走二级缓存（useCache="false"）；最省事的，是干脆不开二级缓存。'}
+    ]},
+    e:{init:{sess:[S('机器 A 的会话','开着',[],[]),S('机器 B 的会话','开着',[],[])], l2:[C('机器 A · OrderMapper 二级缓存',true,['selectById · 7 → 99.00']),C('机器 B · OrderMapper 二级缓存',true,['selectById · 7 → 99.00'])], rows:[R99], q:0}, steps:[
+      {call:'机器 A：updateAmount(7, 88.00) 并提交', hl:'l2', sess:[S('机器 A 的会话','已提交',[],[]),S('机器 B 的会话','开着',[],[])], l2:[C('机器 A · OrderMapper 二级缓存',true,[]),C('机器 B · OrderMapper 二级缓存',true,['selectById · 7 → 99.00'])], rows:[R88], q:1, res:{src:'db',t:'更新了 1 行'}, say:'机器 A 改完提交，清掉的只是机器 A 内存里的柜子。'},
+      {call:'机器 B：selectById(7)', hl:'res', kind:'fail', res:{src:'stale',t:'Order{id=7, amount=99.00}（数据库里已经是 88.00）'}, say:'负载均衡把请求分到机器 B。B 的柜子还是旧的 99.00，直接命中返回。'},
+      {call:'怎么办', hl:'res', kind:'fail', say:'二级缓存在各自的 JVM 内存里，机器之间不通气。集群部署要么关掉它，要么用 <cache type="…"/> 换成 Redis 这类共享缓存，要么设 flushInterval 只容忍几秒的不一致。'}
+    ]}
+  };
+  var REQ={a:'在一个 @Transactional 方法里 · OrderMapper 没写 <cache/>', b:'OrderMapper 写了 <cache/> · 两个会话', c:'OrderMapper 写了 <cache/> · 柜子里已经有 99.00', d:'两个 Mapper 都写了 <cache/> · selectDetail 是订单联用户表', e:'同一个服务部署了两台 · 都写了 <cache/>'};
+  var SRC={db:['db','数据库'],l1:['l1','一级缓存命中'],l2:['l2','二级缓存命中'],stale:['bad','旧数据！']};
+
+  function stateAt(sc,pos){
+    var st={sess:sc.init.sess, l2:sc.init.l2, rows:sc.init.rows, q:sc.init.q, res:null};
+    for(var i=0;i<=pos;i++){
+      var s=sc.steps[i];
+      ['sess','l2','rows','q'].forEach(function(k){ if(s[k]!==undefined) st[k]=s[k]; });
+    }
+    st.res = sc.steps[pos].res || null;
+    return st;
+  }
+  function chips(list,role){
+    if(!list.length) return '<em>空</em>';
+    return list.map(function(t){ return '<span class="chip" data-role="'+role+'">'+esc(t)+'</span>'; }).join('');
+  }
+  function sessHtml(s){
+    var h='<div class="box" data-role="ap"><h3><span>'+esc(s.n)+'</span><span class="st">'+esc(s.st)+'</span></h3>';
+    h+='<div class="row"><span>一级缓存</span><div class="chips">'+chips(s.c1,'l1')+'</div></div>';
+    if(s.stg) h+='<div class="row"><span>暂存区</span><div class="chips">'+chips(s.stg,'stg')+'</div></div>';
+    return h+'</div>';
+  }
+  function l2Html(c,hl){
+    var h='<div class="box'+(hl?' hl':'')+'" data-role="l2"><h3><span>'+esc(c.n)+'</span><span class="st">'+(c.on?'已开启':'没开')+'</span></h3>';
+    if(!c.on) h+='<p class="off">Mapper XML 里没写 &lt;cache/&gt;，这一层直接跳过。</p>';
+    else h+='<div class="chips">'+chips(c.items,'l2')+'</div>';
+    if(c.flag) h+='<span class="flag">'+esc(c.flag)+'</span>';
+    return h+'</div>';
+  }
+  function resHtml(r){
+    if(!r) return '<p class="off">这一步没有查询。</p>';
+    var s=SRC[r.src];
+    return '<div class="res"><span class="src" data-role="'+s[0]+'">'+s[1]+'</span><code>'+esc(r.t)+'</code>'+(r.log?'<div class="log">'+esc(r.log)+'</div>':'')+'</div>';
+  }
+
+  var scene='a', pos=0, timer=null;
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  function render(){
+    var sc=SC[scene], s=sc.steps[pos], st=stateAt(sc,pos);
+    $('reqline').textContent=REQ[scene];
+    var g=$('sessgrid'); g.className='sessgrid'+(st.sess.length>1?' two':'');
+    g.innerHTML=st.sess.map(sessHtml).join('');
+    if(s.hl==='sess') g.querySelectorAll('.box').forEach(function(b){ b.classList.add('hl'); });
+    $('l2boxes').innerHTML=st.l2.map(function(c){ return l2Html(c, s.hl==='l2' && c.on); }).join('');
+    $('dbv').innerHTML='<div class="dbrows">'+st.rows.map(function(r){return '<div>'+esc(r)+'</div>';}).join('')+'</div><div class="dbq">发到数据库的 SQL：<b>'+st.q+'</b> 条</div>';
+    $('resv').innerHTML=resHtml(st.res);
+    $('box-res').setAttribute('data-role', st.res ? (st.res.src==='stale'?'bad':(st.res.src==='db'?'db':'done')) : 'other');
+    $('box-db').classList.toggle('hl', s.hl==='db');
+    $('box-res').classList.toggle('hl', s.hl==='res');
+    $('cap').setAttribute('data-role', s.kind==='fail' ? 'bad' : (s.kind==='done' ? 'done' : 'ap'));
+    $('capN').textContent=(pos+1)+'/'+sc.steps.length;
+    $('capCall').textContent=s.call;
+    $('capSay').textContent=s.say;
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===sc.steps.length-1;
+  }
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<SC[scene].steps.length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=SC[scene].steps.length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 2400);
+  });
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop(); scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+  $('lab').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+  render();
+
+  /* ================= LRU vs W-TinyLFU ================= */
+  var SEQ=['A','B','C','A','B','A','B','X1','X2','X3','X4','X5','X6','A','B','C','A','B'];
+  function simLRU(n){
+    var c=[], hits=0, res=[], ev='还没开始。';
+    for(var i=0;i<n;i++){
+      var k=SEQ[i], idx=c.indexOf(k);
+      if(idx>=0){ c.splice(idx,1); c.push(k); hits++; res.push(1); ev='命中 '+k+'，挪到最右边。'; }
+      else {
+        var out=''; if(c.length>=4) out=c.shift();
+        c.push(k); res.push(0);
+        ev='没命中，放进 '+k+(out?'；满了，挤掉最久没用的 '+out+'。':'。');
+      }
+    }
+    return {c:c,hits:hits,res:res,ev:ev};
+  }
+  function simTL(n){
+    var win=[], main=[], f={}, hits=0, res=[], ev='还没开始。';
+    for(var i=0;i<n;i++){
+      var k=SEQ[i]; f[k]=(f[k]||0)+1;
+      var wi=win.indexOf(k), mi=main.indexOf(k);
+      if(wi>=0){ win.splice(wi,1); win.push(k); hits++; res.push(1); ev='命中 '+k+'（在窗口里）。'; }
+      else if(mi>=0){ main.splice(mi,1); main.push(k); hits++; res.push(1); ev='命中 '+k+'（在主区），挪到主区最右边。'; }
+      else {
+        res.push(0); win.push(k); ev='没命中，'+k+' 先进窗口';
+        if(win.length>1){
+          var cand=win.shift();
+          if(main.length<3){ main.push(cand); ev+='；窗口里挤出来的 '+cand+' 进主区（还有空位）。'; }
+          else {
+            var vic=main[0];
+            if(f[cand]>f[vic]){ main.shift(); main.push(cand); ev+='；挤出来的 '+cand+'（'+f[cand]+' 次）比主区最久没用的 '+vic+'（'+f[vic]+' 次）用得多，'+vic+' 被淘汰。'; }
+            else { ev+='；挤出来的 '+cand+'（'+f[cand]+' 次）不如主区的 '+vic+'（'+f[vic]+' 次），'+cand+' 直接丢掉，主区不动。'; }
+          }
+        } else ev+='。';
+      }
+    }
+    return {win:win,main:main,f:f,hits:hits,res:res,ev:ev};
+  }
+  function slotsHtml(list,cap,hotKey){
+    var h='';
+    for(var i=0;i<cap;i++){
+      var k=list[i];
+      h+= k ? '<div class="slot full'+(k===hotKey?' hot':'')+'">'+esc(k)+'</div>' : '<div class="slot"></div>';
+    }
+    return h;
+  }
+  var sp=0, stimer=null;
+  var sPrev=$('sPrev'), sNext=$('sNext'), sPlay=$('sPlay'), sReset=$('sReset');
+  function renderSim(){
+    var L=simLRU(sp), T=simTL(sp), cur=sp>0?SEQ[sp-1]:null;
+    $('seq').innerHTML=SEQ.map(function(k,i){
+      var cls = i===sp-1 ? ' cur' : (i>=sp ? ' fut' : '');
+      var a = i<sp ? '<i class="'+(L.res[i]?'h':'m')+'">'+(L.res[i]?'中':'×')+'</i><i class="'+(T.res[i]?'h':'m')+'">'+(T.res[i]?'中':'×')+'</i>' : '<i></i><i></i>';
+      return '<div class="sq'+cls+'"><span>'+k+'</span>'+a+'</div>';
+    }).join('');
+    $('lruSlots').innerHTML=slotsHtml(L.c,4,cur);
+    $('lruScore').innerHTML=L.hits+'<small> / '+sp+' 命中</small>';
+    $('lruEv').textContent= sp ? '第 '+sp+' 次访问 '+cur+'：'+L.ev : '点“下一个”开始。';
+    $('tlWin').innerHTML=slotsHtml(T.win,1,cur);
+    $('tlMain').innerHTML=slotsHtml(T.main,3,cur);
+    $('tlScore').innerHTML=T.hits+'<small> / '+sp+' 命中</small>';
+    $('tlEv').textContent= sp ? '第 '+sp+' 次访问 '+cur+'：'+T.ev : '点“下一个”开始。';
+    var keys=Object.keys(T.f);
+    $('tlFreq').innerHTML= keys.length ? '访问次数：'+keys.map(function(k){return '<span>'+k+' <b>'+T.f[k]+'</b></span>';}).join('') : '';
+    sPrev.disabled = sp===0;
+    sNext.disabled = sp===SEQ.length;
+  }
+  function sStop(){ if(stimer){clearInterval(stimer); stimer=null;} sPlay.textContent='自动播放'; }
+  function sNextF(){ if(sp<SEQ.length){ sp++; renderSim(); } else sStop(); }
+  sNext.addEventListener('click', function(){ sStop(); sNextF(); });
+  sPrev.addEventListener('click', function(){ sStop(); if(sp>0){ sp--; renderSim(); } });
+  sReset.addEventListener('click', function(){ sStop(); sp=0; renderSim(); });
+  sPlay.addEventListener('click', function(){
+    if(stimer){ sStop(); return; }
+    if(sp>=SEQ.length){ sp=0; renderSim(); }
+    sPlay.textContent='暂停';
+    stimer=setInterval(sNextF, 1100);
+  });
+  sp=SEQ.length; renderSim();
+})();
+</script>
+
+</body>
+</html>
