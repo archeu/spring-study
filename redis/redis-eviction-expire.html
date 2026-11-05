@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis 过期删除与内存淘汰</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Two jobs: clearing keys whose time is up (expire, purple clock) and kicking keys out when memory is full (evict, orange). Live keys teal, keys without TTL blue, expired-but-still-there amber "ghosts". Interactives: expiration patrol sim and eviction accuracy grid. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --lv:#0D7A69; --lv-tint:#DCF0EB;
+  --np:#3150C4; --np-tint:#E2E7FA;
+  --gh:#B7791F; --gh-tint:#FBEBC8;
+  --ex:#6A3FC0; --ex-tint:#ECE5FA;
+  --ev:#C2410C; --ev-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --lv:#40C6B0; --lv-tint:#12352F;
+    --np:#90A4FF; --np-tint:#1D2650;
+    --gh:#F2C94C; --gh-tint:#3A3212;
+    --ex:#B9A0FF; --ex-tint:#2A2148;
+    --ev:#FB923C; --ev-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --lv:#40C6B0; --lv-tint:#12352F;
+  --np:#90A4FF; --np-tint:#1D2650;
+  --gh:#F2C94C; --gh-tint:#3A3212;
+  --ex:#B9A0FF; --ex-tint:#2A2148;
+  --ev:#FB923C; --ev-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--np)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--np);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="lv"]{--rc:var(--lv);--rt:var(--lv-tint)}
+[data-role="np"]{--rc:var(--np);--rt:var(--np-tint)}
+[data-role="gh"]{--rc:var(--gh);--rt:var(--gh-tint)}
+[data-role="ex"]{--rc:var(--ex);--rt:var(--ex-tint)}
+[data-role="ev"]{--rc:var(--ev);--rt:var(--ev-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.gauge{margin-top:18px;background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.gbar{position:relative;height:46px;border-radius:10px;background:var(--neutral-tint);display:flex}
+.gbar span{display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;padding:0 6px}
+.g-np{background:var(--np);color:var(--on-accent);border-radius:10px 0 0 10px}
+.g-lv{background:var(--lv);color:var(--on-accent)}
+.g-gh{background:repeating-linear-gradient(135deg,var(--gh) 0 3px,var(--gh-tint) 3px 9px);color:var(--ink)}
+.g-over{background:repeating-linear-gradient(135deg,var(--ev) 0 3px,var(--ev-tint) 3px 9px);color:var(--ink);border-radius:0 10px 10px 0}
+.gmax{position:absolute;top:-10px;bottom:-10px;border-left:3px solid var(--ink)}
+.gmax b{position:absolute;top:-20px;left:6px;font-family:var(--font-mono);font-size:12px;white-space:nowrap}
+.gkey{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted)}
+.gkey span{display:inline-flex;align-items:center;gap:6px}
+.gkey i{width:14px;height:14px;border-radius:3px}
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dc{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);display:flex;gap:12px;align-items:flex-start;min-width:0}
+.dc svg{width:44px;height:44px;flex:none;color:var(--rc)}
+.dc div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.dc b{font-size:18px;color:var(--rc)}
+.dc span{font-size:14px}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--ex)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--gh-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:680px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t td.num,.t th.num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:5px 12px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tog{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.tog::before{content:"";width:14px;height:14px;border-radius:4px;border:2px solid var(--line-strong);flex:none}
+.tog[aria-pressed="true"]{border-color:var(--ex);background:var(--ex-tint)}
+.tog[aria-pressed="true"]::before{background:var(--ex);border-color:var(--ex)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums}
+
+/* ---------- ttl ---------- */
+.dicts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.dict{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.dict > b{font-family:var(--font-mono);font-size:14px;color:var(--rc)}
+.dict > b small{font-family:var(--font-body);font-weight:500;color:var(--muted);margin-left:6px}
+.kvr{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.4fr);gap:8px;font-family:var(--font-mono);font-size:12.5px;align-items:center;padding:3px 0;border-bottom:1px dashed var(--line)}
+.kvr:last-child{border-bottom:0}
+.kvr span:nth-child(2){color:var(--muted)}
+.kvr em{font-style:normal;color:var(--muted);font-family:var(--font-body);font-size:12px}
+
+/* ---------- strategies ---------- */
+.strats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.sg{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.sg h3{font-size:20px;color:var(--rc)}
+.sg .use{align-self:flex-start;font-size:12px;font-weight:700;padding:1px 10px;border-radius:999px;background:var(--rt);color:var(--rc)}
+.sg p{font-size:13.5px}
+.sg .pc{font-size:12.5px;color:var(--muted)}
+.loop{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.sp{border:2px solid var(--rc);border-radius:12px;padding:8px 10px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.sp small{font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--rc)}
+.sp b{font-size:14px}
+.sp span{font-size:12.5px;color:var(--muted)}
+
+/* ---------- expire sim ---------- */
+.sim{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.row .lbl{font-size:13px;color:var(--muted)}
+.clock{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.clock b{color:var(--ink);font-size:15px}
+.sim-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.keys{display:grid;grid-template-columns:repeat(20,minmax(0,1fr));gap:2px;max-width:420px}
+.keys i{aspect-ratio:1;border-radius:3px;background:var(--lv)}
+.keys i.np{background:var(--np)}
+.keys i.gh{background:repeating-linear-gradient(135deg,var(--gh) 0 2px,var(--gh-tint) 2px 5px)}
+.keys i.del{background:transparent;border:1px dashed var(--line-strong)}
+.keys i.smp{outline:2px solid var(--ex);outline-offset:-1px}
+.kkey{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}
+.kkey span{display:inline-flex;align-items:center;gap:5px}
+.kkey i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.spark{width:100%;height:auto;display:block;border:1.5px solid var(--line);border-radius:10px;background:var(--code-bg)}
+.sp-ax{font-family:var(--font-mono);font-size:9.5px;fill:var(--muted)}
+.sp-t{font-size:10.5px;fill:var(--muted);font-weight:500}
+.sp-gl{stroke:var(--line);stroke-width:1}
+.sp-g{fill:none;stroke:var(--gh);stroke-width:2}
+.sp-ga{fill:var(--gh-tint)}
+.sp-c{fill:var(--ex)}
+.sp-now{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+
+/* ---------- policies ---------- */
+.pol{display:grid;grid-template-columns:8em repeat(4,minmax(0,1fr));gap:6px;align-items:stretch}
+.pol .h{font-size:13px;font-weight:700;color:var(--muted);display:flex;align-items:center;justify-content:center;text-align:center;padding:4px}
+.pol .h.rowh{justify-content:flex-start;color:var(--ink)}
+.pc2{border:2px solid var(--rc);border-radius:12px;background:var(--rt);padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.pc2 code{font-weight:700;font-size:12.5px;overflow-wrap:anywhere}
+.pc2 span{font-size:12px;color:var(--muted)}
+.pc2.na{border-style:dashed;background:transparent}
+.noev{border:2px solid var(--bad);border-radius:12px;background:var(--bad-tint);padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.noev code{font-weight:700}
+.noev span{font-size:13.5px}
+
+/* ---------- eviction grid ---------- */
+.ev{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.egrid{display:grid;grid-template-columns:repeat(40,minmax(0,1fr));gap:1px;max-width:640px}
+.egrid i{aspect-ratio:1;border-radius:1px}
+.egrid i.ok{background:var(--neutral-tint)}
+.egrid i.wrong{background:var(--bad)}
+.egrid i.stay{background:var(--gh)}
+.egrid i.keep{background:var(--lv)}
+.eax{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);max-width:640px}
+.newrow{display:flex;gap:1px;max-width:640px;flex-wrap:wrap}
+.newrow i{width:calc((100% - 39px)/40);aspect-ratio:1;border-radius:1px;background:var(--np)}
+.newrow i.wrong{background:var(--bad)}
+
+/* ---------- lfu ---------- */
+.lfu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.bits{display:grid;grid-template-columns:16fr 8fr;border-radius:8px;overflow:hidden;border:1.5px solid var(--ev)}
+.bits span{padding:6px 8px;text-align:center;font-size:12px;display:flex;flex-direction:column;line-height:1.35}
+.bits span:first-child{background:var(--ev-tint)}
+.bits span:last-child{background:var(--ev);color:var(--on-accent)}
+.bits b{font-family:var(--font-mono)}
+.scan{display:flex;flex-direction:column;gap:8px}
+.scr{display:grid;grid-template-columns:4.5em minmax(0,1fr);gap:8px;align-items:center;font-size:12.5px}
+.scr > b{font-family:var(--font-mono)}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chips span{font-family:var(--font-mono);font-size:11.5px;padding:2px 8px;border-radius:6px;border:1.5px solid var(--rc);background:var(--rt)}
+.chips span.x{text-decoration:line-through;opacity:.6}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .loop{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .duo,.two,.dicts,.sim-grid,.lfu,.eras,.strats{grid-template-columns:1fr}
+  .pol{grid-template-columns:6.5em repeat(4,minmax(0,1fr))}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .loop{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pol{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pol .h:not(.rowh){display:none}
+  .pol .h.rowh{grid-column:1 / -1}
+}
+@media (max-width:520px){
+  .loop,.tiles{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-dict" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="6" width="52" height="52" rx="6"/>
+    <path class="ks-paper" stroke-width="3" d="M6 22h52M6 38h52M28 6v52"/>
+    <circle class="k-gold" cx="46" cy="14" r="4"/>
+  </symbol>
+  <symbol id="i-patrol" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="26" cy="26" r="18"/>
+    <circle class="k-paper" cx="26" cy="26" r="11"/>
+    <path stroke="currentColor" stroke-width="8" stroke-linecap="round" d="M39 39l18 18"/>
+    <path class="ks-cur" stroke-width="3" stroke-linecap="round" d="M26 19v7l5 3"/>
+  </symbol>
+  <symbol id="i-cap" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="10" y="14" width="44" height="46" rx="5"/>
+    <rect class="k-paper" x="16" y="30" width="32" height="24" rx="2"/>
+    <rect fill="currentColor" opacity=".6" x="16" y="38" width="32" height="16" rx="2"/>
+    <path stroke="var(--ink)" stroke-width="3" stroke-dasharray="4 3" d="M4 26h56"/>
+    <rect class="k-gold" x="26" y="6" width="12" height="8" rx="2"/>
+  </symbol>
+  <symbol id="i-pool" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="40" width="10" height="18" rx="2"/>
+    <rect fill="currentColor" x="18" y="30" width="10" height="28" rx="2"/>
+    <rect fill="currentColor" x="32" y="20" width="10" height="38" rx="2"/>
+    <rect fill="currentColor" x="46" y="8" width="12" height="50" rx="2"/>
+    <path stroke="var(--bad)" stroke-width="4" stroke-linecap="round" d="M44 4l16 16M60 4L44 20"/>
+  </symbol>
+  <symbol id="i-hourglass" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="4" width="40" height="7" rx="2"/>
+    <rect fill="currentColor" x="12" y="53" width="40" height="7" rx="2"/>
+    <path fill="currentColor" d="M16 11h32c0 12-9 16-12 21 3 5 12 9 12 21H16c0-12 9-16 12-21-3-5-12-9-12-21z"/>
+    <path class="k-gold" d="M24 18h16c-2 5-6 7-8 10-2-3-6-5-8-10zM22 50c2-6 7-8 10-10 3 2 8 4 10 10z"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis 过期删除与内存淘汰</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS 7 · EXPIRE · LAZY · ACTIVE EXPIRE CYCLE · MAXMEMORY · LRU · LFU</p>
+  <h1>到点的 key 不会准时消失，内存满了要挑人赶走</h1>
+  <p class="lead">这是两件不同的事。过期删除管的是“设了过期时间的 key，到点后什么时候真正删掉”；内存淘汰管的是“内存用到上限了，还要写，该把谁赶出去”。前者靠查到时顺手删 + 定期巡逻，后者靠 maxmemory 和淘汰策略。</p>
+
+  <div class="gauge">
+    <div class="gbar" role="img" aria-label="内存示意：没设过期的 key、正常的 key、已过期还没删的 key，超过 maxmemory 的部分要淘汰">
+      <span class="g-np" style="flex:28">没设过期</span><span class="g-lv" style="flex:40">正常的 key</span><span class="g-gh" style="flex:14">过期了还没删</span><span class="g-over" style="flex:12">再写就超了</span>
+      <span class="gmax" style="left:85.1%"><b>maxmemory</b></span>
+    </div>
+    <div class="gkey"><span><i style="background:var(--np)"></i>没设过期时间</span><span><i style="background:var(--lv)"></i>还没到期</span><span><i style="background:repeating-linear-gradient(135deg,var(--gh) 0 2px,var(--gh-tint) 2px 5px)"></i>到期了，但还占着内存</span><span><i style="background:repeating-linear-gradient(135deg,var(--ev) 0 2px,var(--ev-tint) 2px 5px)"></i>超过上限的写入，要先淘汰</span></div>
+  </div>
+  <div class="duo">
+    <div class="dc" data-role="ex"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-hourglass"/></svg><div><b>过期删除</b><span>到期的 key 先是“逻辑上不存在”：读它会返回空。真正从内存里删掉，要等有人来读它，或者被定期巡逻抽到。</span></div></div>
+    <div class="dc" data-role="ev"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pool"/></svg><div><b>内存淘汰</b><span>每次执行写命令前检查内存。超过 maxmemory 就按策略挑 key 删掉，挑不出来就拒绝写入。</span></div></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="ex">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-dict"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">过期表<code>expires</code></div>
+        <p>单独一张哈希表，记着<b>每个设了过期的 key 什么时候到期</b>。</p>
+        <span class="belong">key → 毫秒时间戳</span>
+      </div>
+    </div>
+    <div class="who" data-role="ex">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-patrol"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">巡逻员<code>activeExpireCycle</code></div>
+        <p>每秒 10 次，<b>随机抽 20 个</b>带过期时间的 key，到期的删掉。</p>
+        <span class="belong">最多占 25% 的 CPU 时间</span>
+      </div>
+    </div>
+    <div class="who" data-role="ev">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cap"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">上限<code>maxmemory</code></div>
+        <p>Redis 能用的内存上限，<b>默认 0 表示不限</b>。</p>
+        <span class="belong">超了才会淘汰</span>
+      </div>
+    </div>
+    <div class="who" data-role="ev">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pool"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">候选池<code>eviction pool · 16</code></div>
+        <p>每次抽几个 key 放进池子，<b>挑最该走的那个</b>淘汰。</p>
+        <span class="belong">近似 LRU / LFU 靠它</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= TTL ================= -->
+<section id="ttl">
+  <div>
+    <h2>过期时间存在哪</h2>
+    <p class="lead">每个库有两张表：主表存 key 和值；过期表只存设了过期时间的 key，以及它到期的绝对时间（毫秒）。判断一个 key 过没过期，就是拿当前时间和过期表里的值比一下。</p>
+  </div>
+  <div class="dicts">
+    <div class="dict" data-role="lv"><b>dict<small>主表：所有 key</small></b>
+      <div class="kvr"><span>user:1</span><span>→</span><span>{name: tom}</span></div>
+      <div class="kvr"><span>session:9f</span><span>→</span><span>"…"</span></div>
+      <div class="kvr"><span>code:138xx</span><span>→</span><span>"4721"</span></div>
+      <div class="kvr"><span>config</span><span>→</span><span>"…"</span></div>
+    </div>
+    <div class="dict" data-role="ex"><b>expires<small>过期表：只有设了 TTL 的</small></b>
+      <div class="kvr"><span>session:9f</span><span>→</span><span>1767225600000 <em>还有 29 分钟</em></span></div>
+      <div class="kvr"><span>code:138xx</span><span>→</span><span>1767223980000 <em>已经过期</em></span></div>
+      <div class="kvr"><span>user:1</span><span>—</span><span><em>不在这张表里，永不过期</em></span></div>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>设置和查看过期时间</b><span>redis-cli</span></div>
+<pre><code>SET code:138xx 4721 EX 300       <span class="cm"># 300 秒后过期；PX 是毫秒，EXAT / PXAT 给绝对时间</span>
+EXPIRE session:9f 1800           <span class="cm"># 给已有的 key 设过期；7.0 起可加 NX / XX / GT / LT</span>
+TTL code:138xx                   <span class="cm"># 还剩多少秒；-1 = 没设过期，-2 = key 不存在</span>
+PERSIST session:9f               <span class="cm"># 去掉过期时间</span>
+SET code:138xx 9999 KEEPTTL      <span class="cm"># 改值但保留原来的过期时间（6.0 起）；不加 KEEPTTL 会把过期时间清掉</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= STRATEGIES ================= -->
+<section id="del">
+  <div>
+    <h2>到期了，什么时候真删</h2>
+    <p class="lead">有三种思路。Redis 用的是后两种的组合：读到时顺手删，再派个巡逻员定期抽查，把没人读的那些也清掉。</p>
+  </div>
+  <div class="strats">
+    <div class="sg" data-role="other"><h3>定时删除</h3><span class="use">Redis 不用</span><p>每个 key 设一个定时器，一到点就删。</p><span class="pc">内存最干净；但几百万个定时器，CPU 扛不住。</span></div>
+    <div class="sg" data-role="ex"><h3>惰性删除</h3><span class="use">Redis 用</span><p>平时不管。有人读写这个 key 时，先看一眼过期表，过期了就删掉，当作不存在。</p><span class="pc">几乎不花 CPU；但没人访问的过期 key 会一直占着内存。</span></div>
+    <div class="sg" data-role="ex"><h3>定期删除</h3><span class="use">Redis 用</span><p>后台定期随机抽查一批带过期时间的 key，删掉到期的。</p><span class="pc">兜住没人访问的那些；抽查也要花 CPU，所以限时、限量。</span></div>
+  </div>
+  <div class="loop" aria-label="定期删除一轮的步骤">
+    <div class="sp" data-role="ex"><small>1</small><b>每秒 10 次</b><span>由 <code>hz 10</code> 决定，在定时任务 serverCron 里跑</span></div>
+    <div class="sp" data-role="ex"><small>2</small><b>逐个库抽 20 个</b><span>只从过期表里随机抽</span></div>
+    <div class="sp" data-role="ex"><small>3</small><b>删掉到期的</b><span>主表和过期表里都删</span></div>
+    <div class="sp" data-role="gh"><small>4</small><b>到期的超过 10%？</b><span>说明还有很多，再抽一轮（Redis 6 之前是 25%）</span></div>
+    <div class="sp" data-role="bad"><small>5</small><b>时间到就停</b><span>一轮最多用 25% 的 CPU 时间，没清完下次接着来</span></div>
+  </div>
+  <p class="tip">此外，每次事件循环进入等待前，还会跑一次“快速巡逻”，最多 1 毫秒。<code>active-expire-effort</code>（1～10，默认 1）调大，每轮抽得更多、容忍的过期比例更低，代价是多花 CPU。</p>
+</section>
+
+<!-- ================= EXPIRE SIM ================= -->
+<section id="expsim">
+  <div>
+    <h2>巡逻实验台：没人读的过期 key 会不会一直赖着</h2>
+    <p class="lead">400 个 key，其中 300 个设了过期时间。只有前 80 个是热门 key 会被读到，其余没人碰。打开或关掉两种删除方式，看“过期了还占着内存”的 key 有多少。</p>
+  </div>
+  <div class="sim" id="sim">
+    <div class="row">
+      <button class="tog" id="tgLazy" aria-pressed="true">惰性删除</button>
+      <button class="tog" id="tgActive" aria-pressed="true">定期删除</button>
+      <span class="lbl">过期时间：</span>
+      <div class="seg-btns" role="group" aria-label="过期时间分布"><button data-ttl="spread" aria-pressed="true">分散在 1 分钟里</button><button data-ttl="same" aria-pressed="false">全在第 30 秒</button></div>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="bPlay">▶ 让时间走</button>
+      <button class="btn" id="bFf">快进 10 秒</button>
+      <button class="btn" id="bReset">从头来</button>
+      <span class="clock">第 <b id="simT">0.0</b> 秒</span>
+    </div>
+    <div class="sim-grid">
+      <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+        <div class="keys" id="keys" role="img" aria-label="400 个 key 的状态"></div>
+        <div class="kkey"><span><i style="background:var(--np)"></i>没设过期</span><span><i style="background:var(--lv)"></i>还没到期</span><span><i style="background:repeating-linear-gradient(135deg,var(--gh) 0 2px,var(--gh-tint) 2px 5px)"></i>过期了还占着内存</span><span><i style="border:1px dashed var(--line-strong)"></i>已删除</span><span><i style="outline:2px solid var(--ex);outline-offset:-1px;background:var(--lv)"></i>上一拍被抽查</span></div>
+        <p class="tip">前 4 行（80 个）是热门 key，每 0.1 秒随机被读 3 次。</p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <div class="tiles" id="simTiles"></div>
+        <svg class="spark" id="spark" viewBox="0 0 400 170" role="img" aria-label="过期未删的 key 数和每秒抽查次数随时间变化"></svg>
+      </div>
+    </div>
+    <p class="verdict" id="simV" data-role="done"></p>
+  </div>
+</section>
+
+<!-- ================= REPLICA ================= -->
+<section id="rep">
+  <div>
+    <h2>过期碰上主从复制和持久化</h2>
+    <p class="lead">为了让主从数据一致，删过期 key 这件事只由主节点做，删完再通知从节点和 AOF。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">场景</th><th scope="col">怎么处理</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">主节点删了过期 key</th><td>往复制流和 AOF 里补一条 <code>DEL</code>（或 <code>UNLINK</code>），从节点和 AOF 跟着删</td></tr>
+        <tr><th scope="row">从节点上读到过期 key</th><td>从节点自己不删，等主节点的 DEL；但 3.2 起读的时候会按过期处理，返回空</td></tr>
+        <tr><th scope="row">生成 RDB、AOF 重写</th><td>已过期的 key 通常会被跳过；就算写进去了，主节点加载时也会再过滤一遍</td></tr>
+        <tr><th scope="row">主节点加载 RDB</th><td>已过期的跳过；从节点加载时全部载入，等主节点来删</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tip">复制和持久化的细节见 <a href="redis-ha-cluster.html">Redis 第 03 篇</a> 和 <a href="redis-persistence.html">第 02 篇</a>。</p>
+</section>
+
+<!-- ================= POLICIES ================= -->
+<section id="pol">
+  <div>
+    <h2>内存满了：八种淘汰策略</h2>
+    <p class="lead">设了 <code>maxmemory</code> 后，每次执行写命令前，Redis 检查已用内存。超了，就按 <code>maxmemory-policy</code> 挑 key 删，直到降回上限以下。两个维度：从哪些 key 里挑，按什么标准挑。</p>
+  </div>
+  <div class="pol" role="table" aria-label="淘汰策略矩阵">
+    <span class="h"></span><span class="h">最久没用 LRU</span><span class="h">用得最少 LFU</span><span class="h">随机</span><span class="h">最快过期</span>
+    <span class="h rowh">所有 key</span>
+    <div class="pc2" data-role="ev"><code>allkeys-lru</code><span>最常用的缓存配置</span></div>
+    <div class="pc2" data-role="ev"><code>allkeys-lfu</code><span>有明显热点时更好</span></div>
+    <div class="pc2" data-role="other"><code>allkeys-random</code><span>访问均匀时</span></div>
+    <div class="pc2 na" data-role="other"><code>—</code><span>没设过期就没有 TTL</span></div>
+    <span class="h rowh">只挑设了过期的</span>
+    <div class="pc2" data-role="ex"><code>volatile-lru</code><span>没设过期的 key 绝不动</span></div>
+    <div class="pc2" data-role="ex"><code>volatile-lfu</code><span>同上，按频率</span></div>
+    <div class="pc2" data-role="other"><code>volatile-random</code><span>同上，随机</span></div>
+    <div class="pc2" data-role="ex"><code>volatile-ttl</code><span>剩余时间最短的先走</span></div>
+  </div>
+  <div class="noev"><code>noeviction</code><span><b>默认策略。</b>不淘汰，写命令直接报错：</span><code>OOM command not allowed when used memory &gt; 'maxmemory'.</code><span>读和删除照常。</span></div>
+  <p class="tip">volatile-* 策略找不到可以淘汰的 key 时（比如大部分 key 都没设过期），效果和 noeviction 一样，写入报错。</p>
+</section>
+
+<!-- ================= LRU ================= -->
+<section id="lru">
+  <div>
+    <h2>近似 LRU：不排队，抽样挑</h2>
+    <p class="lead">真正的 LRU 要把所有 key 按访问时间串成链表，每次访问都要挪位置，几千万个 key 太费内存和 CPU。Redis 只在 redisObject 里用 24 位记一个秒级的访问时间，淘汰时随机抽几个 key（<code>maxmemory-samples</code>，默认 5），放进一个能装 16 个候选的池子，挑空闲最久的那个淘汰。</p>
+  </div>
+  <div class="ev" id="ev">
+    <h3>淘汰得准不准：1000 个老 key，再写 500 个新 key</h3>
+    <div class="row"><span class="lbl">淘汰方式：</span>
+      <div class="seg-btns" role="group" aria-label="淘汰方式">
+        <button data-ev="true" aria-pressed="false">真正的 LRU</button>
+        <button data-ev="a10" aria-pressed="false">近似 LRU · 抽 10 个</button>
+        <button data-ev="a5" aria-pressed="true">近似 LRU · 抽 5 个</button>
+        <button data-ev="a3" aria-pressed="false">近似 LRU · 抽 3 个</button>
+        <button data-ev="random" aria-pressed="false">随机淘汰</button>
+      </div>
+    </div>
+    <div class="egrid" id="egrid" role="img" aria-label="1000 个老 key 按访问时间排列，哪些被淘汰"></div>
+    <div class="eax" aria-hidden="true"><span>← 最久没访问（应该先走）</span><span>最近访问过 →</span></div>
+    <div class="newrow" id="newrow" role="img" aria-label="500 个新写入的 key"></div>
+    <div class="kkey"><span><i style="background:var(--neutral-tint);border:1px solid var(--line-strong)"></i>该走的走了</span><span><i style="background:var(--gh)"></i>该走的还在</span><span><i style="background:var(--bad)"></i>不该走的被淘汰了</span><span><i style="background:var(--lv)"></i>该留的留下了</span><span><i style="background:var(--np)"></i>新写入的 500 个</span></div>
+    <div class="tiles" id="evTiles"></div>
+    <p class="tip">每写入一个新 key 就超出上限，淘汰一个。理想情况是最老的 500 个全走。抽样数越大越接近真正的 LRU，但每次淘汰花的 CPU 也越多。</p>
+  </div>
+</section>
+
+<!-- ================= LFU ================= -->
+<section id="lfu">
+  <div>
+    <h2>LFU：看用得多不多，而不只是最近用没用</h2>
+    <p class="lead">Redis 4.0 起有 LFU。它用同样的 24 位：高 16 位记上次衰减的时间（分钟），低 8 位是一个最大 255 的对数计数器。</p>
+  </div>
+  <div class="lfu">
+    <div class="mini">
+      <b>24 位怎么用</b>
+      <div class="bits" role="img" aria-label="16 位记上次衰减时间，8 位是访问计数"><span><b>16 位</b>上次衰减时间（分钟）</span><span><b>8 位</b>计数器 0～255</span></div>
+      <p>新 key 从 5 开始，免得刚写进来就被淘汰。每次访问以一定概率加 1：计数越大，越难再加（<code>lfu-log-factor</code>，默认 10）。一段时间没访问就往下减（<code>lfu-decay-time</code>，默认每 1 分钟减 1）。<code>OBJECT FREQ key</code> 可以看计数。</p>
+    </div>
+    <div class="tbl-wrap">
+      <table class="t" style="min-width:420px">
+        <thead><tr><th scope="col">lfu-log-factor</th><th scope="col" class="num">100 次</th><th scope="col" class="num">1000 次</th><th scope="col" class="num">10 万次</th><th scope="col" class="num">100 万次</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">0</th><td class="num">104</td><td class="num">255</td><td class="num">255</td><td class="num">255</td></tr>
+          <tr><th scope="row">1</th><td class="num">18</td><td class="num">49</td><td class="num">255</td><td class="num">255</td></tr>
+          <tr><th scope="row">10（默认）</th><td class="num">10</td><td class="num">18</td><td class="num">142</td><td class="num">255</td></tr>
+          <tr><th scope="row">100</th><td class="num">8</td><td class="num">11</td><td class="num">49</td><td class="num">143</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="tip">表里是访问多少次后计数器大约到几，数据来自 redis.conf 里的注释。</p>
+  <div class="mini scan">
+    <b>为什么热点明显时 LFU 更好：一次全表扫描</b>
+    <div class="scr" data-role="lv"><b>之前</b><div class="chips"><span>hot:A 访问 5 万次</span><span>hot:B 访问 3 万次</span><span style="--rc:var(--neutral);--rt:var(--neutral-tint)">cold:1 … cold:5000 很少访问</span></div></div>
+    <div class="scr" data-role="ev"><b>扫描</b><div class="chips"><span>凌晨对账任务把 5000 个冷 key 各读了一遍</span></div></div>
+    <div class="scr" data-role="bad"><b>LRU</b><div class="chips"><span class="x">hot:A</span><span class="x">hot:B</span><span>冷 key 都是“刚访问过”，热 key 反而最久没碰，先被淘汰</span></div></div>
+    <div class="scr" data-role="done"><b>LFU</b><div class="chips"><span>hot:A 计数 ~130</span><span>hot:B 计数 ~120</span><span>冷 key 计数才 5～6，先淘汰它们</span></div></div>
+  </div>
+</section>
+
+<!-- ================= CHOOSE ================= -->
+<section id="choose">
+  <div>
+    <h2>怎么选、怎么配</h2>
+    <p class="lead">先想清楚 Redis 里的数据丢了要不要紧，再选策略。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">用法</th><th scope="col">策略</th><th scope="col">原因</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">纯缓存</th><td><code>allkeys-lru</code> 或 <code>allkeys-lfu</code></td><td>丢了能从数据库补，满了就把用得少的挤掉；热点明显用 LFU</td></tr>
+        <tr><th scope="row">缓存和重要数据混放</th><td><code>volatile-lru</code> / <code>volatile-lfu</code></td><td>缓存设过期时间，重要数据不设，淘汰只动缓存；更好的做法是分开两个实例</td></tr>
+        <tr><th scope="row">队列、计数、分布式锁</th><td><code>noeviction</code></td><td>宁可写不进去报错，也不能悄悄丢；配好内存告警</td></tr>
+        <tr><th scope="row">知道谁先过期就该先走</th><td><code>volatile-ttl</code></td><td>比如验证码、临时令牌</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>redis.conf</b><span>缓存实例的常见配置</span></div>
+<pre><code><span class="kw">maxmemory</span> 6gb                  <span class="cm"># 8 GB 的机器，留出 fork 写时复制和各种缓冲区的余量</span>
+<span class="kw">maxmemory-policy</span> allkeys-lfu   <span class="cm"># 默认 noeviction</span>
+<span class="kw">maxmemory-samples</span> 5            <span class="cm"># 调到 10 更准，多花一点 CPU</span>
+<span class="kw">lazyfree-lazy-eviction</span> yes     <span class="cm"># 淘汰大 key 时在后台线程释放</span>
+<span class="kw">lazyfree-lazy-expire</span> yes       <span class="cm"># 删除过期大 key 时也放到后台</span>
+<span class="kw">hz</span> 10                          <span class="cm"># 定期删除等后台任务的频率</span></code></pre>
+  </div>
+  <p class="tip">看效果：<code>INFO stats</code> 里的 <code>expired_keys</code>、<code>evicted_keys</code>；<code>INFO memory</code> 里的 <code>used_memory</code> 和 <code>maxmemory</code>。</p>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>Redis 版本，以及 Java 这边</h2>
+    <p class="lead">JDK 8 还是 17、Boot 2 还是 3 不影响这些机制。要注意的是 Java 代码怎么设过期时间。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Redis 4.0 ～ 6.2</h3><span class="jdk">机制成形</span></div>
+      <ul>
+        <li>4.0：新增 LFU 两种策略、<code>UNLINK</code> 和 lazyfree 系列配置</li>
+        <li>6.0：定期删除改写，新增 <code>active-expire-effort</code>；<code>SET … KEEPTTL</code></li>
+        <li>6.2：新增 <code>maxmemory-eviction-tenacity</code>，控制一次写命令里最多花多少力气淘汰；<code>GETEX</code> 读的同时改过期时间</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Redis 7.x</h3><span class="jdk">更细的控制</span></div>
+      <ul>
+        <li>7.0：<code>EXPIRE</code> 支持 NX / XX / GT / LT；新增 <code>EXPIRETIME</code> 直接看到期的绝对时间</li>
+        <li>7.4：Hash 的单个字段也能设过期时间（<code>HEXPIRE</code>、<code>HTTL</code>）</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note-box"><b>Java 这边</b><span><code>redisTemplate.opsForValue().set(k, v)</code> 不带过期时间，会把原来的 TTL 清掉；要么每次都传 <code>Duration</code>，要么在 RedisConnection 这一层用 <code>Expiration.keepTtl()</code>。Spring Cache 统一用 <code>spring.cache.redis.time-to-live</code> 设过期时间。写入被 OOM 拒绝时，会抛出带 <code>OOM command not allowed</code> 的异常。</span></div>
+  <div class="same"><b>没变的：</b><span>惰性删除 + 定期删除</span><span>只由主节点删过期 key</span><span>八种淘汰策略</span><span>抽样 + 候选池</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">内存问题多半是两种：该删的没删掉，该限的没限住。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cap"/></svg><b>没设 maxmemory，Redis 被系统杀掉</b><p>默认不限，一直涨到机器内存耗尽，被 OOM killer 杀掉，或者开始用交换分区变得极慢。缓存实例一定要设。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-cap"/></svg><b>maxmemory 设成机器内存那么大</b><p>复制缓冲区、AOF 缓冲区不算在 maxmemory 里，fork 时写时复制还要额外内存。留出余量，常见是机器内存的 60%～75%。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>OOM command not allowed when used memory &gt; 'maxmemory'</b><p>默认策略是 noeviction，缓存写满后所有写入报错。纯缓存改成 allkeys-lru / allkeys-lfu。</p></div>
+    <div class="pit" data-role="ex"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-dict"/></svg><b>用了 volatile-lru，照样报 OOM</b><p>大部分 key 没设过期时间，可淘汰的 key 不够。要么给缓存都设上 TTL，要么换 allkeys-*。</p></div>
+    <div class="pit" data-role="ex"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-hourglass"/></svg><b>改了一下值，过期时间没了</b><p>普通的 SET 会清掉原来的 TTL，key 从此永不过期，越积越多。用 <code>SET … KEEPTTL</code>，或者每次都重新带上过期时间。</p></div>
+    <div class="pit" data-role="gh"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-patrol"/></svg><b>某个整点，Redis 延迟明显升高</b><p>大批 key 在同一时刻过期，定期删除每轮抽到的都是过期的，一直循环删，吃满 25% 的 CPU。过期时间加随机值（<a href="cache-problems.html">Redis 第 01 篇</a>的雪崩也是这个原因）。</p></div>
+    <div class="pit" data-role="gh"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-patrol"/></svg><b>key 都过期了，内存却没降</b><p>一是没人访问、还没被抽到的过期 key 还在；二是删掉后内存碎片没还给系统，看 <code>mem_fragmentation_ratio</code>，可以开 <code>activedefrag</code>。</p></div>
+    <div class="pit" data-role="ev"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-pool"/></svg><b>跑完一次批量任务，缓存命中率掉了一大截</b><p>全表扫描把大量冷 key 变成“刚访问过”，LRU 把热 key 挤掉了。热点明显的缓存用 allkeys-lfu。</p></div>
+    <div class="pit" data-role="ev"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>淘汰或过期时偶尔卡一下</b><p>被淘汰、被过期删除的恰好是大 key，在主线程里一个个释放元素。打开 <code>lazyfree-lazy-eviction</code> 和 <code>lazyfree-lazy-expire</code>。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-dict"/></svg><b>OBJECT FREQ 报错</b><p>只有 maxmemory-policy 是 LFU 类策略时才能用；LRU 策略下用 <code>OBJECT IDLETIME</code> 看空闲了多久。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7 为例。相关：<a href="redis-data-encoding.html">Redis 数据结构与编码</a>（redisObject 里那 24 位 lru 字段）· <a href="cache-problems.html">缓存穿透、击穿与雪崩</a> · <a href="../mybatis/mybatis-cache.html">MyBatis 缓存与 Caffeine</a>（W-TinyLFU）
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+function rng(seed){ var s=seed>>>0; return function(){ s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; }; }
+var NK=400, HOT=80, TMAX=90;
+function expInit(mode, seed){
+  var r=rng(seed||42), keys=[];
+  for(var i=0;i<NK;i++){
+    var hasT=(i%4)!==3, e=null;
+    if(hasT) e = mode==='same' ? 30 : 2+r()*58;
+    keys.push({id:i, exp:e, alive:true, how:null});
+  }
+  return {r:rng((seed||42)+7), keys:keys, t:0, lazy:0, active:0, checks:0, lastSample:[], hist:[], chk:[]};
+}
+function expTick(st, lazyOn, activeOn){
+  st.t=Math.round((st.t+0.1)*10)/10;
+  var now=st.t, r=st.r, c0=st.checks;
+  for(var a=0;a<3;a++){ var k=st.keys[Math.floor(r()*HOT)]; if(lazyOn && k.alive && k.exp!==null && k.exp<=now){ k.alive=false; k.how='lazy'; st.lazy++; } }
+  st.lastSample=[];
+  if(activeOn){
+    for(var loop=0;loop<16;loop++){
+      var pool=st.keys.filter(function(k){ return k.alive && k.exp!==null; });
+      if(!pool.length) break;
+      var n=Math.min(20,pool.length), exp=0, seen={}, got=0;
+      for(var s=0;s<n;s++){
+        var k2=pool[Math.floor(r()*pool.length)];
+        if(seen[k2.id]) continue; seen[k2.id]=1; got++;
+        st.checks++; st.lastSample.push(k2.id);
+        if(k2.exp<=now){ k2.alive=false; k2.how='active'; st.active++; exp++; }
+      }
+      if(exp/got <= 0.10) break;
+    }
+  }
+  var ghosts=0; st.keys.forEach(function(k){ if(k.alive && k.exp!==null && k.exp<=now) ghosts++; });
+  st.hist.push(ghosts); st.chk.push(st.checks-c0);
+  return ghosts;
+}
+function evictSim(mode, samples, seed){
+  var r=rng(seed||7), N=1000, ADD=500, last=[], present=[], pos={}, evicted={}, pool=[];
+  for(var i=0;i<N;i++){ last[i]=i; pos[i]=present.length; present.push(i); }
+  function remove(id){ var p=pos[id], lastId=present[present.length-1]; present[p]=lastId; pos[lastId]=p; present.pop(); delete pos[id]; evicted[id]=1; }
+  for(var j=0;j<ADD;j++){
+    var now=N+j, id=N+j; last[id]=now; pos[id]=present.length; present.push(id);
+    var victim=-1;
+    if(mode==='true'){ var best=Infinity; for(var q=0;q<present.length;q++){ var k=present[q]; if(last[k]<best){ best=last[k]; victim=k; } } }
+    else if(mode==='random'){ victim=present[Math.floor(r()*present.length)]; }
+    else {
+      for(var s=0;s<samples;s++){
+        var k2=present[Math.floor(r()*present.length)], idle=now-last[k2];
+        if(pool.some(function(e){ return e.k===k2; })) continue;
+        if(pool.length>=16 && idle<=pool[0].idle) continue;
+        pool.push({k:k2,idle:idle}); pool.sort(function(a,b){ return a.idle-b.idle; }); if(pool.length>16) pool.shift();
+      }
+      while(pool.length){ var e=pool.pop(); if(pos[e.k]!==undefined){ victim=e.k; break; } }
+    }
+    remove(victim);
+  }
+  var oldHalf=0, newHalf=0, newKeys=0;
+  Object.keys(evicted).forEach(function(x){ x=+x; if(x<500) oldHalf++; else if(x<1000) newHalf++; else newKeys++; });
+  return {oldHalf:oldHalf, newHalf:newHalf, newKeys:newKeys, evicted:evicted};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function fmt(v){ return Math.round(v).toLocaleString('en-US'); }
+
+  /* ---------- expire sim ---------- */
+  var lazyOn=true, activeOn=true, ttlMode='spread', st=null, timer=null;
+  function reset(){ stop(); st=expInit(ttlMode,42); for(var i=0;i<300;i++) expTick(st,lazyOn,activeOn); render(); }
+  function stop(){ if(timer){ clearInterval(timer); timer=null; } $('bPlay').textContent='▶ 让时间走'; }
+  function step(n){ for(var i=0;i<n && st.t<TMAX;i++) expTick(st,lazyOn,activeOn); if(st.t>=TMAX) stop(); render(); }
+  function render(){
+    var now=st.t, smp={}; st.lastSample.forEach(function(id){ smp[id]=1; });
+    var h='', ghosts=0, alive=0;
+    st.keys.forEach(function(k){
+      var cls;
+      if(!k.alive) cls='del';
+      else if(k.exp===null) cls='np';
+      else if(k.exp<=now){ cls='gh'; ghosts++; }
+      else cls='';
+      if(k.alive) alive++;
+      h+='<i class="'+cls+(smp[k.id]?' smp':'')+'"></i>';
+    });
+    $('keys').innerHTML=h;
+    $('simT').textContent=now.toFixed(1);
+    var recent=st.chk.slice(-10).reduce(function(a,b){return a+b;},0);
+    $('simTiles').innerHTML=
+      '<div class="tile" data-role="'+(ghosts>20?'gh':'done')+'"><small>过期了还占着内存</small><b>'+ghosts+'</b></div>'+
+      '<div class="tile" data-role="ex"><small>惰性删除删掉的</small><b>'+st.lazy+'</b></div>'+
+      '<div class="tile" data-role="ex"><small>定期删除删掉的</small><b>'+st.active+'</b></div>'+
+      '<div class="tile" data-role="other"><small>最近 1 秒抽查次数</small><b>'+fmt(recent)+'</b></div>';
+    drawSpark();
+    var v=$('simV');
+    if(!lazyOn && !activeOn){ v.setAttribute('data-role','bad'); v.textContent='两种都关了：过期的 key 只是“读起来不存在”，一个都不会从内存里删掉，越积越多。'; }
+    else if(!activeOn){ v.setAttribute('data-role','gh'); v.textContent='只有惰性删除：热门 key 一被读到就删了，但后面那 240 个设了过期、又没人读的 key，过期后一直占着内存。这就是为什么还需要定期删除。'; }
+    else if(!lazyOn){ v.setAttribute('data-role','done'); v.textContent='只有定期删除：巡逻员每秒抽查约 200 次，过期 key 很快被清掉。但两次巡逻之间，读到的 key 可能已经过期却还在，读的时候必须当场判断并删掉，这就是惰性删除，所以 Redis 两种都开。'; }
+    else if(ttlMode==='same'){ v.setAttribute('data-role','gh'); v.textContent='两种都开，但 300 个 key 在第 30 秒同时过期：那一刻巡逻员每轮抽到的几乎都是过期的，一轮接一轮地删，抽查次数陡增，这就是同时过期吃 CPU 的原因。'; }
+    else { v.setAttribute('data-role','done'); v.textContent='两种都开（Redis 的做法）：读到的当场删，没人读的靠巡逻员抽到再删，过期了还占着内存的 key 始终很少。'; }
+  }
+  function drawSpark(){
+    var W=400, L=34, R=8, H1t=18, H1h=56, H2t=104, H2h=40, X=function(i){ return L+i/(TMAX*10-1)*(W-L-R); };
+    var gmax=Math.max(10, Math.max.apply(null, st.hist.concat([0]))); gmax=Math.ceil(gmax/10)*10;
+    var cmax=Math.max(40, Math.max.apply(null, st.chk.concat([0]))); cmax=Math.ceil(cmax/20)*20;
+    var h='<text class="sp-t" x="'+L+'" y="12">过期了还占着内存的 key 数</text>';
+    h+='<line class="sp-gl" x1="'+L+'" y1="'+H1t+'" x2="'+(W-R)+'" y2="'+H1t+'"/><line class="sp-gl" x1="'+L+'" y1="'+(H1t+H1h)+'" x2="'+(W-R)+'" y2="'+(H1t+H1h)+'"/>';
+    h+='<text class="sp-ax" x="'+(L-4)+'" y="'+(H1t+3)+'" text-anchor="end">'+gmax+'</text><text class="sp-ax" x="'+(L-4)+'" y="'+(H1t+H1h+3)+'" text-anchor="end">0</text>';
+    if(st.hist.length){
+      var pts=st.hist.map(function(v,i){ return X(i).toFixed(1)+','+(H1t+H1h-v/gmax*H1h).toFixed(1); });
+      h+='<path class="sp-ga" d="M'+X(0)+','+(H1t+H1h)+' L'+pts.join(' L')+' L'+X(st.hist.length-1).toFixed(1)+','+(H1t+H1h)+' Z"/><polyline class="sp-g" points="'+pts.join(' ')+'"/>';
+    }
+    h+='<text class="sp-t" x="'+L+'" y="'+(H2t-6)+'">每 0.1 秒抽查次数</text>';
+    h+='<line class="sp-gl" x1="'+L+'" y1="'+(H2t+H2h)+'" x2="'+(W-R)+'" y2="'+(H2t+H2h)+'"/>';
+    h+='<text class="sp-ax" x="'+(L-4)+'" y="'+(H2t+3)+'" text-anchor="end">'+cmax+'</text><text class="sp-ax" x="'+(L-4)+'" y="'+(H2t+H2h+3)+'" text-anchor="end">0</text>';
+    var bw=(W-L-R)/(TMAX*10);
+    st.chk.forEach(function(c,i){ if(!c) return; var hh=Math.max(1,c/cmax*H2h); h+='<rect class="sp-c" x="'+X(i).toFixed(1)+'" y="'+(H2t+H2h-hh).toFixed(1)+'" width="'+Math.max(1,bw).toFixed(2)+'" height="'+hh.toFixed(1)+'"/>'; });
+    [0,30,60,90].forEach(function(s){ h+='<text class="sp-ax" x="'+X(Math.max(0,s*10-1)).toFixed(1)+'" y="'+(H2t+H2h+13)+'" text-anchor="middle">'+s+' s</text>'; });
+    var nx=X(Math.max(0,st.hist.length-1)); h+='<line class="sp-now" x1="'+nx.toFixed(1)+'" y1="'+H1t+'" x2="'+nx.toFixed(1)+'" y2="'+(H2t+H2h)+'"/>';
+    $('spark').innerHTML=h;
+  }
+  $('tgLazy').addEventListener('click',function(){ lazyOn=!lazyOn; this.setAttribute('aria-pressed',String(lazyOn)); reset(); });
+  $('tgActive').addEventListener('click',function(){ activeOn=!activeOn; this.setAttribute('aria-pressed',String(activeOn)); reset(); });
+  document.querySelectorAll('[data-ttl]').forEach(function(b){ b.addEventListener('click',function(){ ttlMode=b.getAttribute('data-ttl'); document.querySelectorAll('[data-ttl]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); reset(); }); });
+  $('bPlay').addEventListener('click',function(){
+    if(timer){ stop(); return; }
+    if(st.t>=TMAX){ st=expInit(ttlMode,42); }
+    $('bPlay').textContent='❚❚ 暂停';
+    timer=setInterval(function(){ step(1); },100);
+  });
+  $('bFf').addEventListener('click',function(){ step(100); });
+  $('bReset').addEventListener('click',function(){ stop(); st=expInit(ttlMode,42); render(); });
+  reset();
+
+  /* ---------- eviction grid ---------- */
+  var EVM={'true':['true',0],'a10':['approx',10],'a5':['approx',5],'a3':['approx',3],'random':['random',0]};
+  function renderEv(k){
+    var m=EVM[k], r=evictSim(m[0],m[1],7), h='';
+    for(var i=0;i<1000;i++){ var gone=!!r.evicted[i], old=i<500; h+='<i class="'+(old?(gone?'ok':'stay'):(gone?'wrong':'keep'))+'"></i>'; }
+    $('egrid').innerHTML=h;
+    var n='';
+    for(var j=1000;j<1500;j++) n+='<i'+(r.evicted[j]?' class="wrong"':'')+'></i>';
+    $('newrow').innerHTML=n;
+    var acc=Math.round(r.oldHalf/500*100);
+    $('evTiles').innerHTML=
+      '<div class="tile" data-role="'+(acc>=90?'done':(acc>=70?'gh':'bad'))+'"><small>淘汰对了（最老的一半）</small><b>'+r.oldHalf+' / 500</b></div>'+
+      '<div class="tile" data-role="'+(r.newHalf?'bad':'done')+'"><small>误杀了较新的老 key</small><b>'+r.newHalf+'</b></div>'+
+      '<div class="tile" data-role="'+(r.newKeys?'bad':'done')+'"><small>误杀了刚写入的新 key</small><b>'+r.newKeys+'</b></div>'+
+      '<div class="tile" data-role="other"><small>每次淘汰看几个 key</small><b>'+(m[0]==='true'?'全部':(m[0]==='random'?'1':m[1]+' + 池子'))+'</b></div>';
+  }
+  document.querySelectorAll('[data-ev]').forEach(function(b){ b.addEventListener('click',function(){
+    document.querySelectorAll('[data-ev]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+    renderEv(b.getAttribute('data-ev'));
+  }); });
+  renderEv('a5');
+})();
+</script>
+
+</body>
+</html>
