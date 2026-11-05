@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring 事件机制</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other Spring pages. A broadcast metaphor: publisher (blue) → broadcast station (purple) → listeners (teal); async work is orange, after-commit work brown, the event itself amber. Anchor = the event lab with main-thread / pool lanes. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --pub:#3150C4; --pub-tint:#E2E7FA;
+  --mc:#6A3FC0; --mc-tint:#ECE5FA;
+  --ls:#0D7A69; --ls-tint:#DCF0EB;
+  --as:#B85F0C; --as-tint:#FBE9D5;
+  --tx:#8A5A2B; --tx-tint:#F3E6D8;
+  --ev:#9A6B00; --ev-tint:#FBF0CF;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pub:#90A4FF; --pub-tint:#1D2650;
+    --mc:#B9A0FF; --mc-tint:#2A2148;
+    --ls:#40C6B0; --ls-tint:#12352F;
+    --as:#F4A651; --as-tint:#3A2812;
+    --tx:#D9A26B; --tx-tint:#3A2A1A;
+    --ev:#F2C94C; --ev-tint:#3A3212;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pub:#90A4FF; --pub-tint:#1D2650;
+  --mc:#B9A0FF; --mc-tint:#2A2148;
+  --ls:#40C6B0; --ls-tint:#12352F;
+  --as:#F4A651; --as-tint:#3A2812;
+  --tx:#D9A26B; --tx-tint:#3A2A1A;
+  --ev:#F2C94C; --ev-tint:#3A3212;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--pub)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--pub);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pub"]{--rc:var(--pub);--rt:var(--pub-tint)}
+[data-role="mc"]{--rc:var(--mc);--rt:var(--mc-tint)}
+[data-role="ls"]{--rc:var(--ls);--rt:var(--ls-tint)}
+[data-role="as"]{--rc:var(--as);--rt:var(--as-tint)}
+[data-role="tx"]{--rc:var(--tx);--rt:var(--tx-tint)}
+[data-role="ev"]{--rc:var(--ev);--rt:var(--ev-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.bcast{margin-top:24px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,.9fr) auto minmax(0,1.1fr);gap:12px;align-items:center}
+.bc{border:2px solid var(--rc);background:var(--rt);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.bc-h{display:flex;align-items:center;gap:8px}
+.bc-h svg{width:32px;height:32px;color:var(--rc);flex:none}
+.bc-h b{font-family:var(--font-display);font-weight:400;font-size:21px;color:var(--rc)}
+.bc code{font-size:12px;overflow-wrap:anywhere}
+.bc p{font-size:13px}
+.evpill{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--ev);color:var(--on-accent)}
+.lsn{display:flex;flex-direction:column;gap:8px}
+.lsn .bc{padding:8px 12px;flex-direction:row;align-items:center;gap:10px}
+.lsn .bc svg{width:26px;height:26px;color:var(--rc);flex:none}
+.lsn .bc b{font-size:14.5px}
+.lsn .bc small{display:block;font-size:12px;color:var(--muted)}
+.barr{display:flex;flex-direction:column;align-items:center;font-size:12px;color:var(--muted);text-align:center}
+.barr b{font-size:24px;color:var(--line-strong);font-weight:400;line-height:1}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--mc)} .kw{color:var(--as)} .st-s{color:var(--ls)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--mc-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px}
+.t thead th.c1{color:var(--ls)} .t thead th.c2{color:var(--as)} .t thead th.c3{color:var(--tx)}
+.t tbody th{font-weight:500;white-space:nowrap;color:var(--muted)}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+
+/* ---------- how ---------- */
+.how{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.stage{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
+.stage h3{font-size:20px;color:var(--rc)}
+.stage ol{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.stage code{font-size:12.5px;overflow-wrap:anywhere}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.cfg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.lc{border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.lc-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.lc-h b{font-size:15.5px}
+.lc-h small{font-size:12px;color:var(--muted)}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.sg{font-size:12.5px;padding:4px 10px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.sg[aria-pressed="true"]{background:var(--rc);border-color:var(--rc);color:var(--on-accent)}
+.cfg2{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;font-size:14px}
+.cfg2 .lbl{color:var(--muted);font-size:13px}
+.chk{display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--bad);margin:0}
+.lanes{border:1.5px solid var(--line);border-radius:14px;overflow:hidden}
+.lanes-h,.lrow{display:grid;grid-template-columns:3.4em minmax(0,1fr) minmax(0,1fr)}
+.lanes-h{background:var(--neutral-tint);font-size:12.5px;font-weight:700;color:var(--muted)}
+.lanes-h span{padding:6px 10px}
+.lrow{border-top:1px solid var(--line);font-size:13px;min-height:34px}
+.lrow .tno{padding:6px 8px;font-family:var(--font-mono);font-size:11.5px;color:var(--muted);text-align:right;border-right:1px solid var(--line)}
+.lrow .cell{padding:5px 10px;min-width:0;display:flex;align-items:center}
+.lrow .cell + .cell{border-left:1px dashed var(--line)}
+.blk{padding:3px 9px;border-radius:8px;background:var(--rt);border-left:4px solid var(--rc);overflow-wrap:anywhere;min-width:0}
+.blk small{color:var(--muted)}
+.outs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.out{border:2px solid var(--rc);border-radius:12px;padding:8px 10px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.out b{font-size:13px;color:var(--muted);font-weight:700}
+.out span{font-size:13.5px;font-weight:500;overflow-wrap:anywhere}
+.warns{display:flex;flex-direction:column;gap:6px}
+.warn{font-size:14px;padding:8px 12px;border-radius:10px;background:var(--bad-tint);border-left:5px solid var(--bad)}
+.okmsg{font-size:14px;padding:8px 12px;border-radius:10px;background:var(--good-tint);border-left:5px solid var(--good)}
+.presets{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.presets .lbl{font-size:13px;color:var(--muted)}
+.pbtn{font-size:13px;padding:5px 12px;border-radius:999px;border:1.5px dashed var(--line-strong);background:var(--card);cursor:pointer}
+.pbtn:hover{border-style:solid}
+
+/* ---------- phases ---------- */
+.phs{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,.8fr) auto minmax(0,.9fr) auto minmax(0,1.1fr);gap:8px;align-items:stretch}
+.phc{border:2px solid var(--rc);background:var(--rt);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.phc code{font-size:12px;font-weight:700;overflow-wrap:anywhere}
+.phc span{font-size:12.5px}
+.phc.split{gap:6px}
+.phc.split div{padding:4px 8px;border-radius:8px;background:var(--card)}
+.parr{align-self:center;color:var(--line-strong);font-size:20px}
+
+/* ---------- builtin / vs ---------- */
+.blt{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.bi{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;padding:10px 12px;border-radius:12px;background:var(--card);border:1.5px solid var(--line);align-items:baseline}
+.bi code{font-size:12.5px;font-weight:700;color:var(--rc);grid-column:1 / -1;overflow-wrap:anywhere}
+.bi span{font-size:13.5px;grid-column:1 / -1}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.era .codebox{border-radius:12px}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .outs{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .bcast,.phs{grid-template-columns:1fr}
+  .barr b,.parr{transform:rotate(90deg)}
+  .how,.cfg,.three,.eras{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits,.minis,.blt{grid-template-columns:1fr}
+  .outs{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .lanes-h,.lrow{grid-template-columns:2.8em minmax(0,1fr) minmax(0,1fr)}
+  .lrow{font-size:12px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-env" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="14" width="52" height="38" rx="4"/>
+    <path class="ks-paper" stroke-width="3" stroke-linejoin="round" d="M8 17l24 19 24-19"/>
+    <circle class="k-gold" cx="48" cy="46" r="7"/>
+  </symbol>
+  <symbol id="i-mega" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M8 25h10l26-14v42L18 39H8z"/>
+    <path class="k-ink" d="M18 39l4 16h8l-4-16z"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M50 24c4 4 4 12 0 16M55 18c7 7 7 21 0 28"/>
+  </symbol>
+  <symbol id="i-tower" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M29 24h6l9 37h-6l-2-8h-8l-2 8h-6z"/>
+    <rect class="k-paper" opacity=".5" x="27.5" y="41" width="9" height="3" rx="1"/>
+    <circle class="k-gold" cx="32" cy="18" r="6"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M21 8c-6 6-6 14 0 20M43 8c6 6 6 14 0 20M13 3c-10 10-10 25 0 32M51 3c10 10 10 25 0 32"/>
+  </symbol>
+  <symbol id="i-ear" viewBox="0 0 64 64">
+    <path class="ks-cur" stroke-width="6" stroke-linecap="round" d="M12 40v-8a20 20 0 0 1 40 0v8"/>
+    <rect fill="currentColor" x="6" y="36" width="14" height="22" rx="5"/>
+    <rect fill="currentColor" x="44" y="36" width="14" height="22" rx="5"/>
+    <rect class="k-gold" x="10" y="42" width="6" height="10" rx="2"/>
+    <rect class="k-gold" x="48" y="42" width="6" height="10" rx="2"/>
+  </symbol>
+  <symbol id="i-seq" viewBox="0 0 64 64">
+    <path class="ks-cur" stroke-width="5" stroke-linecap="round" d="M8 32h48"/>
+    <circle fill="currentColor" cx="14" cy="32" r="7"/>
+    <circle fill="currentColor" cx="32" cy="32" r="7"/>
+    <circle class="k-gold" cx="50" cy="32" r="7"/>
+  </symbol>
+  <symbol id="i-fork" viewBox="0 0 64 64">
+    <path class="ks-cur" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" d="M10 32h18M28 32l12-14h14M28 32l12 14h14"/>
+    <circle class="k-gold" cx="10" cy="32" r="6"/>
+  </symbol>
+  <symbol id="i-commit" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="26"/>
+    <path class="ks-paper" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" d="M20 33l8 8 16-17"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Spring</span><span aria-hidden="true">/</span><span class="tb-here">Spring 事件机制</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING · APPLICATIONEVENT · @EVENTLISTENER · @TRANSACTIONALEVENTLISTENER</p>
+  <h1>发个广播，谁关心谁来听</h1>
+  <p class="lead">下单成功后要加积分、发短信、记统计。下单代码不用认识这些人，只要喊一声“订单付款了”。Spring 的广播站会找出所有关心这件事的监听器，挨个通知。</p>
+
+  <div class="bcast">
+    <div class="bc" data-role="pub">
+      <div class="bc-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mega"/></svg><b>发布者</b></div>
+      <code>OrderService.placeOrder()</code>
+      <p>存好订单，喊一声：</p>
+      <span class="evpill">OrderPaidEvent</span>
+    </div>
+    <div class="barr" aria-hidden="true"><b>→</b>publishEvent</div>
+    <div class="bc" data-role="mc">
+      <div class="bc-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-tower"/></svg><b>广播站</b></div>
+      <code>ApplicationEventMulticaster</code>
+      <p>按事件类型挑出关心它的监听器，按 @Order 排好，一个个通知。</p>
+    </div>
+    <div class="barr" aria-hidden="true"><b>→</b>挨个通知</div>
+    <div class="lsn">
+      <div class="bc" data-role="ls"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ear"/></svg><div><b>积分监听器</b><small>加 10 积分</small></div></div>
+      <div class="bc" data-role="ls"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ear"/></svg><div><b>短信监听器</b><small>调短信网关</small></div></div>
+      <div class="bc" data-role="ls"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ear"/></svg><div><b>统计监听器</b><small>Redis 计数加一</small></div></div>
+    </div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="ev">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-env"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">事件<code>任意对象</code></div>
+        <p>说清楚发生了什么。Spring 4.2 起<b>不用再继承 ApplicationEvent</b>。</p>
+        <span class="belong">JDK 17 可以直接用 record</span>
+      </div>
+    </div>
+    <div class="who" data-role="pub">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mega"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">发布者<code>ApplicationEventPublisher</code></div>
+        <p>注入进来调 <code>publishEvent</code>。容器本身<b>就是一个发布者</b>。</p>
+        <span class="belong">ApplicationContext 实现了它</span>
+      </div>
+    </div>
+    <div class="who" data-role="mc">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-tower"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">广播站<code>ApplicationEventMulticaster</code></div>
+        <p>默认<b>就在发布者的线程里</b>，一个接一个调监听器。</p>
+        <span class="belong">SimpleApplicationEventMulticaster</span>
+      </div>
+    </div>
+    <div class="who" data-role="ls">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ear"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">监听器<code>@EventListener</code></div>
+        <p>方法参数写什么类型，就<b>听什么事件</b>。</p>
+        <span class="belong">也可以实现 ApplicationListener 接口</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= CODE ================= -->
+<section id="code">
+  <div>
+    <h2>最少的代码</h2>
+    <p class="lead">三样东西：一个事件类，一处 publishEvent，几个带 @EventListener 的方法。OrderService 里没有一行和积分、短信有关的代码。</p>
+  </div>
+  <div class="three">
+    <div class="codebox">
+      <div class="code-bar"><b>事件</b></div>
+<pre><code><span class="cm">// JDK 17：一行 record</span>
+<span class="kw">public record</span> OrderPaidEvent(
+        Long orderId,
+        Long userId,
+        BigDecimal amount) { }
+
+<span class="cm">// JDK 8：普通类，</span>
+<span class="cm">// final 字段 + 构造器 + getter</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>发布</b></div>
+<pre><code><span class="an">@Service</span>
+<span class="kw">public class</span> OrderService {
+    <span class="kw">private final</span> ApplicationEventPublisher publisher;
+    <span class="cm">// 构造器注入省略</span>
+
+    <span class="an">@Transactional</span>
+    <span class="kw">public void</span> placeOrder(Order o) {
+        orderMapper.insert(o);
+        publisher.publishEvent(
+            <span class="kw">new</span> OrderPaidEvent(o.getId(),
+                o.getUserId(), o.getAmount()));
+    }
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>监听</b></div>
+<pre><code><span class="an">@Component</span>
+<span class="kw">public class</span> PointsListener {
+    <span class="an">@Order</span>(<span class="kw">1</span>)
+    <span class="an">@EventListener</span>
+    <span class="kw">public void</span> on(OrderPaidEvent e) {
+        pointsService.add(e.userId(), <span class="kw">10</span>);
+    }
+}
+<span class="cm">// 短信、统计监听器同理，</span>
+<span class="cm">// 各自一个类，互不认识</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOW ================= -->
+<section id="how">
+  <div>
+    <h2>广播站怎么找到听众</h2>
+    <p class="lead">分两个时刻：启动时把所有 @EventListener 方法登记好；发布时按事件类型挑出来，挨个调用。</p>
+  </div>
+  <div class="how">
+    <div class="stage" data-role="mc">
+      <h3>启动时：登记听众</h3>
+      <ol>
+        <li>所有单例 Bean 造完后，<code>EventListenerMethodProcessor</code> 扫描每个 Bean 上带 @EventListener 的方法。</li>
+        <li>每个方法包成一个 <code>ApplicationListenerMethodAdapter</code>，记下它听哪种事件、什么条件、什么顺序。</li>
+        <li>登记到广播站。从这以后发出的事件，它们才收得到（<a href="spring-boot-startup.html">第 07 篇</a>讲过启动早期的事件为什么收不到）。</li>
+      </ol>
+    </div>
+    <div class="stage" data-role="pub">
+      <h3>发布时：挨个通知</h3>
+      <ol>
+        <li>事件不是 ApplicationEvent，就包成 <code>PayloadApplicationEvent</code>。</li>
+        <li>按事件的类型（连泛型一起）挑出关心它的监听器，结果按类型缓存，下次直接用。</li>
+        <li>按 <code>@Order</code> 排序，一个个调用；有 <code>condition</code> 的先算条件。</li>
+        <li>监听方法有返回值，就把返回值当成新事件再发一次。</li>
+        <li>有父容器的话，再往父容器发一遍。</li>
+      </ol>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><code>SimpleApplicationEventMulticaster</code><span>简化版</span></div>
+<pre><code><span class="kw">public void</span> multicastEvent(ApplicationEvent event, ResolvableType eventType) {
+    Executor executor = getTaskExecutor();                                  <span class="cm">// 默认是 null</span>
+    <span class="kw">for</span> (ApplicationListener&lt;?&gt; listener : getApplicationListeners(event, eventType)) {  <span class="cm">// 挑出来、排好序</span>
+        <span class="kw">if</span> (executor != <span class="kw">null</span>) {
+            executor.execute(() -&gt; invokeListener(listener, event));      <span class="cm">// 给广播站配了线程池：全部异步</span>
+        } <span class="kw">else</span> {
+            invokeListener(listener, event);                               <span class="cm">// 默认：就在发布者的线程里，一个接一个</span>
+        }
+    }
+}</code></pre>
+  </div>
+  <div class="note-box"><b>记住</b><span>默认是<b>同步</b>的。发布者调完 publishEvent，所有同步监听器已经执行完了；其中一个抛异常，异常会一路抛回发布者，后面的监听器也不会再被调用。</span></div>
+</section>
+
+<!-- ================= LAB ================= -->
+<section id="lab">
+  <div>
+    <h2>事件实验台</h2>
+    <p class="lead">placeOrder 带着 @Transactional，存订单后发出 OrderPaidEvent。给三个监听器选不同的写法，看谁在哪个线程跑、事务回滚了会怎样、用户要等多久。</p>
+  </div>
+  <div class="lab" id="labbox">
+    <div class="presets"><span class="lbl">试试这几种：</span>
+      <button class="pbtn" id="ps-good" data-preset="good">推荐搭配</button>
+      <button class="pbtn" id="ps-allsync" data-preset="allsync">全部同步</button>
+      <button class="pbtn" id="ps-smsfail" data-preset="smsfail">同步短信失败</button>
+      <button class="pbtn" id="ps-asyncrb" data-preset="asyncrb">异步 + 事务回滚</button>
+    </div>
+    <div class="cfg" id="cfg"></div>
+    <div class="cfg2">
+      <span class="lbl">哪个监听器抛异常：</span>
+      <div class="seg" role="group" aria-label="哪个监听器抛异常" data-role="bad" id="throwSeg">
+        <button class="sg" id="th-none" data-th="" aria-pressed="true">都不抛</button>
+        <button class="sg" id="th-pts" data-th="pts" aria-pressed="false">积分</button>
+        <button class="sg" id="th-sms" data-th="sms" aria-pressed="false">短信</button>
+        <button class="sg" id="th-sta" data-th="sta" aria-pressed="false">统计</button>
+      </div>
+      <label class="chk" for="lateFail"><input type="checkbox" id="lateFail"> 发完事件之后，扣库存失败，事务回滚</label>
+    </div>
+    <div class="lanes" aria-live="polite">
+      <div class="lanes-h"><span>ms</span><span>主线程（处理这次请求）</span><span>异步线程池</span></div>
+      <div id="rows"></div>
+    </div>
+    <div class="outs" id="outs"></div>
+    <div class="warns" id="warns"></div>
+  </div>
+</section>
+
+<!-- ================= MODES ================= -->
+<section id="modes">
+  <div>
+    <h2>三种写法，逐项比</h2>
+    <p class="lead">同一个监听方法，加不同的注解，行为差别很大。挑的时候先问自己：这件事要不要和订单一起成败？</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col" class="c1">@EventListener</th><th scope="col" class="c2">@Async + @EventListener</th><th scope="col" class="c3">@TransactionalEventListener</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">在哪个线程</th><td>发布者的线程</td><td>线程池里的线程</td><td>发布者的线程，事务结束之后</td></tr>
+        <tr><th scope="row">发布者等它吗</th><td>等，一个接一个</td><td>不等</td><td>等，提交后、方法返回前跑完</td></tr>
+        <tr><th scope="row">在发布者的事务里吗</th><td>在，同一个数据库连接</td><td>不在</td><td>事务已经提交，写库要 <code>REQUIRES_NEW</code></td></tr>
+        <tr><th scope="row">抛异常会怎样</th><td>抛回发布者，后面的监听器不再执行，事务回滚</td><td>只进日志</td><td>AFTER_COMMIT 里抛的，只进日志</td></tr>
+        <tr><th scope="row">事务回滚了还执行吗</th><td>已经执行过了</td><td>已经交给线程池，照样执行</td><td>不执行</td></tr>
+        <tr><th scope="row">发布时没有事务</th><td>照常</td><td>照常</td><td>默认直接丢掉，<code>fallbackExecution = true</code> 才执行</td></tr>
+        <tr><th scope="row">适合</th><td>必须和主流程一起成败的事</td><td>慢、可以失败、和主流程无关的事</td><td>主流程真的成功了才该做的事</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note-box"><b>可以叠加</b><span><code>@Async</code> 加 <code>@TransactionalEventListener</code>：事务提交成功后，才把监听器交给线程池。发短信、发通知这类事最合适：订单回滚了不会发，用户也不用等。实验台里的“提交后 + 异步”就是这种写法。</span></div>
+  <div>
+    <h3>@TransactionalEventListener 的四个时刻</h3>
+    <p class="lead">用 <code>phase</code> 选。默认是 AFTER_COMMIT。</p>
+  </div>
+  <div class="phs">
+    <div class="phc" data-role="pub"><code>方法体</code><span>存订单，publishEvent：先登记，不执行</span></div>
+    <span class="parr" aria-hidden="true">→</span>
+    <div class="phc" data-role="tx"><code>BEFORE_COMMIT</code><span>提交前，还在事务里</span></div>
+    <span class="parr" aria-hidden="true">→</span>
+    <div class="phc split" data-role="tx"><div><code>AFTER_COMMIT</code><span> 提交成功后（默认）</span></div><div><code>AFTER_ROLLBACK</code><span> 回滚之后</span></div></div>
+    <span class="parr" aria-hidden="true">→</span>
+    <div class="phc" data-role="tx"><code>AFTER_COMPLETION</code><span>不管提交还是回滚，结束后都执行</span></div>
+  </div>
+</section>
+
+<!-- ================= MORE ================= -->
+<section id="more">
+  <div>
+    <h2>几个顺手的细节</h2>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span>条件、返回值、顺序</span></div>
+<pre><code><span class="an">@Order</span>(<span class="kw">2</span>)                                                 <span class="cm">// 同步监听器按它排先后</span>
+<span class="an">@EventListener</span>(condition = <span class="st-s">"#event.amount &gt; 1000"</span>)        <span class="cm">// SpEL 条件：只听大额订单</span>
+<span class="kw">public</span> CouponEvent onBigOrder(OrderPaidEvent event) {
+    <span class="kw">return new</span> CouponEvent(event.userId());                 <span class="cm">// 返回值会被当成新事件，再广播一次</span>
+}</code></pre>
+  </div>
+  <div class="minis">
+    <div class="mini"><b>泛型事件</b><p><code>EntityCreated&lt;Order&gt;</code> 这类事件，运行时泛型被擦掉了。让事件实现 <code>ResolvableTypeProvider</code>，监听器才能按泛型区分。</p></div>
+    <div class="mini"><b>早期事件会被攒着</b><p>容器 refresh 时，广播站建好之前发的事件先存起来，登记完监听器再统一发出。</p></div>
+    <div class="mini"><b>给广播站配线程池</b><p><code>SimpleApplicationEventMulticaster.setTaskExecutor</code> 会让<b>所有</b>监听器都异步，连框架自己的也是。一般只给需要的方法加 @Async。</p></div>
+  </div>
+</section>
+
+<!-- ================= BUILTIN & VS ================= -->
+<section id="builtin">
+  <div>
+    <h2>Spring 自己也在发事件</h2>
+    <p class="lead">不用自己发，直接听就行。Boot 启动过程中的事件见 <a href="spring-boot-startup.html">第 07 篇</a>。</p>
+  </div>
+  <div class="blt">
+    <div class="bi" data-role="mc"><code>ContextRefreshedEvent</code><span>容器 refresh 完成。有父子容器时会发不止一次。</span></div>
+    <div class="bi" data-role="mc"><code>ContextClosedEvent</code><span>容器关闭，适合做清理、优雅下线。</span></div>
+    <div class="bi" data-role="mc"><code>ContextStartedEvent / ContextStoppedEvent</code><span>显式调用 start()、stop() 时才发，平时很少见。</span></div>
+    <div class="bi" data-role="mc"><code>ServletRequestHandledEvent</code><span>每个 HTTP 请求处理完，DispatcherServlet 发一个，带耗时和状态码。</span></div>
+  </div>
+  <div>
+    <h3>和消息队列比</h3>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col" class="c1">Spring 事件</th><th scope="col" class="c2">消息队列（Kafka、RocketMQ……）</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">范围</th><td>同一个进程的内存里</td><td>跨服务、跨机器</td></tr>
+        <tr><th scope="row">进程挂了</th><td>还没处理的事件就丢了</td><td>消息存在 broker 上，重启后接着消费</td></tr>
+        <tr><th scope="row">失败重试</th><td>自己写</td><td>自带重试、死信</td></tr>
+        <tr><th scope="row">和数据库事务</th><td>@TransactionalEventListener 保证提交后才处理</td><td>要靠本地消息表或事务消息</td></tr>
+        <tr><th scope="row">适合</th><td>一个服务内部解耦</td><td>服务之间通知，需要可靠投递</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：Spring 5 和 Spring 6</h2>
+    <p class="lead">广播站、监听器、四个时刻，两边都一样。Spring 6 收紧了一条规则，Boot 3 周边还多了一些现成的工具。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>事件写成普通类：final 字段、构造器、getter</li>
+        <li>@TransactionalEventListener 方法上随便加 @Transactional 也能启动，但默认传播方式下写库不会提交，容易踩坑</li>
+        <li>@Async 用 Boot 配好的 <code>applicationTaskExecutor</code>：核心 8 个线程，队列不限长</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring 6 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>事件可以直接写成 <code>record</code>，天生不可变，几个监听器之间不会互相改坏</li>
+        <li>6.1 起，@TransactionalEventListener 方法上的 @Transactional 只能是 <code>REQUIRES_NEW</code> 或 <code>NOT_SUPPORTED</code>，写错了启动就报错</li>
+        <li>Boot 3.2 起配 <code>spring.threads.virtual.enabled=true</code>，@Async 用虚拟线程（要 JDK 21）</li>
+        <li>Spring Modulith 的 <code>@ApplicationModuleListener</code> 等于 @Async + REQUIRES_NEW + @TransactionalEventListener，还能把事件存进数据库，失败了可以重发</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>默认同步</span><span>按类型挑监听器</span><span>@Order 排序</span><span>四个事务时刻</span><span>只在一个进程里</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">多数坑都是同一个问题：没想清楚这个监听器在哪个线程、哪个事务里跑。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="ls"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-seq"/></svg><b>短信网关超时，订单也下不成了</b><p>同步监听器抛的异常抛回了 placeOrder，整个事务回滚，后面的监听器也没执行。可以失败的事，用 @Async 或 @TransactionalEventListener。</p></div>
+    <div class="pit" data-role="as"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fork"/></svg><b>订单回滚了，短信却发出去了</b><p>@Async 不等事务，事件一发出就交给线程池。改成 @TransactionalEventListener，需要异步就再加 @Async。</p></div>
+    <div class="pit" data-role="as"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fork"/></svg><b>加了 @Async，还是在主线程里跑</b><p>没有 <code>@EnableAsync</code>。另外 @Async 靠代理，同一个类里自己调自己不生效，和事务注解一样（<a href="spring-aop-tx.html">第 02 篇</a>）。</p></div>
+    <div class="pit" data-role="as"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fork"/></svg><b>异步任务越堆越多，内存涨上去</b><p>Boot 默认的线程池队列不限长，短信网关一慢，任务全堆在内存里。用 <code>spring.task.execution.pool.queue-capacity</code> 设上限，想好满了怎么办。</p></div>
+    <div class="pit" data-role="as"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-fork"/></svg><b>异步监听器里拿不到当前用户</b><p>登录信息、事务都挂在 ThreadLocal 上，换了线程就没了（<a href="spring-security.html">第 05 篇</a>）。需要的数据放进事件对象里带过去。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-commit"/></svg><b>@TransactionalEventListener 一次都没执行</b><p>发布事件时根本没有事务，事件被直接丢掉了。检查发布方法上有没有 @Transactional，或者设 <code>fallbackExecution = true</code>。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-commit"/></svg><b>AFTER_COMMIT 里写数据库，没写进去</b><p>原来的事务已经提交，连接还挂在线程上，新写的 SQL 参与的是一个不会再提交的事务。方法上加 <code>@Transactional(propagation = REQUIRES_NEW)</code>。</p></div>
+    <div class="pit" data-role="mc"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-tower"/></svg><b>ContextRefreshedEvent 的监听器执行了两次</b><p>有父子容器，每个容器 refresh 完都发一次。改听 <code>ApplicationReadyEvent</code>，或者判断 <code>event.getApplicationContext().getParent() == null</code>。</p></div>
+    <div class="pit" data-role="ev"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-env"/></svg><b>前一个监听器改了事件里的字段，后一个看到的是改过的</b><p>所有监听器拿到的是同一个对象。事件做成不可变的，JDK 17 直接用 record。</p></div>
+    <div class="pit" data-role="ev"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-env"/></svg><b>服务重启，还没处理完的事件丢了</b><p>事件只在内存里。必须送达的事，用消息队列，或者先把事件存进数据库（本地消息表、Spring Modulith 的事件登记表）。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Spring 5 / 6、Spring Boot 2 / 3 为例。同系列：<a href="spring-aop-tx.html">Spring AOP 与事务</a> · <a href="spring-boot-startup.html">Spring Boot 启动流程</a> · <a href="../mybatis/mybatis-spring-tx.html">MyBatis 与 Spring 事务</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var LS=[
+  {id:'pts', name:'积分', act:'加 10 积分', ms:30, db:true},
+  {id:'sms', name:'短信', act:'调短信网关', ms:800, db:false},
+  {id:'sta', name:'统计', act:'Redis 计数加一', ms:20, db:false}
+];
+var MODE_TXT={sync:'同步',async:'@Async',after:'提交后',afterAsync:'提交后 + 异步'};
+function simulate(cfg){
+  var rows=[], t=0, out={}, warns=[];
+  function main(txt,role){ rows.push({t:t,lane:'main',txt:txt,role:role}); }
+  function pool(txt,role){ rows.push({t:t,lane:'pool',txt:txt,role:role}); }
+  main('开启事务','pub');
+  t+=5; main('INSERT t_order（未提交）','pub');
+  main('publishEvent(OrderPaidEvent)：广播站按 @Order 挨个通知','mc');
+  var aborted=null, registered=[], asyncRan=[];
+  LS.forEach(function(l){
+    var m=cfg.mode[l.id], th=cfg.thrower===l.id;
+    if(aborted){ out[l.id]={s:'没执行：前面的监听器抛了异常，广播中断',r:'other'}; return; }
+    if(m==='sync'){
+      if(th){ t+=10; main(l.name+'（同步）：抛出异常','bad'); out[l.id]={s:'抛异常，导致整单回滚',r:'bad'}; aborted=l; }
+      else { t+=l.ms; main(l.name+'（同步）：'+l.act+'，'+l.ms+' ms','ls'); out[l.id]={s:'在主线程执行完'+(l.db?'，和订单同一个事务':''),r:'ls',ran:true}; }
+    } else if(m==='async'){
+      pool(l.name+'（@Async）：'+l.act+'，'+l.ms+' ms'+(th?'，抛异常':'')+'（主线程不等）', th?'bad':'as');
+      out[l.id]= th ? {s:'在线程池里抛异常，只进日志，订单不受影响',r:'as'} : {s:'在线程池里执行'+(l.db?'，自己的事务':''),r:'as',ran:true};
+      asyncRan.push(l);
+    } else {
+      main(l.name+'（'+MODE_TXT[m]+'）：先登记，等事务提交','tx');
+      registered.push(l);
+    }
+  });
+  var committed=false, cause='';
+  if(aborted){ cause='异常抛回 placeOrder()'; }
+  else if(cfg.lateFail){ t+=5; main('扣库存失败，抛出异常','bad'); cause='扣库存失败'; }
+  if(aborted || cfg.lateFail){
+    main('事务回滚：订单撤销','bad');
+    registered.forEach(function(l){ out[l.id]={s:'没执行：事务没提交',r:'done'}; });
+    LS.forEach(function(l){
+      var m=cfg.mode[l.id], o=out[l.id];
+      if(m==='sync' && o && o.ran){
+        if(l.db){ o.s='执行过，又跟着订单一起回滚了'; o.r='done'; }
+        else { o.s='已经执行，回滚也撤不回来'; o.r='bad'; warns.push('订单回滚了，'+l.name+'却已经在主线程执行过（'+l.act+'），撤不回来。'); }
+      }
+      if(m==='async' && o && o.ran){
+        o.s = l.db ? '在另一个线程、另一个事务里提交了，回滚不到' : '已经执行，订单却回滚了';
+        o.r='bad';
+        warns.push('订单回滚了，'+l.name+'在线程池里照样执行了（'+l.act+'）。@Async 不等事务结果。');
+      }
+    });
+    main('用户收到 500 错误，等了 '+t+' ms','bad');
+    return {rows:rows,out:out,warns:warns,order:{s:'已回滚（'+cause+'）',r:'bad'},user:{s:'500 错误，等了 '+t+' ms',r:'bad'},ms:t};
+  }
+  t+=5; main('提交事务：订单生效','done'); committed=true;
+  registered.forEach(function(l){
+    if(cfg.mode[l.id]==='afterAsync'){
+      var th2=cfg.thrower===l.id;
+      pool(l.name+'（提交后 + 异步）：'+l.act+'，'+l.ms+' ms'+(th2?'，抛异常':'')+'（主线程不等）', th2?'bad':'tx');
+      out[l.id]= th2 ? {s:'提交后在线程池里抛异常，只进日志',r:'tx'} : {s:'提交后交给线程池执行'+(l.db?'；写库要配 REQUIRES_NEW':''),r:'tx'};
+      return;
+    }
+    if(cfg.thrower===l.id){ t+=10; main(l.name+'（提交后）：抛异常，Spring 只记一条 ERROR 日志','bad'); out[l.id]={s:'提交后执行，抛的异常被吞掉，只在日志里',r:'tx'}; }
+    else { t+=l.ms; main(l.name+'（提交后）：'+l.act+'，'+l.ms+' ms','tx'); out[l.id]={s:'提交后执行'+(l.db?'；写库要配 REQUIRES_NEW 才会提交':''),r:'tx'}; }
+  });
+  main('返回成功，用户等了 '+t+' ms','done');
+  if(cfg.mode.sms==='sync') warns.push('短信是同步的：用户要多等 800 ms，短信网关一出错，整单都会失败。');
+  return {rows:rows,out:out,warns:warns,order:{s:'已保存',r:'done'},user:{s:'成功，等了 '+t+' ms',r:'done'},ms:t};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var cfg={mode:{pts:'sync',sms:'afterAsync',sta:'after'}, thrower:'', lateFail:false};
+  var ROLE={sync:'ls',async:'as',after:'tx',afterAsync:'tx'};
+
+  // build listener config cards
+  $('cfg').innerHTML=LS.map(function(l,i){
+    return '<div class="lc"><div class="lc-h"><b>'+(i+1)+'. '+l.name+'监听器</b><small>'+l.act+' · '+l.ms+' ms'+(l.db?' · 写数据库':'')+'</small></div>'+
+      '<div class="seg" role="group" aria-label="'+l.name+'监听器的写法">'+
+      ['sync','async','after','afterAsync'].map(function(m){ return '<button class="sg" id="m-'+l.id+'-'+m+'" data-l="'+l.id+'" data-m="'+m+'" data-role="'+ROLE[m]+'" aria-pressed="false">'+MODE_TXT[m]+'</button>'; }).join('')+
+      '</div></div>';
+  }).join('');
+
+  var PRESETS={
+    good:{mode:{pts:'sync',sms:'afterAsync',sta:'after'},thrower:'',lateFail:false},
+    allsync:{mode:{pts:'sync',sms:'sync',sta:'sync'},thrower:'',lateFail:false},
+    smsfail:{mode:{pts:'sync',sms:'sync',sta:'sync'},thrower:'sms',lateFail:false},
+    asyncrb:{mode:{pts:'async',sms:'async',sta:'sync'},thrower:'',lateFail:true}
+  };
+
+  function render(){
+    document.querySelectorAll('[data-l]').forEach(function(b){ b.setAttribute('aria-pressed', String(cfg.mode[b.getAttribute('data-l')]===b.getAttribute('data-m'))); });
+    document.querySelectorAll('[data-th]').forEach(function(b){ b.setAttribute('aria-pressed', String(cfg.thrower===b.getAttribute('data-th'))); });
+    $('lateFail').checked=cfg.lateFail;
+    var R=simulate(cfg);
+    $('rows').innerHTML=R.rows.map(function(r){
+      var blk='<span class="blk" data-role="'+r.role+'">'+esc(r.txt)+'</span>';
+      return '<div class="lrow"><span class="tno">'+r.t+'</span><span class="cell">'+(r.lane==='main'?blk:'')+'</span><span class="cell">'+(r.lane==='pool'?blk:'')+'</span></div>';
+    }).join('');
+    var outs=[['订单',R.order]].concat(LS.map(function(l){ return [l.name+'（'+MODE_TXT[cfg.mode[l.id]]+'）',R.out[l.id]]; })).concat([['用户',R.user]]);
+    $('outs').innerHTML=outs.map(function(o){ return '<div class="out" data-role="'+o[1].r+'"><b>'+esc(o[0])+'</b><span>'+esc(o[1].s)+'</span></div>'; }).join('');
+    $('warns').innerHTML = R.warns.length ? R.warns.map(function(w){ return '<div class="warn">'+esc(w)+'</div>'; }).join('') : '<div class="okmsg">这种搭配下，数据前后一致。</div>';
+  }
+  document.querySelectorAll('[data-l]').forEach(function(b){
+    b.addEventListener('click', function(){ cfg.mode[b.getAttribute('data-l')]=b.getAttribute('data-m'); render(); });
+  });
+  document.querySelectorAll('[data-th]').forEach(function(b){
+    b.addEventListener('click', function(){ cfg.thrower=b.getAttribute('data-th'); render(); });
+  });
+  $('lateFail').addEventListener('change', function(){ cfg.lateFail=this.checked; render(); });
+  document.querySelectorAll('[data-preset]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var p=PRESETS[b.getAttribute('data-preset')];
+      cfg={mode:{pts:p.mode.pts,sms:p.mode.sms,sta:p.mode.sta},thrower:p.thrower,lateFail:p.lateFail};
+      render();
+    });
+  });
+  render();
+})();
+</script>
+
+</body>
+</html>
