@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring IoC 与依赖注入</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other Spring pages. Blueprints are blue, the factory purple, the finished-goods shelf teal, the delivery (injection) orange. Anchor = the injection referee. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --bd:#3150C4; --bd-tint:#E2E7FA;
+  --fac:#6A3FC0; --fac-tint:#ECE5FA;
+  --sh:#0D7A69; --sh-tint:#DCF0EB;
+  --inj:#B85F0C; --inj-tint:#FBE9D5;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C; --skin:#F1C6A0; --eye:#2A2320;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-err:#FF8A85;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --bd:#90A4FF; --bd-tint:#1D2650;
+    --fac:#B9A0FF; --fac-tint:#2A2148;
+    --sh:#40C6B0; --sh-tint:#12352F;
+    --inj:#F4A651; --inj-tint:#3A2812;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E; --skin:#E2B188;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-err:#FF8A85;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --bd:#90A4FF; --bd-tint:#1D2650;
+  --fac:#B9A0FF; --fac-tint:#2A2148;
+  --sh:#40C6B0; --sh-tint:#12352F;
+  --inj:#F4A651; --inj-tint:#3A2812;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E; --skin:#E2B188;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-err:#FF8A85;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--bd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--bd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="bd"]{--rc:var(--bd);--rt:var(--bd-tint)}
+[data-role="fac"]{--rc:var(--fac);--rt:var(--fac-tint)}
+[data-role="sh"]{--rc:var(--sh);--rt:var(--sh-tint)}
+[data-role="inj"]{--rc:var(--inj);--rt:var(--inj-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)} .k-good{fill:var(--good)} .k-line{fill:var(--line-strong)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none} .ks-ink{stroke:var(--ink);fill:none}
+.k-half{fill:var(--card);stroke:var(--good);stroke-width:2}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.vs{margin-top:22px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.vs-c{border:2px solid var(--rc);border-radius:18px;background:var(--card);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.vs-h{padding:10px 14px;background:var(--rt);display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.vs-h b{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--rc)}
+.vs-h small{font-size:13px;color:var(--muted)}
+.vs-c pre{padding:12px 14px;font-size:12.5px}
+.dep{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.3fr);gap:14px;align-items:center;margin-top:6px}
+.tree{display:flex;flex-direction:column;gap:6px;font-family:var(--font-mono);font-size:12.5px}
+.tn{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:10px;background:var(--card);border:1.5px solid var(--line);min-width:0}
+.tn i{font-style:normal;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--sh);color:var(--on-accent);font-size:11.5px;font-weight:700;flex:none}
+.tn span{overflow-wrap:anywhere}
+.tn.l1{margin-left:22px} .tn.l2{margin-left:44px} .tn.l3{margin-left:66px}
+.tn.top{border:2px solid var(--sh)}
+.dep-note{font-size:14px;display:flex;flex-direction:column;gap:6px}
+.dep-note b{font-family:var(--font-display);font-weight:400;font-size:21px}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--fac)} .kw{color:var(--inj)} .st-s{color:var(--sh)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--fac-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.mini pre{padding:8px 10px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:640px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px}
+.t tbody th{font-weight:500;white-space:nowrap;color:var(--muted)}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+
+/* ---------- container ---------- */
+.ctn{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:16px;align-items:start}
+.lvl{display:flex;flex-direction:column;gap:10px}
+.lv{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:6px;min-width:0}
+.lv h3{font-size:20px;color:var(--rc)}
+.lv h3 code{display:block;font-size:12.5px;color:var(--muted)}
+.lv ul{margin:0;padding-left:1.1em;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+.inside{border:2px solid var(--fac);border-radius:18px;padding:14px;background:var(--fac-tint);display:flex;flex-direction:column;gap:10px;min-width:0}
+.inside > b{font-family:var(--font-mono);font-size:13px;color:var(--fac)}
+.cab{border:1.5px solid var(--rc);border-radius:12px;background:var(--card);padding:8px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.cab-h{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px}
+.cab-h b{color:var(--rc)}
+.cab-h code{font-size:12px;color:var(--muted)}
+.kvs{display:flex;flex-wrap:wrap;gap:5px}
+.kvs span{font-family:var(--font-mono);font-size:11.5px;padding:1px 8px;border-radius:6px;background:var(--rt);overflow-wrap:anywhere}
+
+/* ---------- register ---------- */
+.reg{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,.9fr);gap:14px;align-items:center}
+.srcs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.src{border:1.5px solid var(--line);border-radius:12px;padding:8px 12px;background:var(--card);display:flex;flex-direction:column;gap:2px;min-width:0}
+.src b{font-size:14.5px}
+.src code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.bdcard{border:2px solid var(--bd);border-radius:16px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.bdcard-h{display:flex;align-items:center;gap:10px}
+.bdcard-h svg{width:36px;height:36px;color:var(--bd);flex:none}
+.bdcard-h b{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--bd)}
+.bdcard-h small{display:block;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.bdcard dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:13px}
+.bdcard dt{font-family:var(--font-mono);color:var(--muted)}
+.bdcard dd{margin:0;overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:22px;line-height:1;text-align:center;align-self:center}
+.twin{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.res-ok,.res-no{font-size:14px;font-weight:600;padding:8px 12px;border-radius:10px}
+.res-ok{background:var(--good-tint);border-left:5px solid var(--good)}
+.res-no{background:var(--bad-tint);border-left:5px solid var(--bad)}
+
+/* ---------- inject styles ---------- */
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.st3{border:2px solid var(--rc);border-radius:16px;background:var(--card);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.st3-h{padding:8px 12px;background:var(--rt);display:flex;justify-content:space-between;align-items:baseline;gap:6px;flex-wrap:wrap}
+.st3-h b{font-family:var(--font-display);font-weight:400;font-size:21px;color:var(--rc)}
+.st3-h small{font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--rc);color:var(--on-accent)}
+.st3 pre{padding:10px 12px;font-size:12px}
+.st3 ul{margin:0;padding:0 12px 12px 28px;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+
+/* ---------- referee ---------- */
+.ref{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px;align-items:start}
+.rcol{display:flex;flex-direction:column;gap:12px;min-width:0}
+.grp{display:flex;flex-direction:column;gap:6px}
+.grp > b{font-size:13px;color:var(--muted);font-weight:700;letter-spacing:.04em}
+.beans{display:flex;flex-direction:column;gap:6px}
+.bean{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 10px;border-radius:10px;border:1.5px solid var(--line);font-size:13px}
+.bean input{width:18px;height:18px;accent-color:var(--sh);margin:0}
+.bean code{font-weight:600;font-size:12.5px;overflow-wrap:anywhere}
+.bean code small{display:block;font-family:var(--font-body);font-weight:400;color:var(--muted);font-size:12px}
+.bean.on{border-color:var(--sh);background:var(--sh-tint)}
+.bean .pri{font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--fac);color:var(--on-accent)}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.sg{font-size:12.5px;padding:4px 10px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.sg[aria-pressed="true"]{background:var(--fac);border-color:var(--fac);color:var(--on-accent)}
+.pts{display:flex;flex-direction:column;gap:5px}
+.pt{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;padding:6px 10px;border-radius:10px;border:1.5px solid var(--line);cursor:pointer;font-size:13px}
+.pt input{width:16px;height:16px;accent-color:var(--inj);margin:0}
+.pt code{font-size:12px;overflow-wrap:anywhere}
+.pt code small{display:block;font-family:var(--font-body);color:var(--muted);font-size:11.5px}
+.pt.on{border-color:var(--inj);background:var(--inj-tint)}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.step{display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 10px;align-items:start;padding:8px 10px;border-radius:12px;border:1.5px solid var(--line);background:var(--card)}
+.step .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:12px;font-weight:700;grid-row:span 2}
+.step b{font-size:14px}
+.step span{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.step span code{color:var(--ink)}
+.step.go .n{background:var(--neutral)}
+.step.go .n{color:var(--on-accent)}
+.step.win{border:2px solid var(--good);background:var(--good-tint)}
+.step.win .n{background:var(--good);color:var(--on-accent)}
+.step.fail{border:2px solid var(--bad);background:var(--bad-tint)}
+.step.fail .n{background:var(--bad);color:var(--on-accent)}
+.result{border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.result.ok{background:var(--good-tint);border:2px solid var(--good)}
+.result.ok b{color:var(--good)}
+.result .val{font-family:var(--font-mono);font-size:13.5px;font-weight:600;overflow-wrap:anywhere}
+.result .note{font-size:13px}
+.result.err{background:var(--console-bg);color:var(--console-fg);font-family:var(--font-mono);font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.result.err .h{color:var(--console-err);font-weight:700}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .vs,.ctn,.twin,.three,.ref,.eras{grid-template-columns:1fr}
+  .dep,.reg{grid-template-columns:1fr}
+  .dep .fa,.reg .fa{transform:rotate(90deg)}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits,.minis{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .srcs{grid-template-columns:1fr}
+  .tn.l1{margin-left:12px} .tn.l2{margin-left:24px} .tn.l3{margin-left:36px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plan" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="9" width="46" height="46" rx="3"/>
+    <path class="ks-paper" stroke-width="1" opacity=".35" d="M12 20.5h46M12 32h46M12 43.5h46M23.5 9v46M35 9v46M46.5 9v46"/>
+    <path class="ks-paper" stroke-width="2.6" stroke-linejoin="round" d="M18 49V16h22v13h12v20z"/>
+    <rect class="k-ink" x="6" y="7" width="9" height="50" rx="4.5"/>
+  </symbol>
+  <symbol id="i-bldg" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="6" width="40" height="54" rx="2"/>
+    <rect class="k-paper" x="18" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="28.5" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="18" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="28.5" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="18" y="37" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="37" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="27" y="47" width="10" height="13" rx="1"/>
+  </symbol>
+  <symbol id="i-shelf" viewBox="0 0 64 64">
+    <rect class="k-ink" x="6" y="4" width="4" height="58" rx="1.5"/>
+    <rect class="k-ink" x="54" y="4" width="4" height="58" rx="1.5"/>
+    <rect fill="currentColor" x="6" y="20" width="52" height="4" rx="1"/>
+    <rect fill="currentColor" x="6" y="39" width="52" height="4" rx="1"/>
+    <rect fill="currentColor" x="6" y="58" width="52" height="4" rx="1"/>
+    <rect class="k-good" x="14" y="8" width="13" height="12" rx="1.5"/>
+    <rect class="k-good" x="31" y="11" width="10" height="9" rx="1.5"/>
+    <rect class="k-good" x="16" y="27" width="13" height="12" rx="1.5"/>
+    <rect class="k-gold" x="34" y="30" width="12" height="9" rx="1.5"/>
+    <rect class="k-good" x="16" y="49" width="17" height="9" rx="1.5"/>
+  </symbol>
+  <symbol id="i-truck" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="16" width="34" height="28" rx="3"/>
+    <path fill="currentColor" opacity=".8" d="M38 24h12l8 10v10H38z"/>
+    <rect class="k-paper" opacity=".6" x="42" y="27" width="8" height="7" rx="1"/>
+    <rect class="k-gold" x="10" y="22" width="14" height="11" rx="1.5"/>
+    <circle class="k-ink" cx="16" cy="48" r="6"/><circle class="k-paper" cx="16" cy="48" r="2.5"/>
+    <circle class="k-ink" cx="48" cy="48" r="6"/><circle class="k-paper" cx="48" cy="48" r="2.5"/>
+  </symbol>
+  <symbol id="i-q" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="27"/>
+    <path class="ks-paper" stroke-width="6" stroke-linecap="round" d="M23 24a9 9 0 1 1 13 8c-3 1.5-4 3.5-4 6v2"/>
+    <circle class="k-paper" cx="32" cy="48" r="3.5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Spring</span><span aria-hidden="true">/</span><span class="tb-here">Spring IoC 与依赖注入</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING · IOC CONTAINER · DEPENDENCY INJECTION</p>
+  <h1>你只说要什么，容器负责造好送来</h1>
+  <p class="lead">控制反转（IoC）：创建对象、把对象拼装起来的活，从你手里交给了容器。依赖注入（DI）是它的做法：你在构造器里写明需要什么，容器造好了送进来。</p>
+
+  <div class="vs">
+    <div class="vs-c" data-role="bad">
+      <div class="vs-h"><b>自己 new</b><small>每个依赖都由你来造、你来拼</small></div>
+<pre><code>DataSource ds = <span class="kw">new</span> HikariDataSource(config);
+SqlSessionFactory f = buildFactory(ds);
+OrderMapper mapper = buildMapper(f);
+PayClient pay = <span class="kw">new</span> AlipayClient(appId, key);
+OrderService service = <span class="kw">new</span> OrderService(mapper, pay);
+<span class="cm">// 想换成微信支付？改这里，</span>
+<span class="cm">// 还有所有 new 过 AlipayClient 的地方</span></code></pre>
+    </div>
+    <div class="vs-c" data-role="sh">
+      <div class="vs-h"><b>交给容器</b><small>只声明要什么</small></div>
+<pre><code><span class="an">@Service</span>
+<span class="kw">public class</span> OrderService {
+    <span class="kw">private final</span> OrderMapper mapper;
+    <span class="kw">private final</span> PayClient pay;
+
+    <span class="kw">public</span> OrderService(OrderMapper mapper, PayClient pay) {
+        <span class="kw">this</span>.mapper = mapper;   <span class="cm">// 谁来造、造哪个实现，</span>
+        <span class="kw">this</span>.pay = pay;         <span class="cm">// 都不归它管</span>
+    }
+}</code></pre>
+    </div>
+  </div>
+  <div class="dep">
+    <div class="tree" aria-label="依赖树和创建顺序">
+      <div class="tn top"><i>5</i><span>OrderService</span></div>
+      <div class="tn l1"><i>3</i><span>OrderMapper</span></div>
+      <div class="tn l2"><i>2</i><span>SqlSessionFactory</span></div>
+      <div class="tn l3"><i>1</i><span>DataSource</span></div>
+      <div class="tn l1"><i>4</i><span>PayClient → AlipayClient</span></div>
+    </div>
+    <span class="fa" aria-hidden="true">←</span>
+    <div class="dep-note"><b>容器按依赖倒着造</b><span>要造 OrderService，先看它要什么；要的东西还没有，就先去造那个。圆圈里的数字是实际的创建顺序：最底下的先造好，再一层层往上交。</span><span class="tip">想换实现，只要换掉容器里登记的那个 PayClient，OrderService 一行不用改。</span></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="bd">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">图纸<code>BeanDefinition</code></div>
+        <p>先有图纸，再有对象。写着<b>哪个类、单例还是多例、依赖谁</b>。</p>
+        <span class="belong">扫描、@Bean、自动配置都产出图纸</span>
+      </div>
+    </div>
+    <div class="who" data-role="fac">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">工厂<code>ApplicationContext</code></div>
+        <p>按图纸造对象。里面<b>真正干活的是 DefaultListableBeanFactory</b>。</p>
+        <span class="belong">也就是常说的 IoC 容器</span>
+      </div>
+    </div>
+    <div class="who" data-role="sh">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-shelf"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">成品架<code>singletonObjects</code></div>
+        <p>单例造好后放这里，<b>谁要都给同一个</b>。</p>
+        <span class="belong">一个按名字存的 Map</span>
+      </div>
+    </div>
+    <div class="who" data-role="inj">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-truck"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">送货员<code>AutowiredAnnotationBeanPostProcessor</code></div>
+        <p>看你要什么类型，<b>去成品架上挑一个送来</b>。挑不出来就报错。</p>
+        <span class="belong">@Resource 归 CommonAnnotationBeanPostProcessor 管</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= CONTAINER ================= -->
+<section id="container">
+  <div>
+    <h2>容器里有什么</h2>
+    <p class="lead">BeanFactory 是最基础的容器，ApplicationContext 在它外面包了一圈常用功能。平时说的 Spring 容器，指的都是 ApplicationContext。</p>
+  </div>
+  <div class="ctn">
+    <div class="lvl">
+      <div class="lv" data-role="other">
+        <h3>BeanFactory<code>最基础的容器</code></h3>
+        <ul><li>按图纸造对象、注入依赖</li><li>用到才造（getBean 时）</li><li>BeanPostProcessor 要手动登记</li></ul>
+      </div>
+      <div class="lv" data-role="fac">
+        <h3>ApplicationContext<code>平时用的容器</code></h3>
+        <ul><li>启动时就把单例全造好，配置错了马上发现</li><li>自动登记 BeanPostProcessor、BeanFactoryPostProcessor</li><li>还管事件（<a href="spring-events.html">第 08 篇</a>）、配置、国际化、资源加载</li></ul>
+      </div>
+    </div>
+    <div class="inside">
+      <b>DefaultListableBeanFactory 里的几个关键 Map</b>
+      <div class="cab" data-role="bd"><div class="cab-h"><b>图纸柜</b><code>beanDefinitionMap</code></div><div class="kvs"><span>orderService → 图纸</span><span>alipayClient → 图纸</span><span>dataSource → 图纸</span><span>……</span></div></div>
+      <div class="cab" data-role="bd"><div class="cab-h"><b>按类型的索引</b><code>allBeanNamesByType</code></div><div class="kvs"><span>PayClient → [alipayClient, wechatPayClient]</span></div></div>
+      <div class="cab" data-role="sh"><div class="cab-h"><b>成品架</b><code>singletonObjects</code></div><div class="kvs"><span>orderService → OrderService@1a2b</span><span>alipayClient → AlipayClient@3c4d</span></div></div>
+      <p class="tip">getBean 时先看成品架，有就直接给；没有就拿图纸去造，造的过程见 <a href="spring-bean-lifecycle.html">第 04 篇</a>的十四站。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= REGISTER ================= -->
+<section id="register">
+  <div>
+    <h2>图纸从哪来</h2>
+    <p class="lead">写法有好几种，到了容器里都变成同一种东西：BeanDefinition。</p>
+  </div>
+  <div class="reg">
+    <div class="srcs">
+      <div class="src"><b>组件扫描</b><code>@Component · @Service · @Repository · @Controller</code></div>
+      <div class="src"><b>配置类里的方法</b><code>@Configuration + @Bean</code></div>
+      <div class="src"><b>导入</b><code>@Import · 自动配置（第 03 篇）</code></div>
+      <div class="src"><b>写代码登记</b><code>registerBean · BeanDefinitionRegistryPostProcessor</code></div>
+    </div>
+    <span class="fa" aria-hidden="true">→</span>
+    <div class="bdcard">
+      <div class="bdcard-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg><div><b>一张图纸</b><small>BeanDefinition · alipayClient</small></div></div>
+      <dl>
+        <dt>beanClass</dt><dd>com.shop.pay.AlipayClient</dd>
+        <dt>scope</dt><dd>singleton（默认）</dd>
+        <dt>lazyInit</dt><dd>false：启动时就造</dd>
+        <dt>primary</dt><dd>false</dd>
+        <dt>依赖</dt><dd>构造器参数：PayProperties</dd>
+        <dt>init / destroy</dt><dd>@PostConstruct、@PreDestroy 的方法</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div>
+    <h3>@Configuration 里的 @Bean 方法互相调用，会怎样</h3>
+    <p class="lead">同样的代码，配置类有没有被代理，结果不一样。</p>
+  </div>
+  <div class="twin">
+    <div class="codebox">
+      <div class="code-bar"><b>@Configuration</b><span>默认 proxyBeanMethods = true</span></div>
+<pre><code><span class="an">@Configuration</span>
+<span class="kw">public class</span> DbConfig {
+    <span class="an">@Bean</span> DataSource dataSource() { <span class="kw">return new</span> HikariDataSource(); }
+
+    <span class="an">@Bean</span> JdbcTemplate jdbcTemplate() {
+        <span class="kw">return new</span> JdbcTemplate(dataSource());   <span class="cm">// 调了一次方法</span>
+    }
+}</code></pre>
+      <p class="res-ok" style="margin:0 12px 12px">配置类被 CGLIB 代理了：dataSource() 被拦下，直接从成品架拿，还是同一个 DataSource。</p>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>@Configuration(proxyBeanMethods = false)</b><span>或者写在 @Component 里</span></div>
+<pre><code><span class="an">@Configuration</span>(proxyBeanMethods = <span class="kw">false</span>)
+<span class="kw">public class</span> DbConfig {
+    <span class="an">@Bean</span> DataSource dataSource() { <span class="kw">return new</span> HikariDataSource(); }
+
+    <span class="an">@Bean</span> JdbcTemplate jdbcTemplate(DataSource ds) {  <span class="cm">// 改成参数注入</span>
+        <span class="kw">return new</span> JdbcTemplate(ds);
+    }
+}</code></pre>
+      <p class="res-no" style="margin:0 12px 12px">没有代理，再直接调 dataSource() 就会 new 出第二个连接池，而且它不归容器管。所以这种写法要像上面一样，用参数接依赖。</p>
+    </div>
+  </div>
+  <p class="tip">Spring Boot 自己的自动配置类都写成 <code>proxyBeanMethods = false</code>，省掉生成代理的开销，启动更快。</p>
+</section>
+
+<!-- ================= STYLES ================= -->
+<section id="styles">
+  <div>
+    <h2>三种注入写法</h2>
+    <p class="lead">送货员能把东西送到三个地方：构造器参数、setter 方法、字段。官方推荐构造器。</p>
+  </div>
+  <div class="three">
+    <div class="st3" data-role="done">
+      <div class="st3-h"><b>构造器注入</b><small>推荐</small></div>
+<pre><code><span class="kw">private final</span> PayClient pay;
+
+<span class="kw">public</span> OrderService(PayClient pay) {
+    <span class="kw">this</span>.pay = pay;
+}</code></pre>
+      <ul><li>字段可以是 final，造出来就是完整的</li><li>依赖一目了然，写单元测试直接 new</li><li>只有一个构造器时，@Autowired 可以省（Spring 4.3 起）</li><li>循环依赖启动就报错，不会藏着（<a href="spring-bean-lifecycle.html">第 04 篇</a>）</li></ul>
+    </div>
+    <div class="st3" data-role="other">
+      <div class="st3-h"><b>setter 注入</b><small>可选依赖</small></div>
+<pre><code><span class="kw">private</span> PayClient pay;
+
+<span class="an">@Autowired</span>
+<span class="kw">public void</span> setPay(PayClient pay) {
+    <span class="kw">this</span>.pay = pay;
+}</code></pre>
+      <ul><li>适合可有可无、以后可能换掉的依赖</li><li>对象造出来时，依赖还没到，有一小段不完整的时间</li></ul>
+    </div>
+    <div class="st3" data-role="bad">
+      <div class="st3-h"><b>字段注入</b><small>能用，不推荐</small></div>
+<pre><code><span class="an">@Autowired</span>
+<span class="kw">private</span> PayClient pay;</code></pre>
+      <ul><li>写起来最短</li><li>不能 final；脱离容器 new 出来，字段就是 null</li><li>依赖多了也看不出来，IDEA 会提示 Field injection is not recommended</li></ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= REFEREE ================= -->
+<section id="referee">
+  <div>
+    <h2>注入裁判：同一个类型有好几个，给谁？</h2>
+    <p class="lead">OrderService 要一个 PayClient，容器里可能有好几个实现。勾选容器里有哪些、谁标了 @Primary，再选注入点的写法，看 Spring 一步步怎么判。</p>
+  </div>
+  <div class="ref" id="refbox">
+    <div class="rcol">
+      <div class="grp">
+        <b>容器里登记了哪些 PayClient</b>
+        <div class="beans" id="beans"></div>
+      </div>
+      <div class="grp">
+        <b>@Primary 标在</b>
+        <div class="seg" role="group" aria-label="@Primary 标在哪个 Bean 上" id="priSeg"></div>
+      </div>
+      <div class="grp">
+        <b>注入点怎么写</b>
+        <div class="pts" id="pts" role="radiogroup" aria-label="注入点的写法"></div>
+      </div>
+    </div>
+    <div class="rcol">
+      <ol class="steps" id="steps" aria-live="polite"></ol>
+      <div id="result"></div>
+    </div>
+  </div>
+  <div class="note-box"><b>判定顺序</b><span>按类型找出所有候选 → 有 <code>@Qualifier</code> 先过滤 → 只剩一个就是它 → 有 <code>@Primary</code> 选它 → 有 <code>@Priority</code> 选优先级最高的 → 名字和参数名、字段名一样的 → 还是选不出来就报错。<code>@Resource</code> 例外：先按名字找，找不到才按类型。</span></div>
+</section>
+
+<!-- ================= MORE ================= -->
+<section id="more">
+  <div>
+    <h2>不止“要一个”</h2>
+    <p class="lead">有时候要全部、有时候可有可无、有时候用到才要。换个参数类型就行。</p>
+  </div>
+  <div class="minis">
+    <div class="mini"><b>要全部：List、Map</b><pre><code>List&lt;PayClient&gt; all          // 按 @Order 排好
+Map&lt;String, PayClient&gt; byName // key 是 Bean 名</code></pre><p>策略模式的常见写法：<code>byName.get(type)</code> 按支付方式挑一个，新加实现不用改这里。</p></div>
+    <div class="mini"><b>可有可无：Optional</b><pre><code>Optional&lt;PayClient&gt; pay</code></pre><p>没有就是 <code>Optional.empty()</code>，不报错。老写法是 <code>@Autowired(required = false)</code>，没有就是 null。</p></div>
+    <div class="mini"><b>用到再要：ObjectProvider</b><pre><code>ObjectProvider&lt;PayClient&gt; pay
+pay.getIfAvailable()
+pay.getIfUnique()
+pay.orderedStream()</code></pre><p>注入时不挑，调用时才去拿。注入原型 Bean、可选依赖、打破循环依赖都用它。</p></div>
+    <div class="mini"><b>延迟：@Lazy</b><pre><code>public OrderService(@Lazy PayClient pay)</code></pre><p>先注入一个代理，第一次调用方法时才去容器里拿真的。</p></div>
+    <div class="mini"><b>配置值：@Value</b><pre><code>@Value("${pay.timeout:3000}") int timeout</code></pre><p>冒号后面是默认值。一组配置多的话，用 <code>@ConfigurationProperties</code> 绑定到一个类上更清楚。</p></div>
+    <div class="mini"><b>别这么写：到处 getBean</b><pre><code>ctx.getBean(PayClient.class)</code></pre><p>在业务代码里自己去容器里找，依赖又藏起来了，测试也难写。只在框架级代码里用。</p></div>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：Spring 5 和 Spring 6</h2>
+    <p class="lead">容器、图纸、判定顺序都没变。变的是几个注解的包名、参数名的来源，以及 6.2 新加的 @Fallback。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>也认 <code>javax.annotation.Resource</code>、<code>javax.inject.Inject</code>；JDK 8 自带 javax.annotation，JDK 11 起要另外加依赖</li>
+        <li>没加 <code>-parameters</code> 编译也能读到构造器参数名（从调试信息里读），按名字兜底能用</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring 6 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>只认 <code>jakarta.annotation.Resource</code>、<code>jakarta.inject.Inject</code>；还写 javax 版的，不报错，也不注入，用的时候才 NPE</li>
+        <li>6.1 起参数名只从 <code>-parameters</code> 读。没加的话，靠构造器参数名兜底的注入会变成 NoUniqueBeanDefinitionException（Boot 的插件会自动加）</li>
+        <li>6.2 起有 <code>@Fallback</code>：标了它的 Bean 只在没有别的候选时才用，和 @Primary 正好相反</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>先图纸后对象</span><span>构造器注入最推荐</span><span>按类型找，再 Qualifier、Primary、名字</span><span>List、Map、Optional、ObjectProvider</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">多数是两种情况：这个对象不是容器造的，或者容器里同类型的不止一个。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-q"/></svg><b>expected single matching bean but found 2</b><p>同一个类型有两个 Bean，又没说要哪个。在其中一个上加 <code>@Primary</code>，或在注入点加 <code>@Qualifier</code>，或者改成注入 List / Map。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-q"/></svg><b>required a bean of type '…' that could not be found</b><p>类不在扫描范围里、忘了加 @Component，或者对应的自动配置被条件挡掉了。启动加 <code>debug=true</code> 看条件报告（<a href="spring-boot-autoconfig.html">第 03 篇</a>）。</p></div>
+    <div class="pit" data-role="inj"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-truck"/></svg><b>自己 new 出来的对象，里面的 @Autowired 字段是 null</b><p>送货员只给容器造的对象送货。从容器里拿这个对象，或者把依赖从构造器传进去。</p></div>
+    <div class="pit" data-role="inj"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-truck"/></svg><b>static 字段上的 @Autowired 不生效</b><p>Spring 不往静态字段里注入，只在日志里提一句 Autowired annotation is not supported on static fields。改成普通字段，或在构造器里赋给静态变量。</p></div>
+    <div class="pit" data-role="fac"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg><b>参数名明明对上了，注入的却是另一个</b><p>判定时 <code>@Primary</code> 排在名字匹配前面。真要那一个，用 <code>@Qualifier</code> 点名。</p></div>
+    <div class="pit" data-role="fac"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg><b>@Bean 方法互相调用，得到了两个对象</b><p>配置类写成了 <code>proxyBeanMethods = false</code> 或者 @Component，方法调用没被拦下。改成用参数注入依赖。</p></div>
+    <div class="pit" data-role="sh"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-shelf"/></svg><b>单例里注入原型 Bean，每次拿到的都是同一个</b><p>单例只造一次，原型也就只在那时注入一次。要每次都新的，注入 <code>ObjectProvider&lt;T&gt;</code>，用的时候 <code>getObject()</code>。</p></div>
+    <div class="pit" data-role="done"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg><b>两个构造器互相依赖，启动报循环依赖</b><p>构造器注入下没法先造一半再说。拆出第三个类，或者在一边的参数上加 <code>@Lazy</code>（<a href="spring-bean-lifecycle.html">第 04 篇</a>）。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-q"/></svg><b>升级 Boot 3 后，@Resource 注入的字段是 null</b><p>还在用 <code>javax.annotation.Resource</code>，Spring 6 不认。换成 <code>jakarta.annotation.Resource</code>，或者改用构造器注入。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-q"/></svg><b>升级 Spring 6.1 后，原来能启动的项目报 found 2</b><p>以前靠构造器参数名选中了某个 Bean，现在没加 <code>-parameters</code>，读不到参数名了。加上编译参数，或者用 <code>@Qualifier</code> 写明。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Spring 5 / 6、Spring Boot 2 / 3 为例。同系列：<a href="spring-bean-lifecycle.html">Bean 生命周期与循环依赖</a> · <a href="spring-boot-autoconfig.html">Spring Boot 自动配置</a> · <a href="spring-boot-startup.html">Spring Boot 启动流程</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var BEANS=[
+  {id:'alipayClient', cls:'AlipayClient', label:'支付宝'},
+  {id:'wechatPayClient', cls:'WechatPayClient', label:'微信支付'},
+  {id:'unionPayClient', cls:'UnionPayClient', label:'银联'}
+];
+var POINTS=[
+  {id:'type', code:'PayClient payClient', note:'构造器参数，只按类型', kind:'single', name:'payClient'},
+  {id:'name', code:'PayClient wechatPayClient', note:'参数名正好是一个 Bean 的名字', kind:'single', name:'wechatPayClient'},
+  {id:'qual', code:'@Qualifier("unionPayClient") PayClient pay', note:'点名要 unionPayClient', kind:'qual', q:'unionPayClient'},
+  {id:'list', code:'List<PayClient> clients', note:'全部都要', kind:'list'},
+  {id:'map', code:'Map<String, PayClient> clients', note:'全部都要，按名字分好', kind:'map'},
+  {id:'res', code:'@Resource private PayClient alipayClient;', note:'字段注入，按名字优先', kind:'res', name:'alipayClient'},
+  {id:'opt', code:'Optional<PayClient> payClient', note:'可有可无', kind:'opt', name:'payClient'}
+];
+var PT='com.shop.pay.PayClient';
+function clsOf(id){ for(var i=0;i<BEANS.length;i++) if(BEANS[i].id===id) return BEANS[i].cls; return id; }
+function errNone(field, extra){
+  return [(field ? 'Field '+field+' in com.shop.service.OrderService' : 'Parameter 0 of constructor in com.shop.service.OrderService')+" required a bean of type '"+PT+"' that could not be found."].concat(extra||[]).concat(['','Action:','',"Consider defining a bean of type '"+PT+"' in your configuration."]);
+}
+function errMany(names, field){
+  var l=[(field ? 'Field '+field+' in com.shop.service.OrderService' : 'Parameter 0 of constructor in com.shop.service.OrderService')+' required a single bean, but '+names.length+' were found:'];
+  names.forEach(function(n){ l.push('\t- '+n+': defined in file [.../'+clsOf(n)+'.class]'); });
+  return l.concat(['','Action:','','Consider marking one of the beans as @Primary, updating the consumer to accept multiple beans, or using @Qualifier to identify the bean that should be consumed']);
+}
+// returns {steps:[{t,d,s}], ok:bool, val, note, err:[lines]}
+function referee(reg, primary, pointId){
+  var P=null; for(var i=0;i<POINTS.length;i++) if(POINTS[i].id===pointId) P=POINTS[i];
+  var cands=BEANS.filter(function(b){return reg.indexOf(b.id)>=0;}).map(function(b){return b.id;});
+  var prim = (primary && cands.indexOf(primary)>=0) ? primary : null;
+  var steps=[];
+  function S(t,d,s){ steps.push({t:t,d:d,s:s||'go'}); }
+  function list(a){ return a.length ? a.join('、') : '一个都没有'; }
+  function pickSingle(cs, nm, field){
+    if(cs.length===1){ S('只剩一个','就是 '+cs[0]+'。','win'); return {ok:true,val:cs[0]}; }
+    S('不止一个，要挑','有 '+cs.length+' 个：'+list(cs)+'。');
+    if(prim){ S('看 @Primary',prim+' 标了 @Primary，选它。','win'); return {ok:true,val:prim,primWon:true}; }
+    S('看 @Primary','都没标。');
+    S('看 @Priority','都没标。');
+    if(nm && cs.indexOf(nm)>=0){ S('按名字兜底','名字 '+nm+' 正好是一个 Bean 的名字，选它。','win'); return {ok:true,val:nm,byName:true}; }
+    S('按名字兜底','名字 '+nm+' 和哪个 Bean 都对不上。','fail');
+    return {ok:false, err:errMany(cs, field)};
+  }
+  var r;
+  if(P.kind==='single' || P.kind==='opt'){
+    S('按类型找','PayClient 类型的候选：'+list(cands)+'。');
+    if(cands.length===0){
+      if(P.kind==='opt'){ S('一个都没有','Optional 可以是空的，不报错。','win'); r={ok:true,val:'Optional.empty()'}; }
+      else { S('一个都没有','这是必需的依赖，报错。','fail'); r={ok:false,err:errNone()}; }
+    } else {
+      r=pickSingle(cands, P.name);
+      if(r.ok && P.kind==='opt') r.val='Optional['+r.val+']';
+    }
+    if(r.ok && P.id==='name' && r.byName) r.note='靠的是构造器参数名 wechatPayClient。Spring 6.1 起要编译参数 -parameters 才读得到。';
+    if(r.ok && P.id==='name' && r.primWon && cands.indexOf('wechatPayClient')>=0 && prim!=='wechatPayClient') r.note='参数名对上了 wechatPayClient 也没用：@Primary 先判。';
+  } else if(P.kind==='qual'){
+    S('按类型找','PayClient 类型的候选：'+list(cands)+'。');
+    var f=cands.filter(function(c){return c===P.q;});
+    S('@Qualifier 过滤','只留名字或限定符是 '+P.q+' 的：'+list(f)+'。', f.length?'go':'fail');
+    if(!f.length){ r={ok:false,err:errNone(null,['','The injection point has the following annotations:','\t- @org.springframework.beans.factory.annotation.Qualifier("'+P.q+'")'])}; }
+    else { S('只剩一个','就是 '+P.q+'。','win'); r={ok:true,val:P.q}; if(prim && prim!==P.q) r.note=prim+' 标了 @Primary，但 @Qualifier 先过滤，它已经被排除了。'; }
+  } else if(P.kind==='list' || P.kind==='map'){
+    S('按类型找','PayClient 类型的候选：'+list(cands)+'。');
+    if(P.kind==='list'){ S('集合注入','全部都要，按 @Order 排好（这里依次是 1、2、3）。@Primary 不起作用。','win'); r={ok:true,val:'['+cands.map(clsOf).join(', ')+']'}; }
+    else { S('Map 注入','全部都要，key 是 Bean 名。','win'); r={ok:true,val:'{'+cands.map(function(c){return c+'='+clsOf(c);}).join(', ')+'}'}; }
+    if(!cands.length) r.note='构造器只有一个时，一个都没有就注入空集合；写在字段上会报 NoSuchBeanDefinitionException。';
+  } else if(P.kind==='res'){
+    S('先按名字找','找名字叫 alipayClient 的 Bean：'+(cands.indexOf('alipayClient')>=0?'有。':'没有。'), cands.indexOf('alipayClient')>=0?'win':'go');
+    if(cands.indexOf('alipayClient')>=0){ r={ok:true,val:'alipayClient'}; if(prim && prim!=='alipayClient') r.note='按名字直接命中，@Primary 根本没机会参与。'; }
+    else {
+      S('退回按类型找','PayClient 类型的候选：'+list(cands)+'。');
+      if(!cands.length){ S('一个都没有','报错。','fail'); r={ok:false,err:errNone('alipayClient')}; }
+      else r=pickSingle(cands,'alipayClient','alipayClient');
+    }
+  }
+  if(r.ok && !r.val) r.val='';
+  return {steps:steps, ok:r.ok, val:r.val, note:r.note||'', err:r.err||null};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var st={reg:['alipayClient','wechatPayClient'], primary:'', point:'type'};
+
+  $('beans').innerHTML=BEANS.map(function(b){
+    return '<label class="bean" id="bl-'+b.id+'" for="cb-'+b.id+'"><input type="checkbox" id="cb-'+b.id+'" data-bean="'+b.id+'"><code>'+b.id+'<small>'+b.cls+' · '+b.label+'</small></code><span class="pri" id="pr-'+b.id+'" hidden>@Primary</span></label>';
+  }).join('');
+  $('priSeg').innerHTML='<button class="sg" id="pp-none" data-pri="" aria-pressed="true">没有</button>'+BEANS.map(function(b){ return '<button class="sg" id="pp-'+b.id+'" data-pri="'+b.id+'" aria-pressed="false">'+b.id+'</button>'; }).join('');
+  $('pts').innerHTML=POINTS.map(function(p){
+    return '<label class="pt" id="pl-'+p.id+'" for="rp-'+p.id+'"><input type="radio" name="pt" id="rp-'+p.id+'" value="'+p.id+'"><code>'+esc(p.code)+'<small>'+esc(p.note)+'</small></code></label>';
+  }).join('');
+
+  function render(){
+    BEANS.forEach(function(b){
+      var on=st.reg.indexOf(b.id)>=0;
+      $('cb-'+b.id).checked=on;
+      $('bl-'+b.id).classList.toggle('on',on);
+      $('pr-'+b.id).hidden = st.primary!==b.id;
+    });
+    document.querySelectorAll('[data-pri]').forEach(function(x){ x.setAttribute('aria-pressed', String(x.getAttribute('data-pri')===st.primary)); });
+    POINTS.forEach(function(p){ var on=p.id===st.point; $('rp-'+p.id).checked=on; $('pl-'+p.id).classList.toggle('on',on); });
+    var R=referee(st.reg, st.primary, st.point);
+    $('steps').innerHTML=R.steps.map(function(s,i){
+      return '<li class="step '+s.s+'"><span class="n">'+(i+1)+'</span><b>'+esc(s.t)+'</b><span>'+esc(s.d)+'</span></li>';
+    }).join('');
+    if(R.ok){
+      $('result').innerHTML='<div class="result ok"><b>注入成功</b><span class="val">'+esc(R.val)+'</span>'+(R.note?'<span class="note">'+esc(R.note)+'</span>':'')+'</div>';
+    } else {
+      $('result').innerHTML='<div class="result err"><span class="h">APPLICATION FAILED TO START</span>\n\nDescription:\n\n'+esc(R.err.join('\n'))+'</div>';
+    }
+  }
+  document.querySelectorAll('[data-bean]').forEach(function(cb){
+    cb.addEventListener('change', function(){
+      var id=cb.getAttribute('data-bean'), i=st.reg.indexOf(id);
+      if(cb.checked && i<0){ st.reg.push(id); st.reg.sort(function(a,b){ return BEANS.findIndex(function(x){return x.id===a;}) - BEANS.findIndex(function(x){return x.id===b;}); }); }
+      if(!cb.checked && i>=0) st.reg.splice(i,1);
+      render();
+    });
+  });
+  document.querySelectorAll('[data-pri]').forEach(function(b){ b.addEventListener('click', function(){ st.primary=b.getAttribute('data-pri'); render(); }); });
+  document.querySelectorAll('input[name=pt]').forEach(function(r){ r.addEventListener('change', function(){ st.point=r.value; render(); }); });
+  render();
+})();
+</script>
+
+</body>
+</html>

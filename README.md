@@ -16,6 +16,7 @@
 | 06 | [Spring MVC 请求处理流程](https://archeu.github.io/study-notes/spring/spring-mvc-flow.html) | DispatcherServlet 的 doDispatch 八步，参数解析、页面和 JSON 两种返回、异常善后 |
 | 07 | [Spring Boot 启动流程](https://archeu.github.io/study-notes/spring/spring-boot-startup.html) | run() 的四段路、refresh 十二步、Tomcat 什么时候开端口，事件顺序、扩展点和启动失败 |
 | 08 | [Spring 事件机制](https://archeu.github.io/study-notes/spring/spring-events.html) | 发布者、广播站、监听器，同步、@Async、@TransactionalEventListener 怎么选，事件实验台 |
+| 09 | [Spring IoC 与依赖注入](https://archeu.github.io/study-notes/spring/spring-ioc-di.html) | 容器里有什么、图纸从哪来、三种注入写法，同类型多个 Bean 时怎么选的注入裁判 |
 
 ## MyBatis
 
