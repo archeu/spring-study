@@ -254,6 +254,14 @@ pre + pre{border-top:1.5px dashed var(--line)}
 .pit p{font-size:14px;color:var(--muted)}
 .pit p code{color:var(--ink);overflow-wrap:anywhere}
 footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-home:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 
 /* ---------- responsive ---------- */
 @media (max-width:980px){
@@ -336,6 +344,8 @@ footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-stro
     <rect class="k-paper" x="31" y="41" width="14" height="3" rx="1.5" opacity=".7"/>
   </symbol>
 </svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Spring</span><span aria-hidden="true">/</span><span class="tb-here">Spring Boot 自动配置</span></div></nav>
 
 <main>
 
