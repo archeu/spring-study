@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis 主从、哨兵与集群</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Three stages of growing up: copy (replication), watchmen (sentinel), split (cluster). Master blue, replica teal, sentinel purple, slots amber, down red. Three interactives: backlog calculator, failover stepper (anchor), slot calculator. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --ms:#3150C4; --ms-tint:#E2E7FA;
+  --rp:#0D7A69; --rp-tint:#DCF0EB;
+  --se:#6A3FC0; --se-tint:#ECE5FA;
+  --sl:#9A6B00; --sl-tint:#FBF0CF;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#C9B6FF;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --ms:#90A4FF; --ms-tint:#1D2650;
+    --rp:#40C6B0; --rp-tint:#12352F;
+    --se:#B9A0FF; --se-tint:#2A2148;
+    --sl:#F2C94C; --sl-tint:#3A3212;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#C9B6FF;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --ms:#90A4FF; --ms-tint:#1D2650;
+  --rp:#40C6B0; --rp-tint:#12352F;
+  --se:#B9A0FF; --se-tint:#2A2148;
+  --sl:#F2C94C; --sl-tint:#3A3212;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#C9B6FF;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--ms)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button,input{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--ms);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="ms"]{--rc:var(--ms);--rt:var(--ms-tint)}
+[data-role="rp"]{--rc:var(--rp);--rt:var(--rp-tint)}
+[data-role="se"]{--rc:var(--se);--rt:var(--se-tint)}
+[data-role="sl"]{--rc:var(--sl);--rt:var(--sl-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* svg diagram parts (hero + stepper) */
+.n-ms{fill:var(--ms)} .n-rp{fill:var(--rp)} .n-se{fill:var(--se)} .n-down{fill:var(--bad)} .n-cl{fill:var(--neutral-tint);stroke:var(--line-strong);stroke-width:1.5}
+.n-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+.n-ts{font-size:11px;fill:var(--ink)}
+.n-tm{font-size:10.5px;fill:var(--muted)}
+.e-rep{stroke:var(--rp);stroke-width:2.5;fill:none}
+.e-mon{stroke:var(--se);stroke-width:1.5;stroke-dasharray:4 4;fill:none}
+.e-cli{stroke:var(--ink);stroke-width:2;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2;stroke-dasharray:4 3;fill:none}
+.e-gos{stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:2 4;fill:none}
+.ah-rp{fill:var(--rp)} .ah-ink{fill:var(--ink)}
+.bdg{font-size:10.5px;font-weight:700}
+.bdg-r{fill:var(--se-tint);stroke:var(--se);stroke-width:1}
+.bdg-t{fill:var(--se)}
+.bdg-rb{fill:var(--bad-tint);stroke:var(--bad);stroke-width:1}
+.bdg-tb{fill:var(--bad)}
+.x-mark{stroke:var(--on-accent);stroke-width:4;stroke-linecap:round}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.trio{margin-top:20px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.tri{border:2px solid var(--line);border-radius:18px;background:var(--card);padding:12px 14px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.tri svg{width:100%;height:auto;display:block}
+.tri h3{font-size:24px}
+.tri h3 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.tri p{font-size:14.5px}
+.tri .q{font-size:13px;font-weight:700;color:var(--rc)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--se)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--sl-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:5px 12px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.btn{font-size:14px;padding:7px 13px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.pbtn{font-size:12.5px;padding:4px 11px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer;font-family:var(--font-mono)}
+
+/* ---------- replication ---------- */
+.steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.sp{border:2px solid var(--rc);border-radius:12px;padding:8px 10px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.sp small{font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--rc)}
+.sp b{font-size:14px}
+.sp span{font-size:12.5px;color:var(--muted)}
+.sp code{font-size:11px;color:var(--ink);overflow-wrap:anywhere}
+.calc{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.calc-row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.calc-row .lbl{font-size:13px;color:var(--muted);min-width:7.5em}
+.ring{position:relative;height:34px;border-radius:8px;background:var(--neutral-tint);overflow:hidden}
+.ring .cap{position:absolute;top:0;bottom:0;left:0;background:var(--rp-tint);border-right:2.5px solid var(--rp)}
+.ring .need{position:absolute;top:8px;bottom:8px;left:0;border-radius:4px;background:var(--rp)}
+.ring .need.over{background:var(--bad)}
+.ring-l{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.ring-l b{color:var(--ink);font-family:var(--font-mono)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+
+/* ---------- failover stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--se-tint);border:2px solid var(--se);min-height:3.4em}
+.cap-txt b{color:var(--se)}
+.fo{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;align-items:start}
+.fo svg{width:100%;height:auto;display:block;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.side{display:flex;flex-direction:column;gap:10px;min-width:0}
+.pick{border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;font-size:13px}
+.pick table{border-collapse:collapse;width:100%;font-size:12.5px}
+.pick th,.pick td{padding:3px 6px;text-align:left;border-bottom:1px solid var(--line)}
+.pick tr.win td{color:var(--good);font-weight:700}
+.log{list-style:none;margin:0;padding:10px 12px;border-radius:12px;background:var(--console-bg);color:var(--console-dim);font-family:var(--font-mono);font-size:11px;line-height:1.55;display:flex;flex-direction:column;gap:2px;min-height:140px;max-height:240px;overflow-y:auto}
+.log li{overflow-wrap:anywhere}
+.log li.new{color:var(--console-fg)}
+.log li.new b{color:var(--console-hi);font-weight:600}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* ---------- sentinel mini ---------- */
+.flags{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.fl{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.fl b{font-size:15px;color:var(--rc)}
+.fl span{font-size:13px}
+.fl code{font-size:11.5px;color:var(--muted)}
+.rules{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.rules li::marker{font-family:var(--font-mono);font-weight:700;color:var(--se)}
+
+/* ---------- cluster ---------- */
+.slotbar{display:grid;grid-template-columns:5461fr 5462fr 5461fr;gap:3px}
+.sb{border-radius:10px;padding:8px 10px;background:var(--rt);border:2px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.sb b{font-size:15px}
+.sb code{font-size:12px;color:var(--muted)}
+.slotcalc{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.kin{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.kin label{font-size:13px;color:var(--muted)}
+.kin input{width:min(16em,100%);padding:6px 10px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card);font-family:var(--font-mono);font-size:13.5px}
+.ruler{position:relative;height:56px}
+.ruler .seg{position:absolute;top:18px;height:20px;border-radius:5px}
+.ruler .mk{position:absolute;top:2px;width:0;height:44px;border-left:3px solid var(--ink)}
+.ruler .mk span{position:absolute;top:-2px;left:5px;font-family:var(--font-mono);font-size:11px;font-weight:700;white-space:nowrap;background:var(--card);padding:0 3px;border-radius:3px}
+.ruler .mk.b{border-left-style:dashed}
+.ruler .mk.b span{top:40px}
+.ruler .mk.flip span{left:auto;right:5px}
+.ruler-ax{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.kres{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.kr{border:1.5px solid var(--rc);border-radius:12px;background:var(--rt);padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0;font-size:13px}
+.kr code{font-weight:700;overflow-wrap:anywhere}
+.kr span{font-family:var(--font-mono);font-size:12px}
+.redir{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .steps{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .trio{grid-template-columns:1fr}
+  .tri{display:grid;grid-template-columns:minmax(0,220px) minmax(0,1fr);gap:4px 14px;align-items:center}
+  .tri svg{grid-row:span 3}
+  .two,.fo,.eras,.redir,.flags{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .slotbar{grid-template-columns:1fr}
+  .kres{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .tri{display:flex}
+  .steps{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-crown" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="38" r="22"/>
+    <path class="k-gold" d="M16 12l8 9 8-13 8 13 8-9-3 18H19z"/>
+    <path class="ks-paper" stroke-width="4" stroke-linecap="round" d="M22 40h20M22 48h14"/>
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 64 64">
+    <rect fill="currentColor" opacity=".45" x="20" y="4" width="38" height="40" rx="6"/>
+    <rect fill="currentColor" x="6" y="18" width="38" height="42" rx="6"/>
+    <path class="ks-paper" stroke-width="4" stroke-linecap="round" d="M14 32h22M14 41h22M14 50h14"/>
+  </symbol>
+  <symbol id="i-eye" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M2 32C10 18 20 12 32 12s22 6 30 20c-8 14-18 20-30 20S10 46 2 32z"/>
+    <circle class="k-paper" cx="32" cy="32" r="13"/>
+    <circle class="k-ink" cx="32" cy="32" r="7"/>
+    <circle class="k-paper" cx="35" cy="29" r="2.5"/>
+  </symbol>
+  <symbol id="i-slots" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="8" width="16" height="48" rx="3"/>
+    <rect fill="currentColor" opacity=".7" x="24" y="8" width="16" height="48" rx="3"/>
+    <rect fill="currentColor" opacity=".45" x="44" y="8" width="16" height="48" rx="3"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M8 18h8M8 26h8M8 34h8M28 18h8M28 26h8M48 18h8"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+  <symbol id="i-split" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="18" cy="32" r="14"/>
+    <circle fill="currentColor" cx="46" cy="32" r="14"/>
+    <path stroke="var(--bad)" stroke-width="5" stroke-linecap="round" d="M32 8v48"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis 主从、哨兵与集群</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS 7 · REPLICATION · PSYNC · SENTINEL · FAILOVER · CLUSTER · 16384 SLOTS</p>
+  <h1>一台不够用，先复制、再派人盯着、最后分家</h1>
+  <p class="lead">单台 Redis 有三个问题：挂了就没了，挂了没人管，一台装不下。这三个问题各有一个答案，一个比一个复杂，按需要往上加就行。</p>
+
+  <div class="trio">
+    <div class="tri" data-role="rp"><svg id="hRep" viewBox="0 0 220 170" role="img" aria-label="主从复制：一个主节点，两个从节点复制它的数据"></svg><h3>主从复制<small>Replication</small></h3><span class="q">解决：数据多存几份，读可以分出去</span><p>从节点不停地复制主节点的数据。主节点挂了，数据还在，但<b>要人工</b>把从节点改成主。</p></div>
+    <div class="tri" data-role="se"><svg id="hSen" viewBox="0 0 220 170" role="img" aria-label="哨兵：三个哨兵盯着主节点，主节点挂了自动选一个从节点顶上"></svg><h3>哨兵<small>Sentinel</small></h3><span class="q">解决：主节点挂了，自动换人</span><p>几个哨兵进程一直盯着主节点，发现它挂了，<b>投票选一个从节点</b>升为主，再通知客户端。</p></div>
+    <div class="tri" data-role="sl"><svg id="hClu" viewBox="0 0 220 170" role="img" aria-label="集群：三个主节点各管一段哈希槽，各自有从节点"></svg><h3>集群<small>Cluster</small></h3><span class="q">解决：一台装不下、写不过来</span><p>数据按 key 分到 <b>16384 个槽</b>，几个主节点各管一段，每个主节点再带自己的从节点。</p></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="ms">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-crown"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">主节点<code>master</code></div>
+        <p>唯一能写的那台，<b>写进来的命令都会转发给从节点</b>。</p>
+        <span class="belong">一个分片只有一个主</span>
+      </div>
+    </div>
+    <div class="who" data-role="rp">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-copy"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">从节点<code>replica</code></div>
+        <p>主节点的副本，<b>默认只读</b>，可以分担读请求。</p>
+        <span class="belong">数据总比主节点慢一点</span>
+      </div>
+    </div>
+    <div class="who" data-role="se">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-eye"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">哨兵<code>redis-sentinel :26379</code></div>
+        <p>不存数据，只负责<b>盯着、投票、换主、告诉客户端</b>。</p>
+        <span class="belong">至少 3 个，分开部署</span>
+      </div>
+    </div>
+    <div class="who" data-role="sl">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-slots"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">哈希槽<code>16384 slots</code></div>
+        <p>集群里每个 key 都算出一个槽号，<b>槽归哪个主节点，key 就在哪</b>。</p>
+        <span class="belong">CRC16(key) mod 16384</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= REPLICATION ================= -->
+<section id="rep">
+  <div>
+    <h2>主从复制：先抄一整本，再一条条跟</h2>
+    <p class="lead">在从节点上执行 <code>REPLICAOF 10.0.0.1 6379</code>，它就开始复制。第一次要把整个数据集拷过去（全量同步），之后主节点每执行一条写命令，都实时转发过来（命令传播）。</p>
+  </div>
+  <div class="steps">
+    <div class="sp" data-role="rp"><small>1</small><b>从节点请求同步</b><span>发 <code>PSYNC ? -1</code>：我是新来的，什么都没有</span></div>
+    <div class="sp" data-role="ms"><small>2</small><b>主节点回 FULLRESYNC</b><span>附上自己的复制 ID 和当前偏移量</span></div>
+    <div class="sp" data-role="ms"><small>3</small><b>主节点 fork 生成 RDB</b><span>Redis 7 默认直接通过网络发出去，不落盘；期间的新写入先攒在缓冲区</span></div>
+    <div class="sp" data-role="rp"><small>4</small><b>从节点清空、加载</b><span>把旧数据删掉，加载收到的 RDB</span></div>
+    <div class="sp" data-role="ms"><small>5</small><b>补发缓冲 + 持续传播</b><span>先补上第 3 步攒下的命令，之后每条写命令实时转发</span></div>
+  </div>
+  <div class="two">
+    <div class="mini">
+      <b>断线重连：能补就补，补不上就全量</b>
+      <p>主节点维护一个环形的复制积压缓冲区（<code>repl-backlog-size</code>，默认 1 MB），里面是最近转发过的命令。从节点断线重连时报上“我复制到第几个字节了”（<code>PSYNC 复制ID 偏移量</code>）。缺的那段还在缓冲区里，就只补这一段（部分同步）；已经被覆盖了，只能重新全量同步。</p>
+    </div>
+    <div class="mini">
+      <b>复制是异步的</b>
+      <p>主节点执行完写命令就回复客户端，不等从节点。所以从节点的数据总是慢一点，主节点在这之间挂了，这部分写入就丢了。</p>
+      <p><code>WAIT 1 1000</code> 可以等至少 1 个从节点确认收到（最多等 1 秒），能减少丢失，但不能保证不丢。</p>
+    </div>
+  </div>
+  <div class="calc" id="calc">
+    <h3>积压缓冲区够不够：断线重连计算器</h3>
+    <div class="calc-row"><span class="lbl">复制流速度：</span><div class="seg-btns" role="group" aria-label="复制流速度"><button data-rate="100" aria-pressed="false">100 KB/s</button><button data-rate="1024" aria-pressed="true">1 MB/s</button><button data-rate="10240" aria-pressed="false">10 MB/s</button></div></div>
+    <div class="calc-row"><span class="lbl">从节点断线多久：</span><div class="seg-btns" role="group" aria-label="断线时长"><button data-off="2" aria-pressed="false">2 秒</button><button data-off="30" aria-pressed="true">30 秒</button><button data-off="300" aria-pressed="false">5 分钟</button></div></div>
+    <div class="calc-row"><span class="lbl">repl-backlog-size：</span><div class="seg-btns" role="group" aria-label="积压缓冲区大小"><button data-bl="1024" aria-pressed="true">1 MB（默认）</button><button data-bl="65536" aria-pressed="false">64 MB</button><button data-bl="524288" aria-pressed="false">512 MB</button></div></div>
+    <div class="ring" id="ring" role="img" aria-label="积压缓冲区容量和断线期间产生的数据量"><div class="cap"></div><div class="need"></div></div>
+    <div class="ring-l" id="ringL"></div>
+    <p class="verdict" id="calcV" data-role="bad"></p>
+    <p class="tip">经验：<code>repl-backlog-size</code> ≥ 每秒复制流量 × 可能断线的最长秒数。主节点数据 8 GB 时，一次全量同步要 fork、生成并传 8 GB 的 RDB，从节点还要清空重新加载。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>从节点配置</b><span>redis.conf</span></div>
+<pre><code><span class="kw">replicaof</span> 10.0.0.1 6379          <span class="cm"># Redis 5 起叫 replicaof，老名字 slaveof 仍可用</span>
+<span class="kw">masterauth</span> ******                <span class="cm"># 主节点有密码时</span>
+<span class="kw">replica-read-only</span> yes             <span class="cm"># 默认只读</span>
+<span class="kw">repl-backlog-size</span> 64mb            <span class="cm"># 默认 1mb，写多的实例要调大</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= SENTINEL ================= -->
+<section id="sen">
+  <div>
+    <h2>哨兵：主节点挂了，谁来换、换谁</h2>
+    <p class="lead">哨兵是单独的进程（默认端口 26379），通常部署 3 个，放在不同的机器上。它们每秒给主从节点发 PING，也互相交流看法。客户端不直接写死主节点地址，而是先问哨兵“现在的主节点是谁”。</p>
+  </div>
+  <div class="flags">
+    <div class="fl" data-role="se"><b>主观下线 SDOWN</b><span>某一个哨兵，超过 <code>down-after-milliseconds</code>（默认 30 秒）没收到主节点的正常回复，就认为它挂了。</span><code>可能只是这个哨兵自己网络不好</code></div>
+    <div class="fl" data-role="bad"><b>客观下线 ODOWN</b><span>认为它挂了的哨兵数达到 <code>quorum</code>（比如 2），才算真挂了，可以开始故障转移。</span><code>sentinel monitor mymaster 10.0.0.1 6379 2</code></div>
+    <div class="fl" data-role="ms"><b>选领头哨兵</b><span>真正动手的只能有一个。哨兵们投票，拿到<b>过半</b>票数（3 个里要 2 票）的当领头。</span><code>quorum 决定能不能判死，过半决定能不能动手</code></div>
+  </div>
+
+  <div class="stage" id="fo" tabindex="0" aria-label="故障转移步骤演示，可以用左右方向键切换">
+    <div class="st-top"><h3>故障转移，一步一步</h3><span class="st-pos" id="foPos"></span></div>
+    <p class="cap-txt" id="foCap" aria-live="polite"></p>
+    <div class="fo">
+      <svg id="foSvg" viewBox="0 0 640 320" role="img" aria-label="哨兵、主节点、从节点和客户端的关系图"></svg>
+      <div class="side">
+        <div class="pick" id="foPick"></div>
+        <ol class="log" id="foLog" aria-label="哨兵日志"></ol>
+      </div>
+    </div>
+    <div class="ctrl">
+      <button class="btn" id="foPrev">← 上一步</button>
+      <button class="btn primary" id="foNext">下一步 →</button>
+      <button class="btn" id="foAuto">▶ 自动播放</button>
+      <button class="btn" id="foReset">从头来</button>
+    </div>
+    <p class="tip">示意：<code>down-after-milliseconds</code> 设成 5000，所以第 5 秒判定下线；用默认的 30000，整个过程要再往后推 25 秒。日志是哨兵真实的事件名，地址做了简化。</p>
+  </div>
+
+  <div class="two">
+    <div class="mini">
+      <b>新主节点怎么挑</b>
+      <ol class="rules">
+        <li>先排除断线太久、数据太旧的从节点</li>
+        <li><code>replica-priority</code> 小的优先（设成 0 表示永远不当主）</li>
+        <li>复制偏移量大的优先：数据最新</li>
+        <li>还一样，就选运行 ID 字典序小的</li>
+      </ol>
+    </div>
+    <div class="mini">
+      <b>脑裂：两个主节点同时在写</b>
+      <p>旧主节点只是和哨兵断了网，自己还活着，旁边的客户端还在往里写。哨兵这边已经选出新主。网络恢复后，旧主变成从节点，清空数据跟新主同步，那段时间写进去的全丢了。</p>
+      <p>防法：<code>min-replicas-to-write 1</code> + <code>min-replicas-max-lag 10</code>。连着的健康从节点不够，主节点就拒绝写入，报 <code>NOREPLICAS Not enough good replicas to write.</code></p>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>Spring Boot 连哨兵</b><span>Boot 3 前缀；Boot 2 是 spring.redis</span></div>
+<pre><code><span class="kw">spring:</span>
+  <span class="kw">data:</span>
+    <span class="kw">redis:</span>
+      <span class="kw">sentinel:</span>
+        <span class="kw">master:</span> mymaster                                          <span class="cm"># 和 sentinel monitor 里的名字一致</span>
+        <span class="kw">nodes:</span> 10.0.0.11:26379,10.0.0.12:26379,10.0.0.13:26379   <span class="cm"># 写哨兵的地址，不写主节点</span>
+      <span class="kw">password:</span> ******</code></pre>
+  </div>
+</section>
+
+<!-- ================= CLUSTER ================= -->
+<section id="clu">
+  <div>
+    <h2>集群：把 key 分到 16384 个槽里</h2>
+    <p class="lead">哨兵只解决了“挂了换人”，所有数据还是在一个主节点上。数据量或写入量一台扛不住时，就用集群：每个 key 用 CRC16 算一个数，再对 16384 取余，得到它的槽号。三个主节点各管一段槽。</p>
+  </div>
+  <div class="slotbar" aria-label="三个主节点各自负责的槽范围">
+    <div class="sb" data-role="ms"><b>主节点 A</b><code>槽 0 – 5460</code></div>
+    <div class="sb" data-role="rp"><b>主节点 B</b><code>槽 5461 – 10922</code></div>
+    <div class="sb" data-role="sl"><b>主节点 C</b><code>槽 10923 – 16383</code></div>
+  </div>
+
+  <div class="slotcalc" id="sc">
+    <h3>算一算 key 落在哪</h3>
+    <div class="kin"><label for="kA">key 1：</label><input id="kA" type="text" value="user:1001" maxlength="40" spellcheck="false"><label for="kB">key 2：</label><input id="kB" type="text" value="user:1002" maxlength="40" spellcheck="false"></div>
+    <div class="kin" role="group" aria-label="常用例子">
+      <button class="pbtn" data-ka="user:1001" data-kb="user:1002">user:1001 / user:1002</button>
+      <button class="pbtn" data-ka="{user:1001}:cart" data-kb="{user:1001}:orders">{user:1001}:cart / {user:1001}:orders</button>
+      <button class="pbtn" data-ka="foo" data-kb="bar">foo / bar</button>
+    </div>
+    <div class="ruler" id="ruler" aria-hidden="true"></div>
+    <div class="ruler-ax" aria-hidden="true"><span>0</span><span>5461</span><span>10923</span><span>16383</span></div>
+    <div class="kres" id="kres"></div>
+    <p class="verdict" id="kv" data-role="done"></p>
+    <p class="tip">花括号叫 hash tag：key 里有 <code>{…}</code> 时，只用括号里的内容算槽。想让几个 key 一起用 MGET、事务或 Lua 脚本，就给它们相同的 tag。</p>
+  </div>
+
+  <div class="redir">
+    <div class="mini">
+      <b>找错节点：MOVED 和 ASK</b>
+      <p>客户端缓存着“哪个槽在哪个节点”。发错了，节点回 <code>MOVED 5712 10.0.0.2:6379</code>：这个槽在别处，以后都去那儿，客户端更新缓存。</p>
+      <p>扩容迁移槽的过程中，一部分 key 已经搬走，节点回 <code>ASK 5712 10.0.0.4:6379</code>：这一次去那儿问一下（先发 <code>ASKING</code>），不用更新缓存。</p>
+    </div>
+    <div class="mini">
+      <b>节点挂了怎么办：不需要哨兵</b>
+      <p>节点之间通过集群总线（客户端端口 + 10000，比如 16379）不停地互相 PING。一个主节点超过 <code>cluster-node-timeout</code>（默认 15 秒）没回应，被多数主节点标记为 FAIL 后，它的从节点发起选举，拿到多数主节点的票就升为主，接管这段槽。</p>
+    </div>
+  </div>
+  <div class="two">
+    <div class="mini">
+      <b>为什么是 16384 个槽</b>
+      <p>节点之间心跳时，要带上一张“我负责哪些槽”的位图。16384 位正好 2 KB，心跳包不会太大；而集群一般不会超过 1000 个主节点，槽也够分。</p>
+    </div>
+    <div class="mini">
+      <b>集群下有哪些限制</b>
+      <p>多 key 命令（MGET、事务、Lua）的所有 key 必须在同一个槽；只能用 0 号库，不能 SELECT；KEYS、SCAN 只扫当前连的那个节点。</p>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>Spring Boot 连集群</b><span>Lettuce 默认不会自动刷新拓扑，最好打开</span></div>
+<pre><code><span class="kw">spring:</span>
+  <span class="kw">data:</span>
+    <span class="kw">redis:</span>
+      <span class="kw">cluster:</span>
+        <span class="kw">nodes:</span> 10.0.0.1:6379,10.0.0.2:6379,10.0.0.3:6379    <span class="cm"># 写几个就行，其余的会自动发现</span>
+        <span class="kw">max-redirects:</span> 3
+      <span class="kw">lettuce:</span>
+        <span class="kw">cluster:</span>
+          <span class="kw">refresh:</span>
+            <span class="kw">adaptive:</span> true      <span class="cm"># 收到 MOVED、连接断开时马上刷新</span>
+            <span class="kw">period:</span> 30s         <span class="cm"># 另外每 30 秒刷新一次</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= COMPARE ================= -->
+<section id="cmp">
+  <div>
+    <h2>三种方案怎么选</h2>
+    <p class="lead">一句话：数据一台装得下，用哨兵；装不下或写不过来，用集群。主从复制是两者的基础。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">主从复制</th><th scope="col">哨兵</th><th scope="col">集群</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">解决什么</th><td>数据多存几份，读可以分到从节点</td><td>主节点挂了自动切换</td><td>数据和写入分摊到多个主节点</td></tr>
+        <tr><th scope="row">自动故障转移</th><td class="bad">没有，要人工</td><td class="good">有，哨兵投票</td><td class="good">有，节点之间投票</td></tr>
+        <tr><th scope="row">数据分片</th><td class="bad">没有，每台全量</td><td class="bad">没有</td><td class="good">16384 个槽</td></tr>
+        <tr><th scope="row">写能力</th><td>一个主节点</td><td>一个主节点</td><td>多个主节点相加</td></tr>
+        <tr><th scope="row">建议的最小部署</th><td>1 主 1 从</td><td>1 主 2 从 + 3 个哨兵</td><td>3 主 3 从</td></tr>
+        <tr><th scope="row">多 key 命令</th><td class="good">随便用</td><td class="good">随便用</td><td class="bad">只能在同一个槽</td></tr>
+        <tr><th scope="row">客户端要做的</th><td>连主节点</td><td>先问哨兵谁是主</td><td>记住槽分布，处理 MOVED / ASK</td></tr>
+        <tr><th scope="row">适合</th><td>读多、要备份</td><td>一台装得下，要高可用</td><td>一台装不下，或写入扛不住</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>Redis 5～6 和 Redis 7，Boot 2 和 Boot 3</h2>
+    <p class="lead">JDK 8 还是 17 不影响这些。变化在 Redis 的默认值和命令，以及 Spring 的配置前缀。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Redis 5～6 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>Redis 5 起命令改叫 <code>REPLICAOF</code>，建集群从 redis-trib.rb 换成 <code>redis-cli --cluster</code></li>
+        <li>全量同步默认先把 RDB 写到磁盘再发（<code>repl-diskless-sync no</code>）</li>
+        <li>查槽分布用 <code>CLUSTER SLOTS</code></li>
+        <li>配置前缀 <code>spring.redis.sentinel.*</code>、<code>spring.redis.cluster.*</code>；Lettuce 拓扑刷新的配置项 Boot 2.3 起才有</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Redis 7 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li><code>repl-diskless-sync</code> 默认改成 yes：RDB 直接通过网络发给从节点</li>
+        <li>新增 <code>CLUSTER SHARDS</code>，取代 CLUSTER SLOTS</li>
+        <li>分片发布订阅 <code>SSUBSCRIBE</code> / <code>SPUBLISH</code>：消息只在槽所在的分片里传，不再广播全集群</li>
+        <li>配置前缀改成 <code>spring.data.redis.*</code></li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>异步复制</span><span>PSYNC 部分同步</span><span>SDOWN → ODOWN → 选领头 → 换主</span><span>16384 个槽</span><span>MOVED / ASK</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">多数坑都来自两点：复制是异步的，客户端看到的拓扑可能是旧的。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="rp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-copy"/></svg><b>刚写进去，从节点上读不到</b><p>复制有延迟。读写分离时，“写完马上要读”的请求走主节点。<code>INFO replication</code> 里比较主从的 offset 可以看延迟。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>主从切换后，最后一些写入没了</b><p>异步复制，主节点挂之前还没传给从节点的写入就丢了。关键写入用 <code>WAIT</code> 降低风险；一条都不能丢的数据，别只放在 Redis。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-split"/></svg><b>网络恢复后，一段时间的写入凭空消失</b><p>脑裂：被隔离的旧主还在接受写入，回来后变成从节点被清空。配 <code>min-replicas-to-write</code> 和 <code>min-replicas-max-lag</code>。</p></div>
+    <div class="pit" data-role="rp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>从节点一直在全量同步，停不下来</b><p>积压缓冲区太小，或者全量同步期间攒的命令超过了 <code>client-output-buffer-limit replica 256mb 64mb 60</code>，连接被断开，重连又是全量。日志里有 <code>overcoming of output buffer limits</code>。两个都调大。</p></div>
+    <div class="pit" data-role="se"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-eye"/></svg><b>主节点那台机器挂了，哨兵却没切换</b><p>只部署了 2 个哨兵，或者哨兵和主节点放在同一台机器，挂一台就凑不够过半票数。至少 3 个，放在 3 台不同的机器上。</p></div>
+    <div class="pit" data-role="se"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>主节点挂了半分钟才切过去</b><p><code>down-after-milliseconds</code> 默认 30 秒。可以调到几秒，但别小于网络正常抖动的时间，不然会频繁误切。</p></div>
+    <div class="pit" data-role="sl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-slots"/></svg><b>CROSSSLOT Keys in request don't hash to the same slot</b><p>集群下 MGET、事务、Lua 用到了不同槽的 key，同一个节点也不行。用 hash tag 把它们放到同一个槽，但别把大量 key 塞进同一个 tag，会让一个节点特别热。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>CLUSTERDOWN The cluster is down</b><p>某一段槽的主从全挂了，默认 <code>cluster-require-full-coverage yes</code> 会让整个集群停止服务。能接受部分可用，就改成 no。</p></div>
+    <div class="pit" data-role="ms"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-crown"/></svg><b>集群切换后，应用一直报错，重启应用才好</b><p>Lettuce 默认不会主动刷新集群拓扑，一直往旧节点发。打开 <code>lettuce.cluster.refresh.adaptive</code> 和 <code>period</code>。</p></div>
+    <div class="pit" data-role="sl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-slots"/></svg><b>集群里 SCAN 只扫出一部分 key</b><p>SCAN、KEYS 只作用于当前连接的节点。要遍历全部，得对每个主节点各扫一遍；KEYS 会阻塞，生产环境别用。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7、Spring Boot 2 / 3 为例。相关：<a href="redis-persistence.html">Redis 持久化 RDB 与 AOF</a>（全量同步用的就是 RDB；主节点没开持久化又自动重启，会把从节点也清空）· <a href="cache-problems.html">缓存穿透、击穿与雪崩</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+function utf8(s){ if(typeof TextEncoder!=='undefined') return Array.from(new TextEncoder().encode(s)); var e=unescape(encodeURIComponent(s)), a=[]; for(var i=0;i<e.length;i++) a.push(e.charCodeAt(i)); return a; }
+function crc16(s){ var c=0; utf8(s).forEach(function(b){ c^=(b<<8); for(var i=0;i<8;i++){ c=(c&0x8000)?((c<<1)^0x1021):(c<<1); c&=0xFFFF; } }); return c; }
+function hashPart(k){ var s=k.indexOf('{'); if(s>=0){ var e=k.indexOf('}',s+1); if(e>s+1) return k.substring(s+1,e); } return k; }
+function keySlot(k){ return crc16(hashPart(k)) & 16383; }
+function nodeOf(slot){ return slot<=5460?'A':(slot<=10922?'B':'C'); }
+function backlog(rateKB, offSec, blKB){
+  var need=rateKB*offSec;
+  return {need:need, cap:blKB, partial: need<=blKB};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function kb(v){ return v>=1048576 ? (v/1048576).toFixed(v%1048576?1:0)+' GB' : (v>=1024 ? (Math.round(v/1024*10)/10)+' MB' : v+' KB'); }
+
+  /* ---------- hero diagrams ---------- */
+  function node(x,y,r,cls,txt,sub){ return '<circle class="'+cls+'" cx="'+x+'" cy="'+y+'" r="'+r+'"/><text class="n-t" x="'+x+'" y="'+(y+4)+'" text-anchor="middle">'+txt+'</text>'+(sub?'<text class="n-tm" x="'+x+'" y="'+(y+r+13)+'" text-anchor="middle">'+sub+'</text>':''); }
+  function arrow(x1,y1,x2,y2,cls,ah,shorten){
+    var dx=x2-x1, dy=y2-y1, L=Math.sqrt(dx*dx+dy*dy), ux=dx/L, uy=dy/L, s=shorten||0;
+    var ax=x2-ux*s, ay=y2-uy*s, bx=x1+ux*s, by=y1+uy*s;
+    var hx=ax-ux*9, hy=ay-uy*9, px=-uy*5, py=ux*5;
+    return '<line class="'+cls+'" x1="'+bx.toFixed(1)+'" y1="'+by.toFixed(1)+'" x2="'+hx.toFixed(1)+'" y2="'+hy.toFixed(1)+'"/>'+(ah?'<path class="'+ah+'" d="M'+ax.toFixed(1)+' '+ay.toFixed(1)+'L'+(hx+px).toFixed(1)+' '+(hy+py).toFixed(1)+'L'+(hx-px).toFixed(1)+' '+(hy-py).toFixed(1)+'z"/>':'');
+  }
+  var h='';
+  h+=arrow(110,50,55,120,'e-rep','ah-rp',24)+arrow(110,50,165,120,'e-rep','ah-rp',24);
+  h+=node(110,50,24,'n-ms','主','写')+node(55,120,22,'n-rp','从','读')+node(165,120,22,'n-rp','从','读');
+  $('hRep').innerHTML=h;
+  h='';
+  h+=arrow(110,62,60,130,'e-rep','ah-rp',22)+arrow(110,62,160,130,'e-rep','ah-rp',22);
+  [[30,30],[190,30],[110,150]].forEach(function(p){ h+='<line class="e-mon" x1="'+p[0]+'" y1="'+p[1]+'" x2="110" y2="62"/>'; });
+  h+=node(110,62,22,'n-ms','主')+node(60,130,20,'n-rp','从')+node(160,130,20,'n-rp','从');
+  [[30,30],[190,30],[110,150]].forEach(function(p,i){ h+=node(p[0],p[1],14,'n-se','S'+(i+1)); });
+  $('hSen').innerHTML=h;
+  h='';
+  [[40,'A','0–5460'],[110,'B','5461–10922'],[180,'C','10923–16383']].forEach(function(g){
+    h+=arrow(g[0],58,g[0],118,'e-rep','ah-rp',20);
+  });
+  h+='<path class="e-gos" d="M58 50 H92 M128 50 H162"/>';
+  [[40,'A','0–5460'],[110,'B','5461–10922'],[180,'C','10923–16383']].forEach(function(g){
+    h+=node(g[0],50,19,'n-ms',g[1])+'<text class="n-tm" x="'+g[0]+'" y="20" text-anchor="middle">'+g[2]+'</text>'+node(g[0],122,15,'n-rp','从');
+  });
+  h+='<text class="n-tm" x="110" y="164" text-anchor="middle">虚线：节点之间互相 PING</text>';
+  $('hClu').innerHTML=h;
+
+  /* ---------- backlog calculator ---------- */
+  var rate=1024, off=30, bl=1024;
+  function renderCalc(){
+    var r=backlog(rate,off,bl), mx=Math.max(r.need,r.cap);
+    var ring=$('ring');
+    ring.querySelector('.cap').style.width=(r.cap/mx*100)+'%';
+    var nd=ring.querySelector('.need'); nd.style.width=Math.max(1,r.need/mx*100)+'%'; nd.classList.toggle('over',!r.partial);
+    $('ringL').innerHTML='<span>断线期间产生的复制数据：<b>'+kb(r.need)+'</b></span><span>积压缓冲区能存：<b>'+kb(r.cap)+'</b></span>';
+    var v=$('calcV');
+    if(r.partial){ v.setAttribute('data-role','done'); v.innerHTML='<b>部分同步</b>：缺的 '+kb(r.need)+' 还在缓冲区里，主节点回 <code>+CONTINUE</code>，只补这一段，几乎没有代价。'; }
+    else { v.setAttribute('data-role','bad'); v.innerHTML='<b>全量同步</b>：缺的 '+kb(r.need)+' 比缓冲区大，最早那部分已经被新数据覆盖了。主节点回 <code>+FULLRESYNC</code>，重新 fork、生成 RDB、整库传一遍。至少要把 repl-backlog-size 调到 '+kb(r.need)+' 以上。'; }
+  }
+  function bindSeg(attr,fn){ document.querySelectorAll('['+attr+']').forEach(function(b){ b.addEventListener('click',function(){ fn(parseInt(b.getAttribute(attr),10)); document.querySelectorAll('['+attr+']').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderCalc(); }); }); }
+  bindSeg('data-rate',function(v){rate=v;}); bindSeg('data-off',function(v){off=v;}); bindSeg('data-bl',function(v){bl=v;});
+  renderCalc();
+
+  /* ---------- failover stepper ---------- */
+  var P={M:[320,92], R1:[200,215], R2:[440,215], S1:[70,92], S2:[570,92], S3:[320,292], C:[70,215]};
+  var NAME={M:'6379',R1:'6380',R2:'6381'};
+  var STEPS=[
+    {t:'t = 0', cap:'<b>一切正常。</b>6379 是主节点，6380、6381 在复制它。三个哨兵每秒 PING 一次，客户端往 6379 写。',
+     role:{M:'ms',R1:'rp',R2:'rp'}, rep:[['M','R1'],['M','R2']], mon:'M', cli:'M', badge:{}, logs:['+monitor master mymaster 10.0.0.1 6379 quorum 2']},
+    {t:'t = 0', cap:'<b>6379 突然宕机。</b>复制断了，客户端写入报错。哨兵的 PING 开始收不到回复。',
+     role:{M:'down',R1:'rp',R2:'rp'}, rep:[], mon:'M', cli:'M', cliBad:true, badge:{}, logs:[]},
+    {t:'t ≈ 5 s', cap:'<b>主观下线。</b>S1、S2 超过 5 秒没收到回复，各自认为 6379 挂了。S3 这边网络有点慢，还没判断。',
+     role:{M:'down',R1:'rp',R2:'rp'}, rep:[], mon:'M', cli:'M', cliBad:true, badge:{S1:'SDOWN',S2:'SDOWN'}, logs:['S1 +sdown master mymaster 10.0.0.1 6379','S2 +sdown master mymaster 10.0.0.1 6379']},
+    {t:'t ≈ 5.1 s', cap:'<b>客观下线。</b>S1 问其他哨兵：你们也觉得它挂了吗？S2 同意。2 票达到 quorum 2，6379 被判定真的挂了。',
+     role:{M:'down',R1:'rp',R2:'rp'}, rep:[], mon:'M', cli:'M', cliBad:true, badge:{S1:'ODOWN',S2:'SDOWN'}, logs:['S1 +odown master mymaster 10.0.0.1 6379 #quorum 2/2']},
+    {t:'t ≈ 5.2 s', cap:'<b>选领头哨兵。</b>S1 发起投票（纪元 1），三个哨兵都投给它。3 票过半，S1 负责这次故障转移。',
+     role:{M:'down',R1:'rp',R2:'rp'}, rep:[], mon:'M', cli:'M', cliBad:true, badge:{S1:'领头',S2:'投 S1',S3:'投 S1'}, logs:['S1 +new-epoch 1','S1 +try-failover master mymaster 10.0.0.1 6379','S1 +vote-for-leader 3f1a… 1','S2 +vote-for-leader 3f1a… 1','S3 +vote-for-leader 3f1a… 1','S1 +elected-leader master mymaster 10.0.0.1 6379']},
+    {t:'t ≈ 5.3 s', cap:'<b>挑新主节点。</b>两个从节点优先级一样，6380 的复制偏移量更大，数据更新，选它。',
+     role:{M:'down',R1:'rp',R2:'rp'}, rep:[], mon:'M', cli:'M', cliBad:true, badge:{S1:'领头'}, pick:true, hl:'R1', logs:['S1 +failover-state-select-slave master mymaster 10.0.0.1 6379','S1 +selected-slave slave 10.0.0.2:6380 @ mymaster 10.0.0.1 6379']},
+    {t:'t ≈ 6 s', cap:'<b>提升。</b>S1 对 6380 发 <code>REPLICAOF NO ONE</code>，6380 不再复制别人，变成主节点。',
+     role:{M:'down',R1:'ms',R2:'rp'}, rep:[], mon:'R1', cli:'M', cliBad:true, badge:{S1:'领头'}, pick:true, logs:['S1 +failover-state-send-slaveof-noone slave 10.0.0.2:6380','S1 +failover-state-wait-promotion slave 10.0.0.2:6380','S1 +promoted-slave slave 10.0.0.2:6380']},
+    {t:'t ≈ 7 s', cap:'<b>让其他从节点改跟新主。</b>S1 对 6381 发 <code>REPLICAOF 10.0.0.2 6380</code>，6381 开始复制 6380。',
+     role:{M:'down',R1:'ms',R2:'rp'}, rep:[['R1','R2']], mon:'R1', cli:'M', cliBad:true, badge:{S1:'领头'}, logs:['S1 +failover-state-reconf-slaves master mymaster 10.0.0.1 6379','S1 +slave-reconf-sent slave 10.0.0.3:6381','S1 +slave-reconf-done slave 10.0.0.3:6381','S1 +failover-end master mymaster 10.0.0.1 6379']},
+    {t:'t ≈ 7.1 s', cap:'<b>通知客户端。</b>哨兵广播 <code>+switch-master</code>。Lettuce 断线重连时重新问哨兵主节点是谁，拿到 6380 后改连过去，写入恢复。',
+     role:{M:'down',R1:'ms',R2:'rp'}, rep:[['R1','R2']], mon:'R1', cli:'R1', badge:{}, logs:['+switch-master mymaster 10.0.0.1 6379 10.0.0.2 6380']},
+    {t:'几分钟后', cap:'<b>旧主回来了。</b>6379 重启后，哨兵让它当 6380 的从节点。它宕机前没来得及复制出去的写入，就此丢失。',
+     role:{M:'rp',R1:'ms',R2:'rp'}, rep:[['R1','R2'],['R1','M']], mon:'R1', cli:'R1', badge:{}, logs:['S1 +convert-to-slave slave 10.0.0.1:6379 @ mymaster 10.0.0.2 6380']}
+  ];
+  var pos=0, timer=null, LAST=STEPS.length-1;
+  function drawFo(st){
+    var h='';
+    // monitor lines
+    ['S1','S2','S3'].forEach(function(s){ var a=P[s], b=P[st.mon]; h+='<line class="e-mon" x1="'+a[0]+'" y1="'+a[1]+'" x2="'+b[0]+'" y2="'+b[1]+'"/>'; });
+    // replication
+    st.rep.forEach(function(e){ var a=P[e[0]], b=P[e[1]]; h+=arrow(a[0],a[1],b[0],b[1],'e-rep','ah-rp',32); });
+    // client
+    var c=P.C, t=P[st.cli];
+    h+= st.cliBad ? arrow(c[0]+8,c[1],t[0],t[1],'e-bad','',32) : arrow(c[0]+8,c[1],t[0],t[1],'e-cli','ah-ink',32);
+    h+='<rect class="n-cl" x="'+(c[0]-38)+'" y="'+(c[1]-20)+'" width="78" height="40" rx="8"/><text class="n-ts" x="'+c[0]+'" y="'+(c[1]-2)+'" text-anchor="middle">客户端</text><text class="n-tm" x="'+c[0]+'" y="'+(c[1]+13)+'" text-anchor="middle">'+(st.cliBad?'写入失败':'写入正常')+'</text>';
+    // data nodes
+    ['M','R1','R2'].forEach(function(k){
+      var p=P[k], r=st.role[k], cls= r==='down'?'n-down':(r==='ms'?'n-ms':'n-rp');
+      if(st.hl===k) h+='<circle cx="'+p[0]+'" cy="'+p[1]+'" r="38" fill="none" stroke="var(--good)" stroke-width="3" stroke-dasharray="5 3"/>';
+      h+='<circle class="'+cls+'" cx="'+p[0]+'" cy="'+p[1]+'" r="30"/>';
+      if(r==='down') h+='<path class="x-mark" d="M'+(p[0]-12)+' '+(p[1]-12)+'l24 24M'+(p[0]+12)+' '+(p[1]-12)+'l-24 24"/>';
+      else h+='<text class="n-t" x="'+p[0]+'" y="'+(p[1]+4)+'" text-anchor="middle">'+NAME[k]+'</text>';
+      var lab = r==='down'?'挂了':(r==='ms'?'主节点':'从节点');
+      h+='<text class="n-ts" x="'+p[0]+'" y="'+(p[1]+46)+'" text-anchor="middle">'+(r==='down'?NAME[k]+' ':'')+lab+'</text>';
+    });
+    // sentinels
+    ['S1','S2','S3'].forEach(function(s){
+      var p=P[s], b=st.badge[s];
+      h+='<circle class="n-se" cx="'+p[0]+'" cy="'+p[1]+'" r="18"/><text class="n-t" x="'+p[0]+'" y="'+(p[1]+4)+'" text-anchor="middle">'+s+'</text>';
+      if(b){ var w=b.length*11+14, bad=(b==='SDOWN'||b==='ODOWN'), y=s==='S3'?p[1]-40:p[1]+24;
+        h+='<rect class="'+(bad?'bdg-rb':'bdg-r')+'" x="'+(p[0]-w/2)+'" y="'+y+'" width="'+w+'" height="17" rx="8"/><text class="bdg '+(bad?'bdg-tb':'bdg-t')+'" x="'+p[0]+'" y="'+(y+12.5)+'" text-anchor="middle">'+b+'</text>'; }
+    });
+    $('foSvg').innerHTML=h;
+  }
+  function renderFo(){
+    var st=STEPS[pos];
+    $('foPos').innerHTML='第 <b>'+pos+'</b> / '+LAST+' 步 · '+st.t;
+    $('foCap').innerHTML=st.cap;
+    drawFo(st);
+    $('foPick').innerHTML = st.pick
+      ? '<b>挑新主</b><table><thead><tr><th>从节点</th><th>优先级</th><th>偏移量</th></tr></thead><tbody><tr class="win"><td>6380 ✓</td><td>100</td><td>10,486,272</td></tr><tr><td>6381</td><td>100</td><td>10,485,104</td></tr></tbody></table>'
+      : '<b>quorum = 2</b>，哨兵 3 个，过半 = 2 票。<br>down-after-milliseconds = 5000';
+    var lines=[]; for(var i=0;i<=pos;i++) STEPS[i].logs.forEach(function(l){ lines.push({l:l,cur:i===pos}); });
+    $('foLog').innerHTML = lines.length ? lines.map(function(x){ var m=x.l.match(/^(S\d )?(\+[\w-]+)(.*)$/); var html=m?esc(m[1]||'')+'<b>'+esc(m[2])+'</b>'+esc(m[3]):esc(x.l); return '<li'+(x.cur?' class="new"':'')+'>'+html+'</li>'; }).join('') : '<li>（还没有日志）</li>';
+    var lg=$('foLog'); lg.scrollTop=lg.scrollHeight;
+    $('foPrev').disabled=pos===0; $('foNext').disabled=pos===LAST;
+  }
+  function stop(){ if(timer){ clearInterval(timer); timer=null; } $('foAuto').textContent='▶ 自动播放'; }
+  function go(p){ pos=Math.max(0,Math.min(LAST,p)); renderFo(); }
+  $('foPrev').addEventListener('click',function(){ stop(); go(pos-1); });
+  $('foNext').addEventListener('click',function(){ stop(); go(pos+1); });
+  $('foReset').addEventListener('click',function(){ stop(); go(0); });
+  $('foAuto').addEventListener('click',function(){
+    if(timer){ stop(); return; }
+    if(pos===LAST) go(0);
+    $('foAuto').textContent='❚❚ 暂停';
+    timer=setInterval(function(){ if(pos>=LAST){ stop(); return; } go(pos+1); },2400);
+  });
+  $('fo').addEventListener('keydown',function(e){
+    if(e.target.tagName==='INPUT') return;
+    if(e.key==='ArrowRight'){ stop(); go(pos+1); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); go(pos-1); e.preventDefault(); }
+  });
+  renderFo();
+
+  /* ---------- slot calculator ---------- */
+  var SEG=[[0,5460,'ms','A'],[5461,10922,'rp','B'],[10923,16383,'sl','C']];
+  function renderSlots(){
+    var a=$('kA').value, b=$('kB').value;
+    var sa=keySlot(a), sb=keySlot(b);
+    var r='';
+    SEG.forEach(function(s){ r+='<div class="seg" data-role="'+s[2]+'" style="left:'+(s[0]/16384*100)+'%;width:calc('+((s[1]-s[0]+1)/16384*100)+'% - 2px);background:var(--rt);border:2px solid var(--rc)"></div>'; });
+    function mk(slot,cls,label){ var x=slot/16383*100; return '<div class="mk '+cls+(x>75?' flip':'')+'" style="left:'+x+'%"><span>'+label+'</span></div>'; }
+    r+=mk(sa,'','key 1 → '+sa)+mk(sb,'b','key 2 → '+sb);
+    $('ruler').innerHTML=r;
+    function card(k,slot,n){
+      var hp=hashPart(k), seg=SEG.filter(function(s){return s[3]===n;})[0];
+      return '<div class="kr" data-role="'+seg[2]+'"><code>'+esc(k||'（空）')+'</code>'+(hp!==k?'<span>只算花括号里的：'+esc(hp)+'</span>':'')+'<span>CRC16 = 0x'+crc16(hp).toString(16).toUpperCase().padStart(4,'0')+' → 槽 '+slot+'</span><span>在主节点 '+n+'</span></div>';
+    }
+    var na=nodeOf(sa), nb=nodeOf(sb);
+    $('kres').innerHTML=card(a,sa,na)+card(b,sb,nb);
+    var v=$('kv');
+    if(sa===sb){ v.setAttribute('data-role','done'); v.innerHTML='<code>MGET '+esc(a)+' '+esc(b)+'</code>：两个 key 在同一个槽 '+sa+'，可以一起用。'; }
+    else if(na===nb){ v.setAttribute('data-role','bad'); v.innerHTML='<code>MGET '+esc(a)+' '+esc(b)+'</code> 会报 <code>CROSSSLOT</code>：虽然都在主节点 '+na+'，但槽不一样（'+sa+' 和 '+sb+'），集群只认槽。'; }
+    else { v.setAttribute('data-role','bad'); v.innerHTML='<code>MGET '+esc(a)+' '+esc(b)+'</code> 会报 <code>CROSSSLOT</code>：两个 key 在不同的槽，还在不同的节点（'+na+' 和 '+nb+'）。'; }
+  }
+  $('kA').addEventListener('input',renderSlots); $('kB').addEventListener('input',renderSlots);
+  document.querySelectorAll('[data-ka]').forEach(function(b){ b.addEventListener('click',function(){ $('kA').value=b.getAttribute('data-ka'); $('kB').value=b.getAttribute('data-kb'); renderSlots(); }); });
+  renderSlots();
+})();
+</script>
+
+</body>
+</html>
