@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Redis Stream 与消息队列</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: an append-only ledger; each team (consumer group) keeps its own bookmark, each worker keeps a to-confirm list (PEL). Stream teal, group purple, consumer c1 blue / c2 orange, acked green, lost red. Anchor = the consumer-group lab. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --st:#0D7A69; --st-tint:#DCF0EB;
+  --gp:#6A3FC0; --gp-tint:#ECE5FA;
+  --c1:#3150C4; --c1-tint:#E2E7FA;
+  --c2:#C2410C; --c2-tint:#FDE6D8;
+  --c9:#8A5A2B; --c9-tint:#F3E6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#7FD8C5;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --st:#40C6B0; --st-tint:#12352F;
+    --gp:#B9A0FF; --gp-tint:#2A2148;
+    --c1:#90A4FF; --c1-tint:#1D2650;
+    --c2:#FB923C; --c2-tint:#3A2214;
+    --c9:#D9A26B; --c9-tint:#3A2A1A;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#7FD8C5;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --st:#40C6B0; --st-tint:#12352F;
+  --gp:#B9A0FF; --gp-tint:#2A2148;
+  --c1:#90A4FF; --c1-tint:#1D2650;
+  --c2:#FB923C; --c2-tint:#3A2214;
+  --c9:#D9A26B; --c9-tint:#3A2A1A;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#7FD8C5;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--c1)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--c1);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="st"]{--rc:var(--st);--rt:var(--st-tint)}
+[data-role="gp"]{--rc:var(--gp);--rt:var(--gp-tint)}
+[data-role="c1"]{--rc:var(--c1);--rt:var(--c1-tint)}
+[data-role="c2"]{--rc:var(--c2);--rt:var(--c2-tint)}
+[data-role="c9"]{--rc:var(--c9);--rt:var(--c9-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.ledger{margin-top:18px;background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.lrow{display:flex;align-items:stretch;gap:4px;overflow-x:auto;padding-bottom:4px}
+.lent{flex:none;width:86px;border:2px solid var(--st);border-radius:10px;background:var(--st-tint);padding:4px 6px;display:flex;flex-direction:column;line-height:1.3}
+.lent b{font-family:var(--font-mono);font-size:11.5px}
+.lent span{font-size:11px;color:var(--muted)}
+.lent.new{border-style:dashed;background:transparent}
+.ptrs{display:grid;grid-template-columns:repeat(8,86px);column-gap:4px;row-gap:4px;overflow-x:auto}
+.ptr{font-size:11.5px;font-weight:700;color:var(--rc);white-space:nowrap}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--gp)} .an{color:var(--st)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--warn);font-weight:700}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.btn{font-size:13px;padding:6px 11px;border-radius:10px;border:1.5px solid var(--rc,var(--line-strong));background:var(--card);cursor:pointer;color:var(--ink)}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.35;cursor:default}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+
+/* ---------- evolution ---------- */
+.gens{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.gen{border:2px solid var(--rc);border-radius:16px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.gen h3{font-size:21px;color:var(--rc)}
+.gen h3 small{font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-left:6px}
+.gen .cmd{font-family:var(--font-mono);font-size:12px;padding:6px 8px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);overflow-wrap:anywhere}
+.gen p{font-size:13.5px}
+.pic{display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap}
+.pic .box{border:1.5px solid var(--rc);border-radius:8px;padding:2px 8px;background:var(--rt);font-family:var(--font-mono);font-size:11px}
+.pic .x{color:var(--bad);font-weight:700}
+
+/* ---------- id ---------- */
+.idv{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-family:var(--font-mono);font-size:18px;font-weight:700}
+.idv span{padding:4px 10px;border-radius:8px;border:2px solid var(--rc);background:var(--rt)}
+.idv small{font-family:var(--font-body);font-size:12px;font-weight:500;color:var(--muted);display:block}
+.rax{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.rax .node{display:flex;gap:2px;align-items:center}
+.rax .node b{font-family:var(--font-mono);font-size:11.5px;padding:2px 8px;border-radius:6px;background:var(--gp-tint);border:1.5px solid var(--gp)}
+.rax .node i{width:16px;height:16px;border-radius:3px;background:var(--st)}
+
+/* ---------- groups diagram ---------- */
+.gd{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.gbox{border:2px solid var(--gp);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.gbox b{color:var(--gp);font-size:15px}
+.gbox .cons{display:flex;gap:6px;flex-wrap:wrap}
+.gbox .cons span{font-size:12.5px;padding:3px 10px;border-radius:999px;border:1.5px solid var(--rc);background:var(--rt)}
+.gbox p{font-size:13px;color:var(--muted)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.ops{display:flex;flex-direction:column;gap:8px}
+.opr{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.opr .lbl{font-size:12.5px;color:var(--muted);min-width:5.5em;font-weight:700}
+.clock{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.clock b{color:var(--ink)}
+.stream{display:flex;gap:4px;overflow-x:auto;padding:4px 2px 6px}
+.ent{flex:none;width:96px;border-radius:10px;border:2px solid var(--st);background:var(--card);display:flex;flex-direction:column;overflow:hidden}
+.ent .hd{padding:3px 6px;background:var(--st-tint);font-family:var(--font-mono);font-size:11.5px;font-weight:700}
+.ent .bd{padding:2px 6px;font-size:11px;color:var(--muted);font-family:var(--font-mono)}
+.ent .gs{display:flex;flex-direction:column;gap:2px;padding:3px 4px 4px}
+.gst{font-size:10.5px;font-weight:700;padding:1px 5px;border-radius:5px;text-align:center;white-space:nowrap}
+.gst.ack{background:var(--good-tint);color:var(--good)}
+.gst.pc1{background:var(--c1);color:var(--on-accent)}
+.gst.pc2{background:var(--c2);color:var(--on-accent)}
+.gst.pc9{background:var(--c9);color:var(--on-accent)}
+.gst.new{background:var(--neutral-tint);color:var(--muted)}
+.ent.cur{box-shadow:0 0 0 3px var(--gp-tint)}
+.panes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.pane{border:2px solid var(--rc);border-radius:12px;background:var(--card);padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.pane.dead{border-style:dashed;opacity:.85}
+.pane h4{margin:0;font-size:14px;color:var(--rc);display:flex;justify-content:space-between;gap:6px;align-items:center}
+.pane h4 small{font-size:11px;font-weight:700;padding:0 8px;border-radius:999px;background:var(--rt);color:var(--rc)}
+.pel{width:100%;border-collapse:collapse;font-size:12px}
+.pel th,.pel td{padding:3px 5px;border-bottom:1px solid var(--line);text-align:left;font-family:var(--font-mono)}
+.pel th{font-family:var(--font-body);font-weight:600;color:var(--muted);font-size:11px}
+.pel td.hot{color:var(--bad);font-weight:700}
+.gmeta{display:flex;flex-direction:column;gap:2px;font-size:12px}
+.gmeta span{display:flex;justify-content:space-between;gap:8px}
+.gmeta b{font-family:var(--font-mono)}
+.log{list-style:none;margin:0;padding:10px 12px;border-radius:12px;background:var(--console-bg);color:var(--console-dim);font-family:var(--font-mono);font-size:11.5px;line-height:1.55;display:flex;flex-direction:column;gap:3px;max-height:220px;overflow-y:auto}
+.log li{overflow-wrap:anywhere}
+.log li .c{color:var(--console-hi)}
+.log li .r{color:var(--console-fg)}
+.log li .n{color:var(--console-dim);font-family:var(--font-body)}
+.log li:last-child .c{font-weight:700}
+
+/* ---------- reliable ---------- */
+.rel{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.rc{border:2px solid var(--rc);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.rc small{font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--rc)}
+.rc b{font-size:15px}
+.rc span{font-size:13px}
+.rc code{font-size:11.5px;overflow-wrap:anywhere}
+
+/* ---------- delay ---------- */
+.dq{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dq .z{border:2px solid var(--gp);border-radius:12px;background:var(--gp-tint);padding:6px 10px;font-size:12.5px;display:flex;flex-direction:column;gap:2px}
+.dq .z span{font-family:var(--font-mono);font-size:11.5px}
+.dq .z span.due{color:var(--good);font-weight:700}
+.dq .ar{font-size:22px;color:var(--line-strong);font-weight:700}
+.dq .s{border:2px solid var(--st);border-radius:12px;background:var(--st-tint);padding:6px 10px;font-size:12.5px}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rel{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .gens,.two,.gd,.eras,.panes{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .rel{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-ledger" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="6" y="6" width="52" height="52" rx="6"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M14 18h36M14 28h36M14 38h36M14 48h20"/>
+    <path class="k-gold" d="M42 44l10 4-10 4z"/>
+  </symbol>
+  <symbol id="i-team" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="18" cy="20" r="8"/><path fill="currentColor" d="M4 52c0-12 6-18 14-18s14 6 14 18z"/>
+    <circle fill="currentColor" cx="46" cy="20" r="8"/><path fill="currentColor" d="M32 52c0-12 6-18 14-18s14 6 14 18z"/>
+    <rect class="k-gold" x="26" y="4" width="12" height="8" rx="2"/>
+  </symbol>
+  <symbol id="i-worker" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="16" r="10"/>
+    <path fill="currentColor" d="M12 60c0-16 9-26 20-26s20 10 20 26z"/>
+    <rect class="k-gold" x="22" y="40" width="20" height="12" rx="2"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="8" y="6" width="48" height="54" rx="6"/>
+    <path class="ks-paper" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" d="M16 20l4 4 7-8M16 36l4 4 7-8"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M32 20h16M32 36h16M16 50h32"/>
+    <circle class="k-gold" cx="48" cy="50" r="4"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">Redis Stream 与消息队列</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS 5.0+ · STREAM · XADD · XREADGROUP · XACK · PEL · XAUTOCLAIM</p>
+  <h1>一本只能往后写的流水账，每个班组夹着自己的书签</h1>
+  <p class="lead">Stream 是 Redis 5.0 加的消息队列类型。生产者只往末尾追加，消息不会因为被读走就消失；每个消费组记着自己读到哪了，组里的每个人还要记着“我领了哪些还没处理完”。这样消费者挂了、重启了，消息都还找得回来。</p>
+
+  <div class="ledger" aria-label="一个 Stream 和两个消费组的进度">
+    <div class="lrow">
+      <span class="lent"><b>1001-0</b><span>下单 #1001</span></span><span class="lent"><b>1002-0</b><span>下单 #1002</span></span><span class="lent"><b>1003-0</b><span>下单 #1003</span></span><span class="lent"><b>1004-0</b><span>下单 #1004</span></span><span class="lent"><b>1005-0</b><span>下单 #1005</span></span><span class="lent"><b>1006-0</b><span>下单 #1006</span></span><span class="lent"><b>1007-0</b><span>下单 #1007</span></span><span class="lent new"><b>XADD →</b><span>只能往这追加</span></span>
+    </div>
+    <div class="ptrs">
+      <span></span><span></span><span class="ptr" data-role="c1">↑ 积分服务组读到这</span><span></span><span></span><span></span><span class="ptr" data-role="gp">↑ 发货服务组读到这</span><span></span>
+    </div>
+    <p class="tip">两个消费组读的是同一本账，各读各的进度，互不影响。真实 ID 前半段是毫秒时间戳，这里缩短了。</p>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="st">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ledger"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">流水账<code>Stream</code></div>
+        <p>只追加的消息日志，<b>读了不删</b>，每条有唯一递增的 ID。</p>
+        <span class="belong">要自己控制长度</span>
+      </div>
+    </div>
+    <div class="who" data-role="gp">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-team"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">班组<code>consumer group</code></div>
+        <p>一个组夹一个书签，<b>组内分活，组间各拿一份</b>。</p>
+        <span class="belong">一般一个服务一个组</span>
+      </div>
+    </div>
+    <div class="who" data-role="c1">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">组员<code>consumer</code></div>
+        <p>组里的一个实例，<b>领到的消息只归它处理</b>。</p>
+        <span class="belong">名字要固定</span>
+      </div>
+    </div>
+    <div class="who" data-role="warn">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-check"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">待确认清单<code>PEL</code></div>
+        <p>领了但<b>还没 XACK</b> 的消息，都记在这里。</p>
+        <span class="belong">消息不丢的关键</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= EVOLUTION ================= -->
+<section id="evo">
+  <div>
+    <h2>Redis 做消息队列的三代</h2>
+    <p class="lead">在 Stream 之前，大家用 List 或 Pub/Sub 凑合。它们各缺一块：要么没有确认，要么不保存，要么不能多个服务各收一份。</p>
+  </div>
+  <div class="gens">
+    <div class="gen" data-role="other">
+      <h3>List<small>LPUSH + BRPOP</small></h3>
+      <div class="cmd">LPUSH queue msg<br>BRPOP queue 0</div>
+      <div class="pic"><span class="box">消费者</span>取走<span class="box">msg</span>处理到一半崩溃 <span class="x">→ 丢了</span></div>
+      <p>简单好用，消息会持久化。但一取走就从列表里没了，处理失败就丢；一条消息只能给一个消费者，没法让多个服务各收一份。可以用 BLMOVE 先挪到“处理中”列表来补救。</p>
+    </div>
+    <div class="gen" data-role="warn">
+      <h3>Pub/Sub<small>PUBLISH / SUBSCRIBE</small></h3>
+      <div class="cmd">SUBSCRIBE order-events<br>PUBLISH order-events msg</div>
+      <div class="pic"><span class="box">订阅者</span>重启的那几秒 <span class="x">→ 期间的消息全丢</span></div>
+      <p>一条消息发给所有在线的订阅者，但不保存：不在线就收不到，也没有确认。订阅者处理太慢，缓冲区超限会被断开（<code>client-output-buffer-limit pubsub 32mb 8mb 60</code>）。</p>
+    </div>
+    <div class="gen" data-role="st">
+      <h3>Stream<small>5.0 起</small></h3>
+      <div class="cmd">XADD orders * id 1001<br>XREADGROUP GROUP g c1 STREAMS orders &gt;</div>
+      <div class="pic"><span class="box">c1</span>领走后崩溃 → 消息还在 PEL 里 → 别人认领 <span class="box" style="--rc:var(--good);--rt:var(--good-tint)">不丢</span></div>
+      <p>消息持久化、有 ID、能回溯；有消费组和确认机制；多个组各收一份，组内多个实例分着处理。</p>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">遇到这种情况</th><th scope="col">List</th><th scope="col">Pub/Sub</th><th scope="col">Stream</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">消费者暂时下线</th><td class="good">消息留在列表里</td><td class="bad">这段时间的消息丢了</td><td class="good">消息还在，回来接着读</td></tr>
+        <tr><th scope="row">处理到一半崩溃</th><td class="bad">已经取走，丢了</td><td class="bad">丢了</td><td class="good">还在 PEL 里，可以重新处理</td></tr>
+        <tr><th scope="row">两个服务都要收到</th><td class="bad">只能一个收到</td><td class="good">都收到</td><td class="good">两个消费组各收一份</td></tr>
+        <tr><th scope="row">一个服务多个实例分活</th><td class="good">可以</td><td class="bad">每个实例都收到，重复处理</td><td class="good">同一组内自动分</td></tr>
+        <tr><th scope="row">回头再看历史消息</th><td class="bad">取走就没了</td><td class="bad">不保存</td><td class="good">按 ID 范围读</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= BASICS ================= -->
+<section id="basics">
+  <div>
+    <h2>Stream 长什么样</h2>
+    <p class="lead">每条消息是一组“字段-值”，外加一个由 Redis 生成的 ID。ID 一定递增，所以消息天然有序，也能按时间范围查。</p>
+  </div>
+  <div class="two">
+    <div class="mini">
+      <b>消息 ID</b>
+      <div class="idv"><span data-role="st">1730793600123<small>毫秒时间戳</small></span>-<span data-role="gp">0<small>同一毫秒内的序号</small></span></div>
+      <p>XADD 时传 <code>*</code>，Redis 自动生成。如果机器时钟往回调了，Redis 会沿用上一个 ID 的时间戳、只加序号，保证 ID 不会变小。</p>
+    </div>
+    <div class="mini">
+      <b>底下怎么存</b>
+      <div class="rax" aria-label="基数树的节点里装着 listpack">
+        <span class="node"><b>基数树节点 1730793600…</b><i></i><i></i><i></i><i></i></span>
+        <span class="node"><b>基数树节点 1730793601…</b><i></i><i></i><i></i></span>
+        <span class="node"><b>基数树节点 1730793602…</b><i></i><i></i></span>
+      </div>
+      <p>一棵基数树（rax）按 ID 前缀索引，每个节点里是一个 listpack，紧凑地装着一批消息（<a href="redis-data-encoding.html">Redis 第 04 篇</a>）。按 ID 查找和范围读都很快。</p>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>基本命令</b><span>redis-cli</span></div>
+<pre><code>XADD orders MAXLEN ~ 100000 * orderId 1001 amount 99   <span class="cm"># 追加，并把长度大约控制在 10 万条</span>
+<span class="cm">→ "1730793600123-0"</span>
+XLEN orders                                            <span class="cm"># 一共多少条</span>
+XRANGE orders - + COUNT 10                             <span class="cm"># 从头读 10 条；- 最小 + 最大</span>
+XREAD COUNT 10 BLOCK 5000 STREAMS orders $             <span class="cm"># 不用消费组：阻塞等 5 秒，只要新来的（$）</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= GROUPS ================= -->
+<section id="groups">
+  <div>
+    <h2>消费组：组内分活，组间各拿一份</h2>
+    <p class="lead">每个消费组有一个书签（last_delivered_id），记着组里最后发出去的是哪条。组里谁来要消息，就从书签后面拿下一条给它，并记进它的待确认清单（PEL），直到它 XACK。</p>
+  </div>
+  <div class="gd">
+    <div class="gbox"><b>发货服务组 ship</b><div class="cons"><span data-role="c1">c1 拿 1001、1003</span><span data-role="c2">c2 拿 1002、1004</span></div><p>同一组的两个实例分着处理，一条消息只给其中一个。</p></div>
+    <div class="gbox"><b>积分服务组 points</b><div class="cons"><span data-role="c9">c9 拿 1001～1004</span></div><p>另一个组从头读，所有消息它也都能收到一份，和发货组互不影响。</p></div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>消费组命令</b><span>redis-cli</span></div>
+<pre><code>XGROUP CREATE orders ship $ MKSTREAM                     <span class="cm"># 建组：$ 只要以后的新消息，0 从头开始</span>
+XREADGROUP GROUP ship c1 COUNT 10 BLOCK 2000 STREAMS orders &gt;   <span class="cm"># &gt;：要组里还没发给任何人的新消息</span>
+XACK orders ship 1730793600123-0                         <span class="cm"># 处理完了，从 PEL 里划掉</span>
+XREADGROUP GROUP ship c1 STREAMS orders 0                <span class="cm"># 0：不要新的，把我 PEL 里没 ACK 的再给我一遍</span>
+XPENDING orders ship - + 10                              <span class="cm"># 看谁手上压着哪些、压了多久、投递过几次</span>
+XAUTOCLAIM orders ship c1 60000 0-0 COUNT 10             <span class="cm"># 6.2 起：把闲置超过 60 秒的消息认领到 c1 名下</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= LAB ================= -->
+<section id="lab">
+  <div>
+    <h2>消费组实验台</h2>
+    <p class="lead">一个 Stream <code>orders</code>，消费组 g1 里有 c1、c2 两个消费者。生产、读取、确认、让 c2 崩溃、重启、让 c1 认领超时消息，再建一个组 g2 从头读。下面会显示每条消息在各组里的状态、每个人的待确认清单，以及实际执行的命令。</p>
+  </div>
+  <div class="lab" id="lab">
+    <div class="ops">
+      <div class="opr"><span class="lbl">生产者</span><button class="btn primary" id="bAdd">XADD 一条</button><span class="clock">时钟 <b id="clk">0</b> 秒</span></div>
+      <div class="opr" data-role="c1"><span class="lbl">c1</span><button class="btn" data-op="read:g1:c1">读一条新消息</button><button class="btn" data-op="ack:g1:c1">ACK 最早一条</button><button class="btn" data-op="claim:g1:c1">过 10 秒后认领超时消息</button></div>
+      <div class="opr" data-role="c2"><span class="lbl">c2</span><button class="btn" data-op="read:g1:c2">读一条新消息</button><button class="btn" data-op="ack:g1:c2">ACK 最早一条</button><button class="btn" data-op="crash:g1:c2">崩溃</button><button class="btn" data-op="restart:g1:c2">重启，先读自己的 PEL</button></div>
+      <div class="opr" data-role="c9"><span class="lbl">组 g2</span><button class="btn" data-op="mkg2">新建 g2（从头读）</button><button class="btn" data-op="read:g2:c9">c9 读一条</button><button class="btn" data-op="ack:g2:c9">c9 ACK</button><button class="btn" data-op="reset">重置</button></div>
+    </div>
+    <div class="stream" id="stream" aria-label="Stream 里的消息和各组的状态"></div>
+    <div class="panes" id="panes"></div>
+    <ol class="log" id="log" aria-live="polite" aria-label="执行过的命令"></ol>
+    <p class="verdict" id="labV" data-role="gp"></p>
+  </div>
+</section>
+
+<!-- ================= RELIABLE ================= -->
+<section id="reliable">
+  <div>
+    <h2>怎么做到消息不丢</h2>
+    <p class="lead">Stream 的保证是“至少一次”：只要没 ACK，消息就一直在某个人的待确认清单里，迟早会被再处理一次。代价是可能重复，所以消费逻辑必须幂等。</p>
+  </div>
+  <div class="rel">
+    <div class="rc" data-role="c1"><small>1 · 处理完再 ACK</small><b>先干活，后确认</b><span>业务成功之后再 XACK。崩在中间，消息还在 PEL 里。</span></div>
+    <div class="rc" data-role="c2"><small>2 · 重启先补旧账</small><b>读 ID 0，处理自己的 PEL</b><span>消费者名字要固定（比如主机名），重启后先用 <code>0</code> 读回没 ACK 的，再用 <code>&gt;</code> 读新的。</span></div>
+    <div class="rc" data-role="gp"><small>3 · 别人挂了就认领</small><b>定时 XAUTOCLAIM</b><span>实例永久下线了，它 PEL 里的消息由别的实例认领，投递次数加 1。</span></div>
+    <div class="rc" data-role="bad"><small>4 · 坏消息进死信</small><b>投递次数太多就隔离</b><span>同一条投递超过 3 次还失败，写进 <code>orders:dlq</code> 再 ACK，别让它无限重试。</span></div>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>Spring Data Redis 消费</b><span>手动 ACK</span></div>
+<pre><code><span class="kw">var</span> options = StreamMessageListenerContainer.StreamMessageListenerContainerOptions
+        .builder().pollTimeout(Duration.ofSeconds(<span class="kw">2</span>)).batchSize(<span class="kw">10</span>).build();
+<span class="kw">var</span> container = StreamMessageListenerContainer.create(connectionFactory, options);
+
+container.receive(
+    Consumer.from(<span class="an">"ship"</span>, hostName),                         <span class="cm">// 消费者名字固定</span>
+    StreamOffset.create(<span class="an">"orders"</span>, ReadOffset.lastConsumed()),  <span class="cm">// 等于 &gt;</span>
+    msg -&gt; {
+        shipService.handle(msg.getValue());                     <span class="cm">// 必须幂等</span>
+        redis.opsForStream().acknowledge(<span class="an">"orders"</span>, <span class="an">"ship"</span>, msg.getId());
+    });
+container.start();</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>生产和建组</b><span>StringRedisTemplate</span></div>
+<pre><code><span class="cm">// 发消息</span>
+RecordId id = redis.opsForStream()
+        .add(<span class="an">"orders"</span>, Map.of(<span class="an">"orderId"</span>, <span class="an">"1001"</span>, <span class="an">"amount"</span>, <span class="an">"99"</span>));
+
+<span class="cm">// 控制长度：大约保留最近 10 万条</span>
+redis.opsForStream().trim(<span class="an">"orders"</span>, <span class="kw">100_000</span>, <span class="kw">true</span>);
+
+<span class="cm">// 启动时建组；组已存在会报 BUSYGROUP，忽略即可</span>
+<span class="kw">try</span> {
+    redis.opsForStream().createGroup(<span class="an">"orders"</span>, ReadOffset.from(<span class="an">"0"</span>), <span class="an">"ship"</span>);
+} <span class="kw">catch</span> (RedisSystemException e) {
+    <span class="kw">if</span> (!String.valueOf(e.getMessage()).contains(<span class="an">"BUSYGROUP"</span>)) <span class="kw">throw</span> e;
+}</code></pre>
+    </div>
+  </div>
+  <div class="note-box"><b>Redis 本身也会丢</b><span>Stream 的持久化靠 RDB / AOF，主从复制是异步的。AOF 每秒刷盘时断电丢约 1 秒，主从切换时也可能丢最后一点（<a href="redis-persistence.html">Redis 第 02 篇</a>、<a href="redis-ha-cluster.html">第 03 篇</a>）。对账、支付这类一条都不能丢的消息，用 Kafka、RocketMQ 这类专门的消息队列。</span></div>
+</section>
+
+<!-- ================= DELAY ================= -->
+<section id="delay">
+  <div>
+    <h2>延迟消息：Stream 不支持，用 ZSet 补</h2>
+    <p class="lead">“30 分钟后取消未支付订单”这种需求，Stream 没有现成的办法。常见做法是用 ZSet 当延迟区：分数是到期时间，定时把到期的挪进 Stream 或直接处理。</p>
+  </div>
+  <div class="dq" aria-label="ZSet 延迟区到期后转入 Stream">
+    <div class="z"><b>ZSet delay:orders</b><span class="due">cancel:1001 → 10:00:00 已到期</span><span class="due">cancel:1002 → 10:00:02 已到期</span><span>cancel:1003 → 10:30:00</span></div>
+    <span class="ar" aria-hidden="true">→</span>
+    <div class="s">每秒用一段 Lua 取出到期的、删掉、XADD 进 <code>orders:cancel</code></div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>搬运到期消息的 Lua</b><span>取出和删除必须原子，否则多个实例会搬重复</span></div>
+<pre><code><span class="kw">local</span> due = redis.call(<span class="an">'ZRANGEBYSCORE'</span>, KEYS[1], <span class="an">'-inf'</span>, ARGV[1], <span class="an">'LIMIT'</span>, 0, 100)
+<span class="kw">for</span> _, m <span class="kw">in</span> ipairs(due) <span class="kw">do</span>
+    redis.call(<span class="an">'ZREM'</span>, KEYS[1], m)
+    redis.call(<span class="an">'XADD'</span>, KEYS[2], <span class="an">'*'</span>, <span class="an">'msg'</span>, m)
+<span class="kw">end</span>
+<span class="kw">return</span> #due</code></pre>
+  </div>
+  <p class="tip">集群下 KEYS[1] 和 KEYS[2] 要在同一个槽，可以都加上同一个 hash tag。也可以直接用 Redisson 的 <code>RDelayedQueue</code>，它就是这个思路。</p>
+</section>
+
+<!-- ================= COMPARE ================= -->
+<section id="cmp">
+  <div>
+    <h2>和专门的消息队列比</h2>
+    <p class="lead">已经有 Redis、消息量不大、能接受极端情况下丢一点，Stream 很省事。否则用专门的消息队列。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">Redis Stream</th><th scope="col">Kafka</th><th scope="col">RabbitMQ</th><th scope="col">RocketMQ</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">存在哪</th><td class="mid">内存，靠 RDB / AOF 落盘</td><td class="good">磁盘日志，多副本</td><td class="good">磁盘，可配镜像 / 仲裁队列</td><td class="good">磁盘，多副本</td></tr>
+        <tr><th scope="row">能堆多少</th><td class="bad">受内存限制</td><td class="good">很多，按时间或大小保留</td><td>中等，堆多了变慢</td><td class="good">很多</td></tr>
+        <tr><th scope="row">扩展</th><td class="mid">一个 key 只在一个节点，要自己拆多个 key</td><td class="good">分区，天然水平扩展</td><td>按队列扩</td><td class="good">按队列扩</td></tr>
+        <tr><th scope="row">回溯历史</th><td class="good">按 ID</td><td class="good">按 offset 或时间</td><td class="bad">消费后删除</td><td class="good">按时间</td></tr>
+        <tr><th scope="row">死信 / 重试</th><td class="mid">自己实现</td><td class="mid">自己实现</td><td class="good">死信交换机</td><td class="good">自带重试和死信</td></tr>
+        <tr><th scope="row">延迟消息</th><td class="bad">不支持，用 ZSet 补</td><td class="bad">不支持</td><td>插件或 TTL + 死信</td><td class="good">支持</td></tr>
+        <tr><th scope="row">运维成本</th><td class="good">已有 Redis 就几乎为零</td><td class="bad">高</td><td>中</td><td>中</td></tr>
+        <tr><th scope="row">适合</th><td>轻量异步任务、站内通知、小流量事件</td><td>日志、埋点、海量事件流</td><td>复杂路由、业务消息</td><td>订单、交易类业务消息</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>Redis 版本，以及 JDK 8 和 JDK 17</h2>
+    <p class="lead">Stream 在 5.0 加入后一直在补功能。Java 这边 Spring Data Redis 2.2 起支持 Stream，Boot 2 和 3 用法一样。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Redis 5.0 ～ 6.0 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>5.0：Stream、消费组、XCLAIM（要先 XPENDING 查出来再一个个认领）</li>
+        <li>Spring Data Redis 2.2 起有 <code>StreamOperations</code> 和 <code>StreamMessageListenerContainer</code></li>
+        <li>配置前缀 <code>spring.redis.*</code></li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Redis 6.2 ～ 7 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>6.2：<code>XAUTOCLAIM</code> 一条命令扫描并认领；XADD 支持 <code>MINID</code> 按 ID 裁剪、<code>NOMKSTREAM</code>；XPENDING 能按闲置时间过滤</li>
+        <li>7.0：<code>XINFO GROUPS</code> 多了 <code>lag</code>，直接看到这个组还有多少没读</li>
+        <li>监听容器可以传自己的 Executor；JDK 21 下可以给它虚拟线程</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>只追加的日志</span><span>消费组 + PEL</span><span>至少一次，要幂等</span><span>内存装不下就要裁剪</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">Stream 的坑大多出在“没 ACK”和“没裁剪”上。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ledger"/></svg><b>Stream 越来越大，把内存吃光了</b><p>读过的消息不会自动删。XADD 时带 <code>MAXLEN ~</code>，或定时 XTRIM。但裁剪会删掉还没被慢消费者读到的消息，要盯着各组的 lag。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-check"/></svg><b>PEL 越来越长，重启后一大堆消息被重新处理</b><p>处理完忘了 XACK，或者用了自动 ACK 又在别处手动 ACK。用 XPENDING 看看谁手上压着消息。</p></div>
+    <div class="pit" data-role="c2"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg><b>一个实例下线后，它领的消息再也没人处理</b><p>消息卡在它的 PEL 里。其他实例定时用 XAUTOCLAIM 认领闲置太久的消息。</p></div>
+    <div class="pit" data-role="c2"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg><b>每次发版，PEL 里都多出一堆孤儿消息</b><p>消费者名字用了随机 UUID，重启后是个“新人”，旧名字下的消息没人管。用固定名字，比如主机名或 Pod 名。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>同一笔订单发了两次货</b><p>至少一次投递，消息可能重复：处理完还没来得及 ACK 就崩了，或者被别人认领后又处理一遍。业务用订单号做幂等。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>一条格式错误的消息，被反复投递了上千次</b><p>每次都失败、都不 ACK，又被认领回来。看 XPENDING 里的投递次数，超过阈值就转进死信 Stream 并 ACK。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-team"/></svg><b>BUSYGROUP Consumer Group name already exists</b><p>每次启动都 XGROUP CREATE，组已经存在就报这个错。捕获后忽略，或者先用 XINFO GROUPS 查一下。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>用 Pub/Sub 发业务消息，服务重启就丢</b><p>Pub/Sub 不保存消息。要可靠送达的用 Stream；Pub/Sub 只适合“丢了也无所谓”的通知，比如本地缓存失效广播。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-ledger"/></svg><b>集群里一个 Stream 的吞吐上不去</b><p>一个 key 只在一个节点上。按业务拆成多个 Stream，比如 <code>orders:0</code>～<code>orders:7</code>，生产者按订单号取模。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-team"/></svg><b>同一个用户的消息处理顺序乱了</b><p>组里多个消费者并行处理，先领的不一定先完成。需要按用户有序，就按用户 ID 把消息分到固定的 Stream，每个 Stream 只让一个消费者处理。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7 为例。相关：<a href="redis-persistence.html">Redis 持久化 RDB 与 AOF</a> · <a href="redis-ha-cluster.html">Redis 主从、哨兵与集群</a> · <a href="redis-data-encoding.html">Redis 数据结构与编码</a> · <a href="../spring/spring-events.html">Spring 事件机制</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var IDLE_MS=5000;
+function labInit(){
+  return {clock:0, seq:1000, entries:[], hasG2:false,
+    groups:{g1:{last:0, pel:[], acked:{}, consumers:{c1:true, c2:true}}}, log:[]};
+}
+function lg(st, cmd, res, note){ st.log.push({cmd:cmd, res:res||'', note:note||''}); if(st.log.length>40) st.log.shift(); }
+function xadd(st){
+  st.clock++; st.seq++; var id=st.seq+'-0';
+  st.entries.push({id:id, n:st.seq, data:'orderId '+st.seq});
+  lg(st,'XADD orders * orderId '+st.seq,'"'+id+'"');
+}
+function xread(st, g, c){
+  st.clock++;
+  var G=st.groups[g]; if(!G) return;
+  if(!G.consumers[c]){ lg(st,'—','', c+' 已经崩溃，读不了'); return; }
+  var e=st.entries.filter(function(x){ return x.n>G.last; })[0];
+  var cmd='XREADGROUP GROUP '+g+' '+c+' COUNT 1 STREAMS orders >';
+  if(!e){ lg(st,cmd,'(nil)','没有新消息；加了 BLOCK 会在这里等'); return; }
+  G.pel.push({id:e.id, n:e.n, owner:c, count:1, t:st.clock}); G.last=e.n;
+  lg(st,cmd,'1) '+e.id+' '+e.data);
+}
+function xack(st, g, c){
+  st.clock++;
+  var G=st.groups[g]; if(!G) return;
+  if(!G.consumers[c]){ lg(st,'—','', c+' 已经崩溃，没法 ACK'); return; }
+  var mine=G.pel.filter(function(p){ return p.owner===c; }).sort(function(a,b){ return a.n-b.n; })[0];
+  if(!mine){ lg(st,'—','', c+' 手上没有待确认的消息'); return; }
+  G.pel=G.pel.filter(function(p){ return p!==mine; }); G.acked[mine.n]=true;
+  lg(st,'XACK orders '+g+' '+mine.id,'(integer) 1');
+}
+function crash(st, g, c){
+  st.clock++; var G=st.groups[g]; G.consumers[c]=false;
+  var k=G.pel.filter(function(p){ return p.owner===c; }).length;
+  lg(st,'—','', c+' 进程崩溃：它手上 '+k+' 条消息没 ACK，仍记在它名下');
+}
+function restart(st, g, c){
+  st.clock++; var G=st.groups[g]; G.consumers[c]=true;
+  var mine=G.pel.filter(function(p){ return p.owner===c; }).sort(function(a,b){ return a.n-b.n; });
+  lg(st,'XREADGROUP GROUP '+g+' '+c+' STREAMS orders 0', mine.length ? mine.map(function(p,i){ return (i+1)+') '+p.id; }).join('  ') : '(empty array)', mine.length ? '重启后先把自己没 ACK 的消息拿回来处理' : '自己名下没有旧消息');
+}
+function xautoclaim(st, g, c){
+  st.clock+=10; var G=st.groups[g];
+  if(!G.consumers[c]){ lg(st,'—','', c+' 已经崩溃'); return; }
+  var got=G.pel.filter(function(p){ return st.clock-p.t>=IDLE_MS/1000; });
+  got.forEach(function(p){ p.owner=c; p.count++; p.t=st.clock; });
+  lg(st,'XAUTOCLAIM orders '+g+' '+c+' '+IDLE_MS+' 0-0', got.length ? got.map(function(p){ return p.id; }).join('  ') : '(没有闲置超过 5 秒的)', got.length ? '这些消息转到 '+c+' 名下，投递次数 +1' : '');
+}
+function mkg2(st){
+  st.clock++;
+  if(st.hasG2){ lg(st,'XGROUP CREATE orders g2 0','(error) BUSYGROUP Consumer Group name already exists'); return; }
+  st.hasG2=true; st.groups.g2={last:0, pel:[], acked:{}, consumers:{c9:true}};
+  lg(st,'XGROUP CREATE orders g2 0','OK','新组从头读：所有消息它都能再收到一份');
+}
+function statusOf(st, g, n){
+  var G=st.groups[g]; if(!G) return null;
+  if(G.acked[n]) return {k:'ack', t:'已确认'};
+  var p=G.pel.filter(function(x){ return x.n===n; })[0];
+  if(p) return {k:'p'+p.owner, t:p.owner+' 待确认'};
+  if(n<=G.last) return {k:'ack', t:'已确认'};
+  return {k:'new', t:'还没发出'};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var st;
+  function seed(){
+    st=labInit();
+    for(var i=0;i<5;i++) xadd(st);
+    xread(st,'g1','c1'); xread(st,'g1','c2'); xread(st,'g1','c1'); xack(st,'g1','c1');
+  }
+  function render(){
+    $('clk').textContent=st.clock;
+    var gs=['g1'].concat(st.hasG2?['g2']:[]);
+    $('stream').innerHTML=st.entries.map(function(e){
+      var rows=gs.map(function(g){ var s=statusOf(st,g,e.n); return '<span class="gst '+s.k+'">'+g+'：'+s.t+'</span>'; }).join('');
+      var cur=st.groups.g1.last===e.n;
+      return '<div class="ent'+(cur?' cur':'')+'"><span class="hd">'+e.id+'</span><span class="bd">'+e.data+'</span><span class="gs">'+rows+'</span></div>';
+    }).join('') || '<p class="tip">Stream 是空的，点“XADD 一条”。</p>';
+    function pane(g, c, role){
+      var G=st.groups[g], alive=G.consumers[c], mine=G.pel.filter(function(p){ return p.owner===c; }).sort(function(a,b){ return a.n-b.n; });
+      var rows=mine.map(function(p){ var idle=st.clock-p.t; return '<tr><td>'+p.id+'</td><td'+(p.count>1?' class="hot"':'')+'>'+p.count+'</td><td>'+idle+' s</td></tr>'; }).join('');
+      return '<div class="pane'+(alive?'':' dead')+'" data-role="'+role+'"><h4>'+g+' · '+c+'<small>'+(alive?'在线':'已崩溃')+'</small></h4>'+
+        (mine.length?'<table class="pel"><thead><tr><th>待确认 ID</th><th>投递次数</th><th>闲置</th></tr></thead><tbody>'+rows+'</tbody></table>':'<p class="tip">待确认清单是空的</p>')+'</div>';
+    }
+    var G1=st.groups.g1, lag1=st.entries.filter(function(e){ return e.n>G1.last; }).length;
+    var meta='<div class="pane" data-role="gp"><h4>组 g1</h4><div class="gmeta"><span>书签 last_delivered_id<b>'+(G1.last?G1.last+'-0':'0-0')+'</b></span><span>待确认总数<b>'+G1.pel.length+'</b></span><span>还没发出（lag）<b>'+lag1+'</b></span></div>';
+    if(st.hasG2){ var G2=st.groups.g2, lag2=st.entries.filter(function(e){ return e.n>G2.last; }).length; meta+='<h4 style="--rc:var(--c9)">组 g2</h4><div class="gmeta"><span>书签<b>'+(G2.last?G2.last+'-0':'0-0')+'</b></span><span>待确认<b>'+G2.pel.length+'</b></span><span>还没发出<b>'+lag2+'</b></span></div>'; }
+    meta+='</div>';
+    $('panes').innerHTML=meta+pane('g1','c1','c1')+pane('g1','c2','c2')+(st.hasG2?pane('g2','c9','c9'):'');
+    $('log').innerHTML=st.log.slice(-10).map(function(l){ return '<li>'+(l.cmd!=='—'?'<span class="c">&gt; '+esc(l.cmd)+'</span><br>':'')+(l.res?'<span class="r">'+esc(l.res)+'</span>':'')+(l.note?(l.res?'　':'')+'<span class="n">'+esc(l.note)+'</span>':'')+'</li>'; }).join('');
+    var lgEl=$('log'); lgEl.scrollTop=lgEl.scrollHeight;
+    var c2alive=G1.consumers.c2;
+    document.querySelectorAll('[data-op]').forEach(function(b){
+      var op=b.getAttribute('data-op'), dis=false;
+      if(/:c2$/.test(op) && op.indexOf('restart')<0) dis=!c2alive;
+      if(op.indexOf('restart')===0) dis=c2alive;
+      if(/g2:c9/.test(op)) dis=!st.hasG2;
+      b.disabled=dis;
+    });
+    var v=$('labV'), orphan=G1.pel.filter(function(p){ return !G1.consumers[p.owner]; }).length, re=G1.pel.filter(function(p){ return p.count>1; }).length;
+    if(orphan){ v.setAttribute('data-role','bad'); v.textContent='c2 崩溃了，它名下有 '+orphan+' 条消息没人处理。可以让 c2 重启后读自己的 PEL，或者让 c1 过一会儿用 XAUTOCLAIM 认领过来。'; }
+    else if(re){ v.setAttribute('data-role','warn'); v.textContent='有 '+re+' 条消息被重新投递过（投递次数大于 1）。处理逻辑必须幂等，同一条消息处理两次也不能出错。'; }
+    else if(st.hasG2){ v.setAttribute('data-role','done'); v.textContent='g2 和 g1 读的是同一个 Stream，书签各自独立：g1 的确认不影响 g2，g2 从头开始每条都能收到。'; }
+    else { v.setAttribute('data-role','gp'); v.textContent='g1 里的消息分给了 c1 和 c2，各自在自己的待确认清单里，处理完 ACK 才算结束。试试让 c2 崩溃。'; }
+  }
+  $('bAdd').addEventListener('click',function(){ xadd(st); render(); });
+  document.querySelectorAll('[data-op]').forEach(function(b){ b.addEventListener('click',function(){
+    var p=b.getAttribute('data-op').split(':');
+    if(p[0]==='read') xread(st,p[1],p[2]);
+    else if(p[0]==='ack') xack(st,p[1],p[2]);
+    else if(p[0]==='crash') crash(st,p[1],p[2]);
+    else if(p[0]==='restart') restart(st,p[1],p[2]);
+    else if(p[0]==='claim') xautoclaim(st,p[1],p[2]);
+    else if(p[0]==='mkg2') mkg2(st);
+    else if(p[0]==='reset') seed();
+    render();
+  }); });
+  seed(); render();
+})();
+</script>
+
+</body>
+</html>
