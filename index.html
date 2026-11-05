@@ -3,47 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spring 图解笔记</title>
+<title>图解学习笔记</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
 <style>
 :root{
-  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --accent:#3150C4;
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --accent:#3150C4; --topic:#0D7A69;
   --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
   --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){
-  :root{--paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --accent:#90A4FF; color-scheme:dark}
+  :root{--paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --accent:#90A4FF; --topic:#40C6B0; color-scheme:dark}
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.65;padding:0 max(16px,env(safe-area-inset-left,0px))}
-main{max-width:860px;margin:0 auto;padding-block:48px 72px;display:flex;flex-direction:column;gap:28px}
+main{max-width:860px;margin:0 auto;padding-block:48px 72px;display:flex;flex-direction:column;gap:40px}
 .kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted);margin:0}
 h1{font-family:var(--font-display);font-weight:400;font-size:clamp(36px,6vw,56px);line-height:1.2;margin:0}
 .lead{color:var(--muted);margin:0}
-ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
-a.card{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 16px;padding:18px 20px;background:var(--card);border:1.5px solid var(--line);border-radius:16px;color:inherit;text-decoration:none}
+section{display:flex;flex-direction:column;gap:14px}
+h2{display:flex;align-items:baseline;gap:12px;margin:0;font-family:var(--font-display);font-weight:400;font-size:30px;color:var(--topic)}
+h2 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+a.card{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 16px;padding:16px 20px;background:var(--card);border:1.5px solid var(--line);border-radius:16px;color:inherit;text-decoration:none}
 a.card:hover,a.card:focus-visible{border-color:var(--accent)}
 a.card:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .no{grid-row:span 2;font-family:var(--font-mono);font-weight:600;font-size:14px;color:var(--accent);padding-top:6px}
-.t{font-family:var(--font-display);font-size:26px;line-height:1.25}
+.t{font-family:var(--font-display);font-size:25px;line-height:1.25}
 .d{color:var(--muted);font-size:15px}
 </style>
 </head>
 <body>
 <main>
   <div>
-    <p class="kicker">SPRING · JDK 8 / 17</p>
-    <h1>Spring 图解笔记</h1>
-    <p class="lead">大图少字，按学习顺序排列。</p>
+    <p class="kicker">STUDY NOTES</p>
+    <h1>图解学习笔记</h1>
+    <p class="lead">大图少字。按主题分组，组内按学习顺序排列。</p>
   </div>
-  <ol>
-    <li><a class="card" href="spring-web-gates.html"><span class="no">01</span><span class="t">Spring MVC 请求关卡</span><span class="d">Filter、Interceptor、WebMvcConfigurer 的区别、生命周期和用途</span></a></li>
-    <li><a class="card" href="spring-aop-tx.html"><span class="no">02</span><span class="t">Spring AOP 与事务</span><span class="d">代理、切面、通知，@Transactional 的提交回滚、传播、隔离和失效场景</span></a></li>
-  </ol>
+
+  <section>
+    <h2>Spring<small>JDK 8 / 17 · Spring Boot 2 / 3</small></h2>
+    <ol>
+      <li><a class="card" href="spring/spring-web-gates.html"><span class="no">01</span><span class="t">Spring MVC 请求关卡</span><span class="d">Filter、Interceptor、WebMvcConfigurer 的区别、生命周期和用途</span></a></li>
+      <li><a class="card" href="spring/spring-aop-tx.html"><span class="no">02</span><span class="t">Spring AOP 与事务</span><span class="d">代理、切面、通知，@Transactional 的提交回滚、传播、隔离和失效场景</span></a></li>
+      <li><a class="card" href="spring/spring-boot-autoconfig.html"><span class="no">03</span><span class="t">Spring Boot 自动配置</span><span class="d">starter、自动配置清单、条件注解，启动时序和自定义 starter</span></a></li>
+    </ol>
+  </section>
 </main>
 </body>
 </html>

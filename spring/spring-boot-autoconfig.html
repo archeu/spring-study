@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring Boot 自动配置</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other Spring pages. Hero = gift box / checklist / inspector; the "装修现场" simulator is the anchor. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --starter:#0D7A69; --starter-tint:#DCF0EB;
+  --list:#3150C4; --list-tint:#E2E7FA;
+  --cond:#B85F0C; --cond-tint:#FBE9D5;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --skin:#F1C6A0; --hair:#3B2A21; --gold:#E2B33C; --eye:#2A2320;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --starter:#40C6B0; --starter-tint:#12352F;
+    --list:#90A4FF; --list-tint:#1D2650;
+    --cond:#F4A651; --cond-tint:#3A2812;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --starter:#40C6B0; --starter-tint:#12352F;
+  --list:#90A4FF; --list-tint:#1D2650;
+  --cond:#F4A651; --cond-tint:#3A2812;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:44px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(38px,6.6vw,66px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--list)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,input:focus-visible{outline:3px solid var(--list);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+.sub{font-family:var(--font-display);font-size:24px;margin-top:10px}
+
+/* role colors */
+[data-role="starter"]{--rc:var(--starter);--rt:var(--starter-tint)}
+[data-role="list"]{--rc:var(--list);--rt:var(--list-tint)}
+[data-role="cond"]{--rc:var(--cond);--rt:var(--cond-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-hair{fill:var(--hair)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)}
+.k-gold{fill:var(--gold)} .k-eye{fill:var(--eye)} .k-line{fill:var(--line-strong)}
+.ks-paper{stroke:var(--card);fill:none} .ks-eye{stroke:var(--eye);fill:none} .ks-ink{stroke:var(--ink);fill:none}
+.k-glass{fill:var(--card);stroke:var(--ink)}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:156px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:36px;line-height:1.1;color:var(--rc)}
+.plate code{font-size:15px;color:var(--ink);margin-left:6px;vertical-align:middle}
+.who p{max-width:19em}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- doll + funnel ---------- */
+.doll{border:2px solid var(--line-strong);border-radius:18px;padding:14px;background:var(--card);display:flex;flex-direction:column;gap:12px}
+.doll-h{font-family:var(--font-mono);font-weight:600;font-size:15px}
+.doll-h span{font-family:var(--font-body);font-weight:400;color:var(--muted);font-size:14px;margin-left:8px}
+.doll-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.6fr);gap:10px}
+.dbox{border:1.5px dashed var(--line-strong);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.dbox code{font-weight:600;font-size:13px;overflow-wrap:anywhere}
+.dbox small{font-size:13px;color:var(--muted)}
+.dbox.key{border:2.5px solid var(--list);background:var(--list-tint)}
+.dbox .inner{margin-top:6px;border:2px solid var(--list);border-radius:10px;padding:6px 10px;background:var(--card)}
+.funnel{display:flex;flex-direction:column;align-items:center;gap:6px}
+.fz{width:max(var(--w),260px);max-width:100%;padding:10px 16px;border-radius:12px;background:var(--list-tint);border:2px solid var(--list);text-align:center;display:flex;flex-direction:column;gap:1px}
+.fz b{font-size:15.5px}
+.fz small{font-size:12.5px;color:var(--muted)}
+.fz small code{color:var(--ink)}
+.fz.end{background:var(--good-tint);border-color:var(--good)}
+.fdn{color:var(--line-strong);line-height:1;font-size:16px}
+
+/* ---------- simulator ---------- */
+.sim{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;align-items:start}
+.panel{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.grp{display:flex;flex-direction:column;gap:2px}
+.grp h3{font-family:var(--font-body);font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin:0 0 4px 8px}
+.tg{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:10px;cursor:pointer;font-size:14px;line-height:1.4}
+.tg:hover{background:var(--neutral-tint)}
+.tg input{width:18px;height:18px;accent-color:var(--starter);flex:none;margin:0}
+.tg code{font-size:12.5px;overflow-wrap:anywhere;min-width:0}
+.tg span{min-width:0}
+.res{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:14px;border:2px solid var(--good);background:var(--good-tint);font-weight:500;line-height:1.5}
+.res.bad{border-color:var(--bad);background:var(--bad-tint)}
+.res-ic{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;background:var(--good);color:var(--on-accent)}
+.res.bad .res-ic{background:var(--bad)}
+.res-txt{min-width:0;overflow-wrap:anywhere}
+.res-txt small{display:block;font-weight:400;color:var(--muted);font-size:13.5px}
+.right{display:flex;flex-direction:column;gap:12px;min-width:0}
+.acs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.ac{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:6px;min-width:0;transition:border-color .2s,opacity .2s}
+.ac[data-st="on"]{border-color:var(--good)}
+.ac[data-st="yours"]{border-color:var(--list)}
+.ac[data-st="skip"]{border-style:dashed;opacity:.62}
+.ac[data-st="fail"]{border-color:var(--bad);background:var(--bad-tint)}
+.ac-top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.ac-top code{font-size:11.5px;font-weight:600;overflow-wrap:anywhere;min-width:0;color:var(--muted)}
+.chipst{flex:none;font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;white-space:nowrap}
+.ac[data-st="on"] .chipst{background:var(--good);color:var(--on-accent)}
+.ac[data-st="yours"] .chipst{background:var(--list);color:var(--on-accent)}
+.ac[data-st="skip"] .chipst{background:var(--neutral-tint);color:var(--ink)}
+.ac[data-st="fail"] .chipst{background:var(--bad);color:var(--on-accent)}
+.ac-what{font-weight:700;font-size:15px;line-height:1.4}
+.conds{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.conds li{display:flex;gap:6px;align-items:baseline;font-family:var(--font-mono);font-size:11.5px;line-height:1.45;min-width:0}
+.conds li span{overflow-wrap:anywhere;min-width:0}
+.conds li::before{content:"✓";color:var(--good);font-weight:700;flex:none}
+.conds li.x::before{content:"✕";color:var(--bad)}
+.ac-note{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.ac[data-st="fail"] .ac-note{color:var(--ink)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:12px;border-radius:3px;border:2px solid var(--neutral)}
+.legend .l-on{border-color:var(--good)} .legend .l-yours{border-color:var(--list)} .legend .l-skip{border-style:dashed} .legend .l-fail{border-color:var(--bad);background:var(--bad-tint)}
+
+/* ---------- timeline ---------- */
+.conv{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:8px}
+.st{position:relative;background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+.st .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:12px;font-weight:600;flex:none}
+.st b{font-size:15px;line-height:1.3}
+.st small{font-size:12px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
+.st.key{border:2.5px solid var(--list);background:var(--list-tint)}
+.st.key .n{background:var(--list);color:var(--on-accent)}
+.st.mine{border:2.5px solid var(--starter)}
+.st-txt{display:flex;flex-direction:column;gap:3px;min-width:0}
+.notes2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.ln{display:flex;gap:16px;align-items:center;padding:16px;background:var(--card);border:1.5px solid var(--line);border-radius:16px;min-width:0}
+.ln > .ico{width:56px;height:56px;flex:none}
+.ln h3{font-size:20px;margin-bottom:4px}
+.ln p{font-size:14px;color:var(--muted)}
+.ln p code{color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- conditions ---------- */
+.conds-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.cg{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.cg code{font-weight:600;font-size:13px;color:var(--cond);overflow-wrap:anywhere}
+.cg p{font-size:14px;color:var(--muted)}
+.cg.star{border:2.5px solid var(--cond);background:var(--cond-tint)}
+.cg.star p{color:var(--ink)}
+
+/* ---------- override ---------- */
+.ovs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ov{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.meter{display:flex;gap:4px}
+.meter i{width:18px;height:6px;border-radius:3px;background:var(--neutral-tint)}
+.meter i.f{background:var(--starter)}
+.ov b{font-size:16px}
+.ov p{font-size:14px;color:var(--muted)}
+.ov code{color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code{color:var(--ink)}
+.tab{font-size:13.5px;padding:5px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:13px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+pre + pre{border-top:1.5px dashed var(--line)}
+.fname{display:block;color:var(--muted);margin-bottom:6px}
+.cm{color:var(--muted)} .an{color:var(--list)} .kw{color:var(--cond)} .st-s{color:var(--starter)}
+.ok-l{color:var(--good)} .no-l{color:var(--bad)}
+
+/* ---------- starter modules ---------- */
+.mods{display:flex;flex-direction:column;align-items:center;gap:6px}
+.mod{border:2px solid var(--line-strong);border-radius:12px;padding:10px 14px;background:var(--card);display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
+.mod code{font-weight:600;font-size:13.5px;overflow-wrap:anywhere}
+.mod small{font-size:13px;color:var(--muted)}
+.mod.gift{border-color:var(--starter);background:var(--starter-tint)}
+.mod.auto{border-color:var(--list);background:var(--list-tint)}
+.mod-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(640px,100%)}
+.mod-arr{font-size:13px;color:var(--muted)}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+.small-note{font-size:14px;color:var(--muted);max-width:52em}
+.small-note code{color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .conv{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .conds-grid,.ovs{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .sim{grid-template-columns:1fr}
+  .doll-row{grid-template-columns:1fr}
+  .notes2,.eras{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:104px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:30px}
+  .pits{grid-template-columns:1fr}
+}
+@media (max-width:600px){
+  .acs{grid-template-columns:1fr}
+  .conv{grid-template-columns:1fr}
+  .mod-row{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .conds-grid,.ovs{grid-template-columns:1fr}
+  .ln{flex-direction:column;align-items:flex-start}
+}
+@media (prefers-reduced-motion:reduce){
+  .ac{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-gift" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="10" y="27" width="44" height="31" rx="3"/>
+    <rect fill="currentColor" x="7" y="18" width="50" height="11" rx="3"/>
+    <rect class="k-paper" opacity=".22" x="7" y="18" width="50" height="11" rx="3"/>
+    <rect class="k-gold" x="28.5" y="18" width="7" height="40"/>
+    <path class="k-gold" d="M32 18c-3-8-14-11-14.5-5S27 19 32 18zM32 18c3-8 14-11 14.5-5S37 19 32 18z"/>
+    <rect class="k-paper" x="15" y="36" width="9" height="2.6" rx="1.3" opacity=".7"/>
+    <rect class="k-paper" x="15" y="42" width="6" height="2.6" rx="1.3" opacity=".7"/>
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 64 64">
+    <path class="k-paper" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" d="M14 6h36v50l-4.5-3-4.5 3-4.5-3-4.5 3-4.5-3-4.5 3-4.5-3-4.5 3z"/>
+    <rect fill="currentColor" x="14" y="6" width="36" height="9"/>
+    <rect fill="currentColor" x="19" y="21" width="5" height="5" rx="1"/>
+    <rect fill="currentColor" x="19" y="30" width="5" height="5" rx="1"/>
+    <rect fill="currentColor" x="19" y="39" width="5" height="5" rx="1"/>
+    <rect class="k-line" x="27" y="22.2" width="18" height="2.6" rx="1.3"/>
+    <rect class="k-line" x="27" y="31.2" width="14" height="2.6" rx="1.3"/>
+    <rect class="k-line" x="27" y="40.2" width="17" height="2.6" rx="1.3"/>
+  </symbol>
+  <symbol id="i-insp" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M9 63c0-15 9.5-24 21-24s21 9 21 24z"/>
+    <path class="k-paper" d="M24.5 39.5 30 46l5.5-6.5z"/>
+    <circle class="k-skin" cx="30" cy="28" r="10.5"/>
+    <circle class="k-eye" cx="26" cy="29.5" r="1.4"/>
+    <circle class="k-eye" cx="34" cy="29.5" r="1.4"/>
+    <path class="ks-eye" d="M27 34q3 2.2 6 0" stroke-width="1.6" stroke-linecap="round"/>
+    <path class="k-gold" d="M18 24c0-9 5.4-13.5 12-13.5S42 15 42 24z"/>
+    <rect class="k-gold" x="15.5" y="22.5" width="29" height="4" rx="2"/>
+    <rect class="k-paper" opacity=".45" x="28.6" y="11" width="2.8" height="12" rx="1.4"/>
+    <path class="ks-ink" stroke-width="4.2" stroke-linecap="round" d="M52 52l7 7"/>
+    <circle class="k-glass" cx="46" cy="46" r="8" stroke-width="3"/>
+  </symbol>
+  <symbol id="i-power" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="26"/>
+    <path class="ks-paper" stroke-width="5" stroke-linecap="round" d="M32 16v15M22.5 21.5a14.5 14.5 0 1 0 19 0"/>
+  </symbol>
+  <symbol id="i-doc" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M14 6h26l12 12v40H14z"/>
+    <path class="k-paper" opacity=".45" d="M40 6v12h12z"/>
+    <rect class="k-paper" x="20" y="25" width="9" height="3" rx="1.5"/>
+    <rect class="k-paper" x="32" y="25" width="13" height="3" rx="1.5" opacity=".7"/>
+    <rect class="k-paper" x="20" y="33" width="12" height="3" rx="1.5"/>
+    <rect class="k-paper" x="35" y="33" width="10" height="3" rx="1.5" opacity=".7"/>
+    <rect class="k-paper" x="20" y="41" width="8" height="3" rx="1.5"/>
+    <rect class="k-paper" x="31" y="41" width="14" height="3" rx="1.5" opacity=".7"/>
+  </symbol>
+</svg>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING BOOT · AUTO-CONFIGURATION · JDK 8 / 17</p>
+  <h1>加一行依赖，为什么就能直接用？</h1>
+  <p class="lead">Spring Boot 是一支拎包入住的装修队。你选礼包，它照着一份清单，由检查员挨个确认后，把该装的 Bean 装好。</p>
+
+  <div class="cast">
+    <div class="who" data-role="starter">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gift"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">礼包<code>Starter</code></div>
+        <p>pom.xml 里加一行，<b>一整套零件</b>就送到 classpath 上。</p>
+        <span class="belong">spring-boot-starter-xxx</span>
+      </div>
+    </div>
+    <div class="who" data-role="list">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">清单<code>AutoConfiguration</code></div>
+        <p>一百多张安装卡片。每张写着：<b>满足什么条件，就装哪些 Bean</b>。</p>
+        <span class="belong">登记在 AutoConfiguration.imports</span>
+      </div>
+    </div>
+    <div class="who" data-role="cond">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-insp"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">检查员<code>@Conditional</code></div>
+        <p>装之前挨个问：<b>零件到了吗？你自己装过没？开关开了吗？</b></p>
+        <span class="belong">@ConditionalOnXxx 一家子</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-power"/></svg><span><b>总开关</b> @SpringBootApplication</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-doc"/></svg><span><b>要求单</b> application.yml，写你的偏好</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg><span><b>验收单</b> debug=true 打出的条件报告</span></span>
+  </div>
+</header>
+
+<!-- ================= PRINCIPLE ================= -->
+<section id="principle">
+  <div>
+    <h2>一张图看原理</h2>
+    <p class="lead">总开关拆开是三个注解。真正干活的是第三个，它带来一个“选择器”，负责下面整个漏斗。</p>
+  </div>
+
+  <div class="doll">
+    <div class="doll-h">@SpringBootApplication<span>三合一</span></div>
+    <div class="doll-row">
+      <div class="dbox"><code>@SpringBootConfiguration</code><small>它自己就是个配置类</small></div>
+      <div class="dbox"><code>@ComponentScan</code><small>扫描你自己的包，先登记你的 Bean</small></div>
+      <div class="dbox key"><code>@EnableAutoConfiguration</code><small>打开自动配置</small>
+        <div class="inner"><code>@Import(AutoConfigurationImportSelector)</code><br><small>选择器：读清单、筛选、排序</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="funnel" aria-label="自动配置筛选漏斗">
+    <div class="fz" style="--w:100%"><b>读清单：一百多个候选</b><small>Boot 3：<code>META-INF/spring/…AutoConfiguration.imports</code>　Boot 2：<code>spring.factories</code></small></div>
+    <div class="fdn" aria-hidden="true">▼</div>
+    <div class="fz" style="--w:88%"><b>划掉你 exclude 的</b><small><code>@SpringBootApplication(exclude = …)</code> 或 <code>spring.autoconfigure.exclude</code></small></div>
+    <div class="fdn" aria-hidden="true">▼</div>
+    <div class="fz" style="--w:76%"><b>快速初筛：零件不在的先划掉</b><small>不加载类，查一张预先算好的表 <code>spring-autoconfigure-metadata.properties</code></small></div>
+    <div class="fdn" aria-hidden="true">▼</div>
+    <div class="fz" style="--w:64%"><b>排好先后</b><small><code>@AutoConfiguration(after = DataSourceAutoConfiguration.class)</code></small></div>
+    <div class="fdn" aria-hidden="true">▼</div>
+    <div class="fz" style="--w:52%"><b>检查员逐张细查 @Conditional</b><small>通过的卡片，登记它的 Bean 图纸</small></div>
+    <div class="fdn" aria-hidden="true">▼</div>
+    <div class="fz end" style="--w:40%"><b>留下几十张，真正生效</b></div>
+  </div>
+</section>
+
+<!-- ================= SIMULATOR ================= -->
+<section id="sim">
+  <div>
+    <h2>装修现场</h2>
+    <p class="lead">左边勾选你做了什么，右边看 8 张常见的清单卡片谁装上、谁跳过、谁让位给你。默认是一个典型的 Web + 数据库项目。</p>
+  </div>
+
+  <div class="sim">
+    <div class="panel">
+      <div class="grp">
+        <h3>pom.xml 里的礼包</h3>
+        <label class="tg"><input type="checkbox" id="t-web" checked><code>spring-boot-starter-web</code></label>
+        <label class="tg"><input type="checkbox" id="t-jdbc" checked><code>spring-boot-starter-jdbc</code></label>
+        <label class="tg"><input type="checkbox" id="t-redis"><code>spring-boot-starter-data-redis</code></label>
+        <label class="tg"><input type="checkbox" id="t-sec"><code>spring-boot-starter-security</code></label>
+      </div>
+      <div class="grp">
+        <h3>application.yml</h3>
+        <label class="tg"><input type="checkbox" id="t-url" checked><span>写了 <code>spring.datasource.url</code></span></label>
+      </div>
+      <div class="grp">
+        <h3>你自己的代码</h3>
+        <label class="tg"><input type="checkbox" id="t-ds"><span>自己写了 <code>@Bean DataSource</code></span></label>
+        <label class="tg"><input type="checkbox" id="t-om"><span>自己写了 <code>@Bean ObjectMapper</code></span></label>
+        <label class="tg"><input type="checkbox" id="t-sf"><span>自己写了 <code>@Bean SecurityFilterChain</code></span></label>
+        <label class="tg"><input type="checkbox" id="t-mvc"><span>加了 <code>@EnableWebMvc</code></span></label>
+        <label class="tg"><input type="checkbox" id="t-ex"><span><code>exclude = DataSourceAutoConfiguration</code></span></label>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="res" id="res" aria-live="polite"><span class="res-ic" id="resIc">✓</span><div class="res-txt" id="resTxt">启动成功</div></div>
+      <div class="legend"><span><i class="l-on"></i>装上</span><span><i class="l-yours"></i>让位给你</span><span><i class="l-skip"></i>跳过</span><span><i class="l-fail"></i>启动失败</span></div>
+      <div class="acs" id="acs"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TIMELINE ================= -->
+<section id="when">
+  <div>
+    <h2>自动配置在启动的哪一步</h2>
+    <p class="lead"><code>SpringApplication.run()</code> 的八站。你的 Bean 在第 4 站登记，自动配置在第 5 站才登场。</p>
+  </div>
+  <ol class="conv">
+    <li class="st"><span class="n">1</span><div class="st-txt"><b>判断应用类型</b><small>看 classpath：Servlet、Reactive 还是非 Web</small></div></li>
+    <li class="st"><span class="n">2</span><div class="st-txt"><b>准备环境</b><small>读 application.yml、环境变量、命令行参数</small></div></li>
+    <li class="st"><span class="n">3</span><div class="st-txt"><b>创建容器</b><small>ApplicationContext</small></div></li>
+    <li class="st mine"><span class="n">4</span><div class="st-txt"><b>登记你的 Bean</b><small>@ComponentScan 扫到的类、你的 @Configuration</small></div></li>
+    <li class="st key"><span class="n">5</span><div class="st-txt"><b>自动配置登场</b><small>读清单、筛选、登记 Bean 图纸</small></div></li>
+    <li class="st"><span class="n">6</span><div class="st-txt"><b>建内嵌 Tomcat</b><small>onRefresh()</small></div></li>
+    <li class="st"><span class="n">7</span><div class="st-txt"><b>按图纸造 Bean</b><small>DataSource、DispatcherServlet……</small></div></li>
+    <li class="st"><span class="n">8</span><div class="st-txt"><b>开门营业</b><small>监听端口，调用 ApplicationRunner</small></div></li>
+  </ol>
+  <div class="notes2">
+    <div class="ln" data-role="cond">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-insp"/></svg>
+      <div>
+        <h3>为什么你的 Bean 说了算</h3>
+        <p>第 4 站先登记你的；第 5 站检查员才问“你自己装过没”。<code>@ConditionalOnMissingBean</code> 看到你的，就让位。</p>
+      </div>
+    </div>
+    <div class="ln" data-role="list">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg>
+      <div>
+        <h3>自动配置只画图纸</h3>
+        <p>第 5 站只登记 BeanDefinition，真正 new 出来在第 7 站。所以条件判断发生在任何 Bean 被创建之前。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CONDITIONS ================= -->
+<section id="conds">
+  <div>
+    <h2>检查员的八个问题</h2>
+    <p class="lead">清单卡片上最常见的条件注解。加粗的那个最重要：它让你能覆盖任何默认配置。</p>
+  </div>
+  <div class="conds-grid">
+    <div class="cg"><code>@ConditionalOnClass</code><p>零件到了吗？classpath 里有这个类</p></div>
+    <div class="cg"><code>@ConditionalOnMissingClass</code><p>classpath 里没有这个类</p></div>
+    <div class="cg"><code>@ConditionalOnBean</code><p>容器里已经有这种 Bean</p></div>
+    <div class="cg star"><code>@ConditionalOnMissingBean</code><p><b>你自己没装过</b>。装过就让位</p></div>
+    <div class="cg"><code>@ConditionalOnProperty</code><p>配置开关打开了吗</p></div>
+    <div class="cg"><code>@ConditionalOnWebApplication</code><p>这是 Web 应用吗</p></div>
+    <div class="cg"><code>@ConditionalOnSingleCandidate</code><p>这种 Bean 只有一个，或者有一个 @Primary</p></div>
+    <div class="cg"><code>@ConditionalOnResource</code><p>某个资源文件存在吗</p></div>
+  </div>
+</section>
+
+<!-- ================= OVERRIDE ================= -->
+<section id="override">
+  <div>
+    <h2>想改默认配置，从轻到重四种做法</h2>
+    <p class="lead">能用轻的就别用重的。越往右，你要自己负责的东西越多。</p>
+  </div>
+  <div class="ovs">
+    <div class="ov"><div class="meter" aria-label="力度 1/4"><i class="f"></i><i></i><i></i><i></i></div><b>改要求单</b><p><code>application.yml</code> 里写 <code>server.port: 9090</code>、<code>spring.datasource.url</code>。最常用。</p></div>
+    <div class="ov"><div class="meter" aria-label="力度 2/4"><i class="f"></i><i class="f"></i><i></i><i></i></div><b>加料不替换</b><p>写一个 Customizer，比如 <code>WebMvcConfigurer</code>、<code>Jackson2ObjectMapperBuilderCustomizer</code>，在默认基础上改。</p></div>
+    <div class="ov"><div class="meter" aria-label="力度 3/4"><i class="f"></i><i class="f"></i><i class="f"></i><i></i></div><b>自己装一个</b><p>写自己的 <code>@Bean</code>。带 <code>@ConditionalOnMissingBean</code> 的默认 Bean 会让位。</p></div>
+    <div class="ov"><div class="meter" aria-label="力度 4/4"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i></div><b>整张卡片划掉</b><p><code>@SpringBootApplication(exclude = DataSourceAutoConfiguration.class)</code></p></div>
+  </div>
+
+  <div class="codebox">
+    <div class="code-bar"><span>验收单：在 application.yml 写 <code>debug: true</code>，启动日志里会多出这份报告（节选）。Actuator 的 <code>/actuator/conditions</code> 也能看。</span></div>
+<pre><code>============================
+CONDITIONS EVALUATION REPORT
+============================
+
+<span class="ok-l">Positive matches:</span>          <span class="cm">← 装上的</span>
+-----------------
+   DataSourceAutoConfiguration matched:
+      - @ConditionalOnClass found required classes 'javax.sql.DataSource',
+        'org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseType' (OnClassCondition)
+
+<span class="no-l">Negative matches:</span>          <span class="cm">← 跳过的，并写明哪个条件没过</span>
+-----------------
+   RedisAutoConfiguration:
+      Did not match:
+         - @ConditionalOnClass did not find required class
+           'org.springframework.data.redis.core.RedisOperations' (OnClassCondition)
+
+Exclusions:                 <span class="cm">← 被你 exclude 的</span>
+-----------
+    None</code></pre>
+  </div>
+</section>
+
+<!-- ================= OWN STARTER ================= -->
+<section id="starter">
+  <div>
+    <h2>自己做一个礼包</h2>
+    <p class="lead">公司内部的通用组件，做成 starter，别的项目加一行依赖就能用。命名习惯：官方叫 <code>spring-boot-starter-xxx</code>，第三方叫 <code>xxx-spring-boot-starter</code>（比如 mybatis-spring-boot-starter）。</p>
+  </div>
+  <div class="mods">
+    <div class="mod gift"><code>hello-spring-boot-starter</code><small>礼包：只有一个 pom，没有代码</small></div>
+    <div class="mod-arr">依赖 ↓</div>
+    <div class="mod-row">
+      <div class="mod auto"><code>hello-spring-boot-autoconfigure</code><small>清单卡片 + 登记文件</small></div>
+      <div class="mod"><code>hello-core</code><small>真正的功能代码</small></div>
+    </div>
+  </div>
+
+  <div class="codebox">
+    <div class="code-bar">
+      <span>版本：</span>
+      <button class="tab" data-boot="3" aria-pressed="true">Boot 3（JDK 17+）</button>
+      <button class="tab" data-boot="2" aria-pressed="false">Boot 2（JDK 8+）</button>
+    </div>
+<pre><code><span class="b3"><span class="an">@AutoConfiguration</span>                                     <span class="cm">// 一张清单卡片</span></span><span class="b2" hidden><span class="an">@Configuration</span>(proxyBeanMethods = <span class="kw">false</span>)          <span class="cm">// Boot 2.7 以前没有 @AutoConfiguration</span></span>
+<span class="an">@ConditionalOnClass</span>(HelloService.<span class="kw">class</span>)                <span class="cm">// 零件在才装</span>
+<span class="an">@EnableConfigurationProperties</span>(HelloProperties.<span class="kw">class</span>)
+<span class="kw">public class</span> HelloAutoConfiguration {
+
+    <span class="an">@Bean</span>
+    <span class="an">@ConditionalOnMissingBean</span>                          <span class="cm">// 用户自己装了就让位</span>
+    <span class="an">@ConditionalOnProperty</span>(prefix = <span class="st-s">"hello"</span>, name = <span class="st-s">"enabled"</span>, matchIfMissing = <span class="kw">true</span>)
+    <span class="kw">public</span> HelloService helloService(HelloProperties props) {
+        <span class="kw">return new</span> HelloService(props.getGreeting());
+    }
+}
+
+<span class="an">@ConfigurationProperties</span>(prefix = <span class="st-s">"hello"</span>)              <span class="cm">// 读 application.yml 里的 hello.*</span>
+<span class="kw">public class</span> HelloProperties {
+    <span class="kw">private</span> String greeting = <span class="st-s">"你好"</span>;
+    <span class="cm">// getter / setter</span>
+}</code></pre>
+<pre class="b3"><code><span class="fname">src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports</span>com.acme.hello.HelloAutoConfiguration</code></pre>
+<pre class="b2" hidden><code><span class="fname">src/main/resources/META-INF/spring.factories</span>org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+  com.acme.hello.HelloAutoConfiguration</code></pre>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：清单换了个地方放</h2>
+    <p class="lead">JDK 8 对应 Boot 2，JDK 17 对应 Boot 3。礼包、清单、检查员三个角色都还在。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2.x</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>清单写在 <code>META-INF/spring.factories</code>，键是 <code>EnableAutoConfiguration</code></li>
+        <li>卡片就是普通 <code>@Configuration</code>，先后靠 <code>@AutoConfigureAfter</code></li>
+        <li>2.7 起新增 <code>.imports</code> 文件和 <code>@AutoConfiguration</code>，两种写法都认</li>
+        <li>条件里的 Web 类名是 <code>javax.servlet.*</code></li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3.x</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>只认 <code>META-INF/spring/…AutoConfiguration.imports</code>；登记在 <code>spring.factories</code> 里的自动配置不再加载</li>
+        <li>一个 <code>@AutoConfiguration(after = …)</code> 同时管“我是卡片”和先后顺序</li>
+        <li>Web 类名换成 <code>jakarta.servlet.*</code>。还写 javax 的老卡片，<code>@ConditionalOnClass</code> 找不到类，静默跳过</li>
+        <li>打 GraalVM 原生镜像时，条件在构建期就判定好，运行时不再变</li>
+      </ul>
+    </div>
+  </div>
+  <p class="small-note"><code>javax.sql.DataSource</code> 在 Boot 3 里也没改名：它属于 JDK 本身，不归 Jakarta EE 管。</p>
+  <div class="same"><b>没变的：</b><span>@SpringBootApplication 三合一</span><span>条件注解</span><span>你的 Bean 优先</span><span>debug=true 验收单</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">大多数“为什么没生效”，打开验收单就能找到原因。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="list"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg><b>升级 Boot 3 后，自己写的 starter 不生效</b><p>清单还登记在 <code>spring.factories</code>。挪到 <code>AutoConfiguration.imports</code> 文件。</p></div>
+    <div class="pit" data-role="cond"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-insp"/></svg><b>在自己的配置类上用 @ConditionalOnBean</b><p>它只看“此刻已经登记”的 Bean，结果取决于顺序。官方建议只在自动配置类里用。</p></div>
+    <div class="pit" data-role="list"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg><b>自动配置类被 @ComponentScan 扫到</b><p>它被当成你的 Bean 提前登记，失去“最后再看你装没装”的位置。放在扫描不到的包里，只靠清单加载。</p></div>
+    <div class="pit" data-role="starter"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gift"/></svg><b>加了 jdbc 礼包，没配数据库</b><p>启动报 <code>Failed to configure a DataSource</code>。配上 <code>spring.datasource.url</code>，或 exclude DataSourceAutoConfiguration。</p></div>
+    <div class="pit" data-role="starter"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gift"/></svg><b>加了 security 礼包，接口全变 401</b><p>默认的 SecurityFilterChain 生效了：所有接口都要登录。写一个自己的 SecurityFilterChain。</p></div>
+    <div class="pit" data-role="cond"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-insp"/></svg><b>自己定义了 RedisTemplate，结果多出一个</b><p>这张卡片按名字判断：<code>@ConditionalOnMissingBean(name = "redisTemplate")</code>。你的 Bean 换了名字，它照样再建一个。</p></div>
+    <div class="pit" data-role="list"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg><b>加了 @EnableWebMvc，静态资源和 Jackson 配置失效</b><p>WebMvcAutoConfiguration 整张卡片让位。只想加配置，实现 WebMvcConfigurer 就够了。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-doc"/></svg><b>不知道某个 Bean 为什么没装上</b><p>写 <code>debug: true</code> 看验收单，或访问 <code>/actuator/conditions</code>。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Spring Boot 2.x / 3.x 的 Servlet 应用为例。同系列：<a href="spring-web-gates.html">Spring MVC 请求关卡</a> · <a href="spring-aop-tx.html">Spring AOP 与事务</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  var IDS=['web','jdbc','redis','sec','url','ds','om','sf','mvc','ex'];
+  function R(st,conds,note){return {st:st,conds:conds,note:note};}
+  var LABEL={on:'装上',yours:'让位给你',skip:'跳过',fail:'启动失败'};
+
+  var AC=[
+    {name:'ServletWebServerFactoryAutoConfiguration', what:'内嵌 Tomcat', ev:function(s){
+      var c=[['@ConditionalOnClass(ServletRequest)',s.web],['@ConditionalOnWebApplication(SERVLET)',s.web]];
+      return s.web?R('on',c,'监听 8080 端口'):R('skip',c,'classpath 里没有 Servlet 相关的类，不是 Web 应用');
+    }},
+    {name:'DispatcherServletAutoConfiguration', what:'DispatcherServlet（前台）', ev:function(s){
+      var c=[['@ConditionalOnClass(DispatcherServlet)',s.web],['@ConditionalOnWebApplication(SERVLET)',s.web]];
+      return s.web?R('on',c,'映射到 /，接住所有请求'):R('skip',c,'没有 web 礼包');
+    }},
+    {name:'WebMvcAutoConfiguration', what:'Spring MVC 默认配置：静态资源、消息转换器', ev:function(s){
+      var c=[['@ConditionalOnClass(DispatcherServlet)',s.web],['@ConditionalOnMissingBean(WebMvcConfigurationSupport)',!s.mvc]];
+      if(!s.web) return R('skip',c,'没有 web 礼包');
+      if(s.mvc) return R('yours',c,'@EnableWebMvc 带来了 WebMvcConfigurationSupport，整套 MVC 默认配置让位');
+      return R('on',c,'读 spring.mvc.*、spring.web.* 配置');
+    }},
+    {name:'JacksonAutoConfiguration', what:'ObjectMapper（JSON 转换）', ev:function(s){
+      var c=[['@ConditionalOnClass(ObjectMapper)',s.web],['@ConditionalOnMissingBean(ObjectMapper)',!s.om]];
+      if(!s.web) return R('skip',c,'Jackson 是 web 礼包顺带送来的');
+      if(s.om) return R('yours',c,'用你的 ObjectMapper，spring.jackson.* 对它不起作用');
+      return R('on',c,'读 spring.jackson.* 配置');
+    }},
+    {name:'DataSourceAutoConfiguration', what:'HikariCP 连接池 DataSource', ev:function(s){
+      var c=[['@ConditionalOnClass(DataSource, EmbeddedDatabaseType)',s.jdbc],['没有被 exclude',!s.ex],['@ConditionalOnMissingBean(DataSource)',!s.ds]];
+      if(!s.jdbc) return R('skip',c,'没有 jdbc 礼包');
+      if(s.ex) return R('skip',c,'被 exclude 划掉了，清单上直接没有它');
+      if(s.ds) return R('yours',c,'用你自己的 DataSource');
+      c.push(['建 Bean 时需要 spring.datasource.url',s.url]);
+      if(!s.url) return R('fail',c,"Failed to configure a DataSource: 'url' attribute is not specified and no embedded datasource could be configured.");
+      return R('on',c,'按 spring.datasource.* 建连接池');
+    }},
+    {name:'DataSourceTransactionManagerAutoConfiguration', what:'事务管理器（@Transactional 靠它）', ev:function(s){
+      var hasDef = s.jdbc && (s.ds || !s.ex);
+      var c=[['@ConditionalOnClass(JdbcTemplate)',s.jdbc],['@ConditionalOnSingleCandidate(DataSource)',hasDef]];
+      if(!s.jdbc) return R('skip',c,'没有 jdbc 礼包');
+      if(!hasDef) return R('skip',c,'容器里没有 DataSource');
+      if(!s.ds && !s.url) return R('fail',c,'条件都满足，但它依赖的 DataSource 建不出来，一起失败');
+      return R('on',c,'');
+    }},
+    {name:'RedisAutoConfiguration', what:'RedisTemplate、StringRedisTemplate', ev:function(s){
+      var c=[['@ConditionalOnClass(RedisOperations)',s.redis]];
+      return s.redis?R('on',c,'默认连 localhost:6379，用到时才真正连接'):R('skip',c,'没有 data-redis 礼包');
+    }},
+    {name:'SpringBootWebSecurityConfiguration', what:'默认 SecurityFilterChain', ev:function(s){
+      var c=[['@ConditionalOnClass(SecurityFilterChain)',s.sec],['@ConditionalOnWebApplication(SERVLET)',s.web],['@ConditionalOnMissingBean(SecurityFilterChain)',!s.sf]];
+      if(!s.sec) return R('skip',c,'没有 security 礼包');
+      if(!s.web) return R('skip',c,'不是 Servlet Web 应用');
+      if(s.sf) return R('yours',c,'用你的 SecurityFilterChain');
+      return R('on',c,'所有接口都要登录，控制台打印 Using generated security password');
+    }}
+  ];
+
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  function render(){
+    var s={};
+    IDS.forEach(function(k){ s[k]=$('t-'+k).checked; });
+    var counts={on:0,yours:0,skip:0,fail:0}, failMsg=null;
+    $('acs').innerHTML=AC.map(function(a){
+      var r=a.ev(s); counts[r.st]++;
+      if(r.st==='fail' && !failMsg) failMsg=r.note;
+      var li=r.conds.map(function(c){ return '<li class="'+(c[1]?'':'x')+'"><span>'+esc(c[0])+'</span></li>'; }).join('');
+      return '<div class="ac" data-st="'+r.st+'"><div class="ac-top"><code>'+esc(a.name)+'</code><span class="chipst">'+LABEL[r.st]+'</span></div>'+
+        '<div class="ac-what">'+esc(a.what)+'</div><ul class="conds">'+li+'</ul>'+(r.note?'<div class="ac-note">'+esc(r.note)+'</div>':'')+'</div>';
+    }).join('');
+
+    var res=$('res'), txt;
+    if(failMsg){
+      res.className='res bad'; $('resIc').textContent='✕';
+      txt='启动失败<small>'+esc(failMsg)+'</small>';
+    }else{
+      res.className='res'; $('resIc').textContent='✓';
+      var head = s.web ? '启动成功，Tomcat 在 8080 端口等请求' : '启动成功，但不是 Web 应用：main 方法跑完程序就退出';
+      txt=head+'<small>这 8 张卡片里：装上 '+counts.on+' 张，让位给你 '+counts.yours+' 张，跳过 '+counts.skip+' 张</small>';
+    }
+    $('resTxt').innerHTML=txt;
+  }
+  IDS.forEach(function(k){ $('t-'+k).addEventListener('change', render); });
+  render();
+
+  document.querySelectorAll('[data-boot]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var v=b.getAttribute('data-boot');
+      document.querySelectorAll('[data-boot]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      document.querySelectorAll('.b3').forEach(function(e){ e.hidden = v!=='3'; });
+      document.querySelectorAll('.b2').forEach(function(e){ e.hidden = v!=='2'; });
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
