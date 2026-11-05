@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring AOP 代理原理</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other Spring pages. The proxy (stand-in) is purple, the real object teal, interceptors orange, the proxy maker blue. Anchor = the call walk-through across caller → proxy → chain → target. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --px:#6A3FC0; --px-tint:#ECE5FA;
+  --tg:#0D7A69; --tg-tint:#DCF0EB;
+  --ic:#B85F0C; --ic-tint:#FBE9D5;
+  --mk:#3150C4; --mk-tint:#E2E7FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C; --skin:#F1C6A0; --hair:#3B2A21; --eye:#2A2320;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hl:#F2C94C; --console-err:#FF8A85;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --px:#B9A0FF; --px-tint:#2A2148;
+    --tg:#40C6B0; --tg-tint:#12352F;
+    --ic:#F4A651; --ic-tint:#3A2812;
+    --mk:#90A4FF; --mk-tint:#1D2650;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E; --skin:#E2B188; --hair:#2A1C15;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hl:#F2C94C; --console-err:#FF8A85;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --px:#B9A0FF; --px-tint:#2A2148;
+  --tg:#40C6B0; --tg-tint:#12352F;
+  --ic:#F4A651; --ic-tint:#3A2812;
+  --mk:#90A4FF; --mk-tint:#1D2650;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E; --skin:#E2B188; --hair:#2A1C15;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hl:#F2C94C; --console-err:#FF8A85;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--mk)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--mk);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="px"]{--rc:var(--px);--rt:var(--px-tint)}
+[data-role="tg"]{--rc:var(--tg);--rt:var(--tg-tint)}
+[data-role="ic"]{--rc:var(--ic);--rt:var(--ic-tint)}
+[data-role="mk"]{--rc:var(--mk);--rt:var(--mk-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-hair{fill:var(--hair)} .k-eye{fill:var(--eye)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none} .ks-eye{stroke:var(--eye);fill:none} .ks-gold{stroke:var(--gold);fill:none}
+.ks-dash{stroke:var(--line-strong);fill:none;stroke-width:2.4;stroke-dasharray:4 3}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.getclass{margin-top:18px;align-self:flex-start;max-width:100%;font-family:var(--font-mono);font-size:13.5px;padding:10px 14px;border-radius:12px;background:var(--console-bg);color:var(--console-fg);overflow-wrap:anywhere}
+.getclass .p{color:var(--console-dim)}
+.getclass b{color:var(--console-hl);font-weight:600}
+.flow{margin-top:14px;display:grid;grid-template-columns:minmax(0,.8fr) auto minmax(0,1fr) auto minmax(0,1.3fr) auto minmax(0,1fr);gap:10px;align-items:stretch}
+.fn{border:2px solid var(--rc);background:var(--rt);border-radius:16px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.fn b{font-family:var(--font-display);font-weight:400;font-size:20px;color:var(--rc)}
+.fn code{font-size:11.5px;overflow-wrap:anywhere}
+.fn small{font-size:12.5px;color:var(--muted)}
+.fn .ics{display:flex;flex-direction:column;gap:4px}
+.fn .ics span{font-family:var(--font-mono);font-size:11.5px;padding:2px 8px;border-radius:6px;background:var(--card);border:1px solid var(--rc);overflow-wrap:anywhere}
+.farr{align-self:center;color:var(--line-strong);font-size:22px;line-height:1}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--px)} .kw{color:var(--ic)} .st-s{color:var(--tg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--px-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.facts{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.facts code{overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:680px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.y{color:var(--good);font-weight:700} .n{color:var(--bad);font-weight:700}
+
+/* ---------- when ---------- */
+.when{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px;align-items:start}
+.life{display:flex;flex-direction:column;gap:6px}
+.lf{display:grid;grid-template-columns:26px minmax(0,1fr);gap:0 10px;align-items:center;padding:6px 10px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);font-size:13.5px}
+.lf i{font-style:normal;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:11.5px;font-weight:700}
+.lf.k{border:2px solid var(--mk);background:var(--mk-tint)}
+.lf.k i{background:var(--mk);color:var(--on-accent)}
+.lf code{font-size:12px;overflow-wrap:anywhere}
+.swap{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:center}
+.swap .card{border:2px solid var(--rc);border-radius:14px;padding:10px 12px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.swap .card b{font-size:15px}
+.swap .card code{font-size:11.5px;overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:22px;line-height:1;text-align:center;align-self:center}
+
+/* ---------- two kinds ---------- */
+.kinds{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.kind{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.kind h3{color:var(--rc)}
+.kind h3 small{display:block;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.hier{display:flex;flex-direction:column;align-items:center;gap:4px}
+.hb{width:100%;border:1.5px solid var(--line-strong);border-radius:10px;padding:6px 10px;font-family:var(--font-mono);font-size:12px;text-align:center;overflow-wrap:anywhere}
+.hb.top{border-style:dashed}
+.hrow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%}
+.hb.px{border:2px solid var(--px);background:var(--px-tint)}
+.hb.tg{border:2px solid var(--tg);background:var(--tg-tint)}
+.hlab{font-size:12px;color:var(--muted)}
+.holds{font-size:12.5px;color:var(--muted);text-align:center}
+.holds b{color:var(--ink)}
+.kind ul{margin:0;padding-left:1.1em;font-size:14px;display:flex;flex-direction:column;gap:4px}
+.decide{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dc{border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:6px;min-width:0}
+.dc b{font-size:15px}
+.dc p{font-size:14px}
+.dc code{overflow-wrap:anywhere}
+
+/* ---------- walk-through ---------- */
+.chainv{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;align-items:stretch}
+.nd{border:2px solid var(--line);border-radius:14px;padding:8px 10px;background:var(--card);display:flex;flex-direction:column;gap:2px;min-width:0;transition:background .25s,border-color .25s,opacity .25s;position:relative}
+.nd small{font-size:11.5px;color:var(--muted)}
+.nd b{font-size:13.5px;line-height:1.3}
+.nd code{font-size:10.5px;color:var(--muted);overflow-wrap:anywhere}
+.nd .ix{position:absolute;top:6px;right:8px;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.nd.passed{opacity:.75;border-color:var(--rc)}
+.nd.on{border-color:var(--rc);background:var(--rt);box-shadow:0 0 0 3px var(--rt)}
+.nd.skip{opacity:.35;border-style:dashed}
+.nd.err{border-color:var(--bad);background:var(--bad-tint)}
+.idxbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.idxbar code{font-size:13px;font-weight:700;color:var(--ink);padding:2px 10px;border-radius:8px;background:var(--ic-tint)}
+.wgrid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px;align-items:start}
+.trace{list-style:none;margin:0;padding:12px 14px;border-radius:14px;background:var(--console-bg);color:var(--console-fg);font-family:var(--font-mono);font-size:12px;line-height:1.55;display:flex;flex-direction:column;gap:3px;min-width:0;min-height:120px}
+.trace li{overflow-wrap:anywhere;color:var(--console-dim)}
+.trace li.in::before{content:"→ ";color:var(--console-hl)}
+.trace li.out::before{content:"← ";color:var(--console-hl)}
+.trace li.err::before{content:"✕ ";color:var(--console-err)}
+.trace li.note::before{content:"· "}
+.trace li.new{color:var(--console-fg)}
+.trace li.err.new{color:var(--console-err)}
+.trace-h{font-family:var(--font-body);font-size:12px;color:var(--console-dim);margin-bottom:4px}
+.src{border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg);padding:10px 0;font-family:var(--font-mono);font-size:12px;line-height:1.6;overflow-x:auto;list-style:none;margin:0}
+.src li{padding:0 12px 0 10px;border-left:4px solid transparent;white-space:pre}
+.src li.cur{background:var(--tg-tint);border-left-color:var(--tg);font-weight:600}
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,20px);font-weight:500;line-height:1.5;min-width:0;overflow-wrap:anywhere}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+
+/* ---------- chain ---------- */
+.cgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .chainv{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .flow{grid-template-columns:1fr}
+  .farr{transform:rotate(90deg)}
+  .when,.kinds,.decide,.wgrid,.cgrid,.eras{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .swap{grid-template-columns:1fr}
+  .swap .fa{transform:rotate(90deg)}
+}
+@media (max-width:600px){
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+  .chainv{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (prefers-reduced-motion:reduce){
+  .nd,.cap{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mask" viewBox="0 0 64 64">
+    <circle class="ks-dash" cx="42" cy="19" r="9"/>
+    <path class="ks-dash" d="M26 60c0-13 7-20 16-20s16 7 16 20"/>
+    <path fill="currentColor" d="M5 63c0-14 8.5-22 19.5-22S44 49 44 63z"/>
+    <circle class="k-skin" cx="24.5" cy="28" r="9.5"/>
+    <path class="k-hair" d="M15 26c0-6.5 4.3-10.5 9.5-10.5S34 19.5 34 26c-2.5-2.5-6-3.8-9.5-3.8S17.5 23.5 15 26z"/>
+    <rect class="k-ink" x="14.5" y="25" width="20" height="6.5" rx="3.2"/>
+    <circle class="k-paper" cx="20.5" cy="28.2" r="1.7"/>
+    <circle class="k-paper" cx="28.5" cy="28.2" r="1.7"/>
+  </symbol>
+  <symbol id="i-bean" viewBox="0 0 64 64">
+    <ellipse fill="currentColor" cx="32" cy="34" rx="20" ry="25" transform="rotate(-18 32 34)"/>
+    <ellipse class="k-paper" opacity=".22" cx="24" cy="20" rx="6" ry="9" transform="rotate(-30 24 20)"/>
+    <circle class="k-paper" cx="25" cy="32" r="3.6"/>
+    <circle class="k-paper" cx="39" cy="32" r="3.6"/>
+    <circle class="k-eye" cx="25.6" cy="32.6" r="1.8"/>
+    <circle class="k-eye" cx="39.6" cy="32.6" r="1.8"/>
+    <path class="ks-paper" stroke-width="2.4" stroke-linecap="round" d="M27 42q5 4 10 0"/>
+  </symbol>
+  <symbol id="i-mech" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M9 63c0-15 9.5-24 21-24s21 9 21 24z"/>
+    <circle class="k-skin" cx="30" cy="28" r="10.5"/>
+    <circle class="k-eye" cx="26" cy="29.5" r="1.4"/>
+    <circle class="k-eye" cx="34" cy="29.5" r="1.4"/>
+    <path class="ks-eye" d="M27 34q3 2.2 6 0" stroke-width="1.6" stroke-linecap="round"/>
+    <path fill="currentColor" d="M19 24c0-8 5-12.5 11-12.5S41 16 41 24z"/>
+    <rect fill="currentColor" x="28" y="21" width="17" height="3.8" rx="1.9"/>
+    <g transform="rotate(-35 50 46)">
+      <rect class="k-ink" x="47.5" y="42" width="5" height="20" rx="2"/>
+      <circle class="k-ink" cx="50" cy="40" r="6.5"/>
+      <rect class="k-paper" x="48" y="32.5" width="4" height="7"/>
+    </g>
+  </symbol>
+  <symbol id="i-target" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="26"/>
+    <circle class="k-paper" cx="32" cy="32" r="18"/>
+    <circle fill="currentColor" cx="32" cy="32" r="11"/>
+    <circle class="k-gold" cx="32" cy="32" r="5"/>
+    <path class="ks-cur" stroke-width="3" d="M32 0v12M32 52v12M0 32h12M52 32h12"/>
+  </symbol>
+  <symbol id="i-link" viewBox="0 0 64 64">
+    <rect class="ks-cur" x="5" y="21" width="32" height="22" rx="11" stroke-width="7"/>
+    <rect class="ks-gold" x="27" y="21" width="32" height="22" rx="11" stroke-width="7"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Spring</span><span aria-hidden="true">/</span><span class="tb-here">Spring AOP 代理原理</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING AOP · JDK DYNAMIC PROXY · CGLIB · METHODINVOCATION</p>
+  <h1>你拿到的不是它本人，是它的替身</h1>
+  <p class="lead">给方法加上 @Transactional、@Async 或自己写的切面后，容器交给你的就不再是原来那个对象，而是一个替身。每次调用先到替身，替身带着调用穿过一串拦截器，最后才交给真身。<a href="spring-aop-tx.html">第 02 篇</a>讲了 AOP 怎么用，这一篇讲替身本身是怎么回事。</p>
+  <div class="getclass"><span class="p">orderService.getClass() → </span><b>class com.shop.service.OrderService$$SpringCGLIB$$0</b></div>
+
+  <div class="flow">
+    <div class="fn" data-role="other"><b>调用方</b><code>OrderController</code><small>以为自己拿着 OrderService</small></div>
+    <span class="farr" aria-hidden="true">→</span>
+    <div class="fn" data-role="px"><b>替身</b><code>OrderService$$SpringCGLIB$$0</code><small>重写了方法，先把调用拦下</small></div>
+    <span class="farr" aria-hidden="true">→</span>
+    <div class="fn" data-role="ic"><b>拦截器链</b><div class="ics"><span>LogAspect（@Order(1)）</span><span>TransactionInterceptor</span></div><small>每个做完自己的事，再 proceed()</small></div>
+    <span class="farr" aria-hidden="true">→</span>
+    <div class="fn" data-role="tg"><b>真身</b><code>OrderService</code><small>你写的那个类，字段都注入好了</small></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="px">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mask"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">替身<code>Proxy</code></div>
+        <p>长得和真身一样，<b>手里攥着真身的引用</b>。外人只看得到它。</p>
+        <span class="belong">JDK 动态代理或 CGLIB 子类</span>
+      </div>
+    </div>
+    <div class="who" data-role="tg">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bean"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">真身<code>target</code></div>
+        <p>你写的那个对象。<b>真正的业务代码在它身上跑</b>。</p>
+        <span class="belong">容器不直接把它交给别人</span>
+      </div>
+    </div>
+    <div class="who" data-role="mk">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mech"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">做替身的人<code>AutoProxyCreator</code></div>
+        <p>就是第 04 篇那个改装师：Bean <b>初始化完成后</b>看看要不要换成替身。</p>
+        <span class="belong">AnnotationAwareAspectJAutoProxyCreator</span>
+      </div>
+    </div>
+    <div class="who" data-role="ic">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-target"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">顾问<code>Advisor</code></div>
+        <p>切点（<b>管哪些方法</b>）加通知（<b>做什么</b>）。一个顾问变成链上的一个拦截器。</p>
+        <span class="belong">Pointcut + Advice</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= WHEN ================= -->
+<section id="when">
+  <div>
+    <h2>替身是什么时候换上去的</h2>
+    <p class="lead">在 Bean 一生的第 10 站（<a href="spring-bean-lifecycle.html">第 04 篇</a>）：初始化全做完之后，改装师最后过一遍手。放上成品架的、注入给别人的，都是替身。</p>
+  </div>
+  <div class="when">
+    <div class="life">
+      <div class="lf"><i>3</i><span>new OrderService(…)<code> 真身出生</code></span></div>
+      <div class="lf"><i>5</i><span>注入依赖<code> 真身的字段都有值了</code></span></div>
+      <div class="lf"><i>7–9</i><span>@PostConstruct 等初始化<code> 还在真身身上</code></span></div>
+      <div class="lf k"><i>10</i><span>postProcessAfterInitialization<code> 这里换成替身</code></span></div>
+      <div class="lf"><i>11</i><span>放上成品架<code> 放的是替身</code></span></div>
+      <div class="swap">
+        <div class="card" data-role="tg"><b>真身</b><code>OrderService@7a3f</code></div>
+        <span class="fa" aria-hidden="true">→</span>
+        <div class="card" data-role="px"><b>替身（里面攥着真身）</b><code>OrderService$$SpringCGLIB$$0@5e21</code></div>
+      </div>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><code>AbstractAutoProxyCreator</code><span>简化版</span></div>
+<pre><code><span class="kw">public</span> Object postProcessAfterInitialization(Object bean, String beanName) {
+    <span class="kw">return</span> wrapIfNecessary(bean, beanName);
+}
+
+<span class="kw">protected</span> Object wrapIfNecessary(Object bean, String beanName) {
+    <span class="cm">// 1. 找出管得着这个 Bean 的顾问：</span>
+    <span class="cm">//    所有 Advisor Bean + 所有 @Aspect 里的通知方法，逐个用切点去匹配它的方法</span>
+    Object[] advisors = getAdvicesAndAdvisorsForBean(bean.getClass(), beanName);
+    <span class="kw">if</span> (advisors == DO_NOT_PROXY) {
+        <span class="kw">return</span> bean;                          <span class="cm">// 一个都没有：原样返回，不做替身</span>
+    }
+    <span class="cm">// 2. 有的话，用 ProxyFactory 做一个替身，把真身和顾问都交给它</span>
+    ProxyFactory pf = <span class="kw">new</span> ProxyFactory(bean);
+    pf.addAdvisors(advisors);
+    <span class="kw">return</span> pf.getProxy();                     <span class="cm">// 返回的替身，代替真身放上成品架</span>
+}</code></pre>
+    </div>
+  </div>
+  <div class="note-box"><b>循环依赖时</b><span>如果有人在真身还没初始化完时就要提前借它，改装师会在 <code>getEarlyBeanReference</code> 里提前把替身做出来，保证借出去的和最后放上架的是同一个替身。这就是三级缓存存在的原因（第 04 篇）。</span></div>
+</section>
+
+<!-- ================= TWO KINDS ================= -->
+<section id="kinds">
+  <div>
+    <h2>两种做替身的办法</h2>
+    <p class="lead">JDK 动态代理冒充“同一个接口”，CGLIB 冒充“同一个类”。两种替身都攥着真身的引用，调用最后都转到真身上。</p>
+  </div>
+  <div class="kinds">
+    <div class="kind" data-role="mk">
+      <h3>JDK 动态代理<small>JdkDynamicAopProxy</small></h3>
+      <div class="hier">
+        <div class="hb top">interface OrderApi</div>
+        <span class="hlab">↑ 两个都实现这个接口 ↑</span>
+        <div class="hrow"><div class="hb tg">OrderServiceImpl<br>（真身）</div><div class="hb px">jdk.proxy2.$Proxy75<br>（替身）</div></div>
+        <p class="holds">替身的每个方法都转给 <b>InvocationHandler.invoke</b>，再由它走拦截器链</p>
+      </div>
+      <ul>
+        <li>JDK 自带，不用额外的库</li>
+        <li>只能冒充接口：只有接口里的方法会被拦截</li>
+        <li>注入时只能用接口类型接，用实现类接会报错</li>
+      </ul>
+    </div>
+    <div class="kind" data-role="px">
+      <h3>CGLIB 子类<small>CglibAopProxy</small></h3>
+      <div class="hier">
+        <div class="hb tg">class OrderService（真身）</div>
+        <span class="hlab">↑ 替身是它的子类 ↑</span>
+        <div class="hb px">OrderService$$SpringCGLIB$$0（替身）</div>
+        <p class="holds">替身<b>重写</b>每个能重写的方法，转给 <b>MethodInterceptor</b>，再走拦截器链</p>
+      </div>
+      <ul>
+        <li>不需要接口，用类类型注入也没问题</li>
+        <li>final 类不能代理，final、private、static 方法拦不到</li>
+        <li>替身对象用 Objenesis 造，<b>不调构造器</b>，也没注入过字段</li>
+      </ul>
+    </div>
+  </div>
+  <div class="decide">
+    <div class="dc" data-role="mk"><b>纯 Spring：@EnableAspectJAutoProxy</b><p>默认 <code>proxyTargetClass = false</code>：真身实现了接口就用 JDK 动态代理，没有接口才用 CGLIB。</p></div>
+    <div class="dc" data-role="px"><b>Spring Boot 2.0 起</b><p>默认 <code>spring.aop.proxy-target-class=true</code>：有没有接口都用 CGLIB，省得注入时类型对不上。想改回来就把它设成 false。</p></div>
+  </div>
+</section>
+
+<!-- ================= WALK ================= -->
+<section id="walk">
+  <div>
+    <h2>一次调用怎么穿过替身</h2>
+    <p class="lead">OrderController 调 <code>orderService.placeOrder(o)</code>。placeOrder 上有 @Transactional，还被一个 @Order(1) 的日志切面管着。选一个剧情，一步一步看调用走到了哪。</p>
+  </div>
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-ok" data-scene="ok" aria-pressed="true">正常调用</button>
+    <button class="tab" id="sc-ex" data-scene="ex" aria-pressed="false">真身抛异常</button>
+    <button class="tab" id="sc-self" data-scene="self" aria-pressed="false">自己调自己</button>
+    <button class="tab" id="sc-final" data-scene="fin" aria-pressed="false">调 final 方法</button>
+  </div>
+  <div class="chainv" id="chainv">
+    <div class="nd" id="n0" data-role="other"><small>调用方</small><b>OrderController</b><code>orderService.placeOrder(o)</code></div>
+    <div class="nd" id="n1" data-role="px"><small>替身</small><b>OrderService$$SpringCGLIB$$0</b><code>DynamicAdvisedInterceptor</code></div>
+    <div class="nd" id="n2" data-role="ic"><span class="ix">#0</span><small>拦截器</small><b>ExposeInvocationInterceptor</b><code>框架自动加在最前面</code></div>
+    <div class="nd" id="n3" data-role="ic"><span class="ix">#1</span><small>拦截器</small><b>LogAspect.around</b><code>@Order(1)</code></div>
+    <div class="nd" id="n4" data-role="ic"><span class="ix">#2</span><small>拦截器</small><b>TransactionInterceptor</b><code>@Transactional</code></div>
+    <div class="nd" id="n5" data-role="tg"><small>真身</small><b>OrderService</b><code>placeOrder 的业务代码</code></div>
+  </div>
+  <div class="idxbar"><span>ReflectiveMethodInvocation 的</span><code id="idx">currentInterceptorIndex = —</code><span id="idxNote"></span></div>
+  <div class="wgrid">
+    <div>
+      <div class="trace-h" style="color:var(--muted)">调用经过（缩进表示嵌套在谁里面）</div>
+      <ol class="trace" id="trace"></ol>
+    </div>
+    <ol class="src" id="src" aria-label="真身的代码"></ol>
+  </div>
+  <div class="cap" id="cap" data-role="px" aria-live="polite">
+    <div class="cap-n" id="capN">1/9</div>
+    <div class="cap-who"><code id="capCall"></code></div>
+    <div class="cap-say" id="capSay"></div>
+  </div>
+  <div class="ctrl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+</section>
+
+<!-- ================= CHAIN ================= -->
+<section id="chain">
+  <div>
+    <h2>拦截器链：一个下标，一层层往里</h2>
+    <p class="lead">链是一个列表，ReflectiveMethodInvocation 手里攥着一个下标。每个拦截器在自己的代码中间调 <code>proceed()</code>，下标加一，交给下一个；走到头就调真身。</p>
+  </div>
+  <div class="cgrid">
+    <div class="codebox">
+      <div class="code-bar"><code>ReflectiveMethodInvocation.proceed()</code><span>简化版</span></div>
+<pre><code><span class="kw">private int</span> currentInterceptorIndex = -<span class="kw">1</span>;
+
+<span class="kw">public</span> Object proceed() <span class="kw">throws</span> Throwable {
+    <span class="kw">if</span> (currentInterceptorIndex == interceptors.size() - <span class="kw">1</span>) {
+        <span class="kw">return</span> invokeJoinpoint();          <span class="cm">// 链走完了：反射调用真身的方法</span>
+    }
+    Object next = interceptors.get(++currentInterceptorIndex);
+    <span class="kw">return</span> ((MethodInterceptor) next).invoke(<span class="kw">this</span>);
+    <span class="cm">// 下一个拦截器做完前半段，会再调 proceed()，于是又回到这里</span>
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>你写的切面</b><span>@Around 的 proceed() 就是上面那个</span></div>
+<pre><code><span class="an">@Aspect</span>
+<span class="an">@Component</span>                       <span class="cm">// 只写 @Aspect 不会被当成 Bean</span>
+<span class="an">@Order</span>(<span class="kw">1</span>)                        <span class="cm">// 数字越小越在外层</span>
+<span class="kw">public class</span> LogAspect {
+    <span class="an">@Around</span>(<span class="st-s">"execution(* com.shop.service..*(..))"</span>)
+    <span class="kw">public</span> Object around(ProceedingJoinPoint pjp) <span class="kw">throws</span> Throwable {
+        <span class="kw">long</span> t = System.currentTimeMillis();
+        <span class="kw">try</span> {
+            <span class="kw">return</span> pjp.proceed();         <span class="cm">// 交给链上的下一个</span>
+        } <span class="kw">finally</span> {
+            log.info(<span class="st-s">"{} 用时 {} ms"</span>, pjp.getSignature().getName(),
+                     System.currentTimeMillis() - t);
+        }
+    }
+}</code></pre>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">注解</th><th scope="col">背后的顾问 / 拦截器</th><th scope="col">谁负责做替身</th><th scope="col">默认顺序</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">@Aspect 里的通知</th><td>每个通知方法变成一个 Advisor</td><td>AnnotationAwareAspectJAutoProxyCreator</td><td>看切面类上的 @Order，没写就排最后</td></tr>
+        <tr><th scope="row">@Transactional</th><td>TransactionInterceptor</td><td>同上</td><td>最低优先级，可用 <code>@EnableTransactionManagement(order = …)</code> 调</td></tr>
+        <tr><th scope="row">@Cacheable</th><td>CacheInterceptor</td><td>同上</td><td>最低优先级，可用 <code>@EnableCaching(order = …)</code> 调</td></tr>
+        <tr><th scope="row">@Async</th><td>AsyncExecutionInterceptor</td><td>AsyncAnnotationBeanPostProcessor，另一个改装师</td><td>加到已有替身的拦截器链最前面</td></tr>
+        <tr><th scope="row">@Validated 方法校验</th><td>MethodValidationInterceptor</td><td>MethodValidationPostProcessor</td><td>加到已有替身的拦截器链末尾</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tip">一个 Bean 被几个顾问管着，通常也只有一个替身，所有拦截器排在同一条链上。</p>
+</section>
+
+<!-- ================= LIMITS ================= -->
+<section id="limits">
+  <div>
+    <h2>替身管不到的地方</h2>
+    <p class="lead">只要调用没经过替身，或者替身重写不了那个方法，切面就不起作用。不报错，静悄悄失效。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">情况</th><th scope="col">JDK 代理</th><th scope="col">CGLIB</th><th scope="col">为什么</th><th scope="col">怎么办</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">同一个类里 this.xxx()</th><td class="n">拦不到</td><td class="n">拦不到</td><td>this 是真身，调用没经过替身</td><td>挪到另一个 Bean；或注入自己再调</td></tr>
+        <tr><th scope="row">final 方法</th><td>不涉及</td><td class="n">拦不到，还可能 NPE</td><td>子类重写不了，直接在替身身上执行，替身的字段是空的</td><td>去掉 final</td></tr>
+        <tr><th scope="row">final 类</th><td>不涉及</td><td class="n">启动报错</td><td>没法生成子类</td><td>去掉 final，或改用接口 + JDK 代理</td></tr>
+        <tr><th scope="row">private、static 方法</th><td class="n">拦不到</td><td class="n">拦不到</td><td>不能重写，也不在接口里</td><td>改成 public 实例方法</td></tr>
+        <tr><th scope="row">接口里没有的方法</th><td class="n">拦不到</td><td class="y">能拦</td><td>JDK 替身只实现了接口</td><td>加到接口里，或用 CGLIB</td></tr>
+        <tr><th scope="row">自己 new 的对象</th><td class="n">拦不到</td><td class="n">拦不到</td><td>不是容器造的，没人给它换替身</td><td>从容器里拿</td></tr>
+        <tr><th scope="row">构造器、@PostConstruct 里调本类方法</th><td class="n">拦不到</td><td class="n">拦不到</td><td>那时替身还没换上，而且也是 this 调用</td><td>放到 ApplicationReadyEvent 之后</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：Spring 5 和 Spring 6</h2>
+    <p class="lead">做替身的时机、两种替身、拦截器链，两边都一样。肉眼能看到的区别，主要是替身的类名。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>CGLIB 替身的类名：<code>OrderService$$EnhancerBySpringCGLIB$$a1b2c3d4</code></li>
+        <li>JDK 替身在 JDK 8 上叫 <code>com.sun.proxy.$Proxy75</code></li>
+        <li>@Transactional 在 CGLIB 替身上只对 public 方法生效</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring 6 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>CGLIB 替身的类名变短：<code>OrderService$$SpringCGLIB$$0</code></li>
+        <li>JDK 16 起，JDK 替身放在动态模块里：<code>jdk.proxy2.$Proxy75</code></li>
+        <li>CGLIB 替身上，protected 和包可见方法的 @Transactional 也生效</li>
+        <li>提前编译（AOT）时，CGLIB 替身类在构建期就生成好，打成原生程序也能用</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>第 10 站换替身</span><span>JDK 代理和 CGLIB</span><span>Boot 默认用 CGLIB</span><span>proceed() 一层层往里</span><span>this 调用拦不到</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">先问一句：这次调用，到底有没有经过替身？</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="tg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bean"/></svg><b>同一个类里调另一个带 @Transactional 的方法，事务没开</b><p>this 是真身。把方法挪到另一个 Bean；或者注入自己（<code>@Lazy</code> 注入 self）；或者 <code>@EnableAspectJAutoProxy(exposeProxy = true)</code> 后用 <code>AopContext.currentProxy()</code>。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mask"/></svg><b>调 final 方法，里面注入的字段是 null</b><p>CGLIB 重写不了它，代码直接在替身对象上跑，而替身没注入过字段。去掉 final。Kotlin 的类和方法默认是 final，要用 kotlin-spring 插件。</p></div>
+    <div class="pit" data-role="mk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mech"/></svg><b>Bean named '…' is expected to be of type 'OrderServiceImpl' but was actually of type 'jdk.proxy2.$Proxy75'</b><p>用了 JDK 代理，却用实现类类型注入。改用接口类型注入，或者设 <code>proxyTargetClass = true</code>。</p></div>
+    <div class="pit" data-role="ic"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-target"/></svg><b>切面写好了，一次都没进来</b><p>切面类只写了 <code>@Aspect</code>，没写 <code>@Component</code>；或者切点表达式的包名写错了，一个方法都没匹配上。</p></div>
+    <div class="pit" data-role="ic"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-link"/></svg><b>日志切面记的耗时里，没算上事务提交</b><p>两个都是最低优先级时，谁在外层不确定。给切面加 <code>@Order</code>，或用 <code>@EnableTransactionManagement(order = …)</code> 把顺序定死。</p></div>
+    <div class="pit" data-role="px"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mask"/></svg><b>getClass().getAnnotation(…) 拿不到类上的注解</b><p>getClass() 返回的是替身类。用 <code>AopUtils.getTargetClass(bean)</code> 或 <code>AnnotationUtils.findAnnotation(…)</code>。</p></div>
+    <div class="pit" data-role="mk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mech"/></svg><b>日志：is not eligible for getting processed by all BeanPostProcessors</b><p>这个 Bean 被某个改装师提前用到了，造得太早，错过了做替身那一步，上面的切面不生效。改装师的依赖用 <code>ObjectProvider</code> 延迟获取。</p></div>
+    <div class="pit" data-role="tg"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bean"/></svg><b>切面里把异常吞了，调用方以为成功了</b><p>@Around 里 catch 住异常没再抛出去，外层的事务也以为成功，会照常提交。记完日志要原样抛出。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Spring 5 / 6、Spring Boot 2 / 3 为例。同系列：<a href="spring-aop-tx.html">Spring AOP 与事务</a> · <a href="spring-bean-lifecycle.html">Bean 生命周期与循环依赖</a> · <a href="spring-ioc-di.html">Spring IoC 与依赖注入</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  var SRC_PLACE=['@Transactional','public Order placeOrder(Order o) {','    orderMapper.insert(o);','    stockMapper.decrease(o.getSku());','    return o;','}'];
+  var SRC_SELF=['@Transactional','public Order placeOrder(Order o) {','    orderMapper.insert(o);','    this.audit(o);          // 同一个类里调','    return o;','}','','@Transactional(propagation = REQUIRES_NEW)','public void audit(Order o) {','    auditMapper.insert(o);','}'];
+  var SRC_FIN=['// 不小心写成了 final','public final String summary() {','    return orderMapper.countToday() + " 单";','}'];
+
+  var T=function(l,k,t){ return [l,k,t]; };
+  var HEAD=[
+    {at:0, idx:null, line:-1, trace:[T(0,'in','OrderController 调 orderService.placeOrder(o)')], call:'orderService.placeOrder(o)', say:'注入给 Controller 的 orderService 其实是替身：getClass() 打出来是 OrderService$$SpringCGLIB$$0。'},
+    {at:1, idx:-1, line:-1, trace:[T(1,'in','替身 DynamicAdvisedInterceptor.intercept：查出这个方法的拦截器链，3 个')], call:'CglibAopProxy.DynamicAdvisedInterceptor.intercept(…)', say:'CGLIB 替身重写了 placeOrder，调进来先到这里。它查出这个方法要过的拦截器链（结果按方法缓存起来），然后新建一个 MethodInvocation，从头 proceed()。'},
+    {at:2, idx:0, line:-1, trace:[T(2,'in','#0 ExposeInvocationInterceptor：把这次调用放进 ThreadLocal')], call:'ExposeInvocationInterceptor.invoke(mi)', say:'第 0 个是框架自动加的：把这次调用放进 ThreadLocal，切面里才能拿到当前的连接点。然后 proceed()。'},
+    {at:3, idx:1, line:-1, trace:[T(3,'in','#1 LogAspect.around：记下开始时间，pjp.proceed()')], call:'LogAspect.around(pjp)', say:'第 1 个是你的日志切面，@Order(1)，所以在外层。@Around 先记开始时间，再调 pjp.proceed()。'},
+    {at:4, idx:2, line:-1, trace:[T(4,'in','#2 TransactionInterceptor：开事务，proceed()')], call:'TransactionInterceptor.invoke(mi)', say:'第 2 个是 @Transactional 背后的 TransactionInterceptor：开事务，再 proceed()。'}
+  ];
+  var SC={
+    ok:{src:SRC_PLACE, steps:HEAD.concat([
+      {at:5, idx:2, idxNote:'已经是最后一个（size - 1 = 2），这次 proceed() 直接调真身', line:2, trace:[T(5,'in','真身 OrderService.placeOrder：插订单、扣库存')], call:'invokeJoinpoint() → method.invoke(target, args)', say:'下标已经走到最后一个，proceed() 不再找下一个拦截器，而是用反射调真身的 placeOrder。真身的字段都是注入好的，业务代码正常跑。'},
+      {at:4, idx:2, line:4, trace:[T(4,'out','#2 TransactionInterceptor：真身正常返回，提交事务')], call:'commitTransactionAfterReturning(…)', say:'真身正常返回，一层层退回来。先回到 TransactionInterceptor：提交事务。'},
+      {at:3, idx:2, line:-1, trace:[T(3,'out','#1 LogAspect.around：placeOrder 用时 35 ms')], call:'LogAspect.around → finally', say:'再回到日志切面，记下耗时。因为它在外层，这个耗时包含了事务提交。'},
+      {at:0, idx:2, line:-1, kind:'done', trace:[T(2,'out','#0 ExposeInvocationInterceptor：还原 ThreadLocal'),T(0,'out','结果交回 OrderController')], call:'return', say:'ExposeInvocationInterceptor 还原 ThreadLocal，替身把结果交还给 Controller。Controller 全程不知道中间多了三层。'}
+    ])},
+    ex:{src:SRC_PLACE, steps:HEAD.concat([
+      {at:5, idx:2, line:3, marks:{5:'err'}, kind:'fail', trace:[T(5,'err','真身 placeOrder：库存不足，抛 StockNotEnoughException')], call:'stockMapper.decrease(…) → throw', say:'真身扣库存时发现不够，抛出 StockNotEnoughException。异常开始往外冒。'},
+      {at:4, idx:2, line:-1, marks:{5:'err'}, kind:'fail', trace:[T(4,'err','#2 TransactionInterceptor：RuntimeException，回滚，再原样抛出')], call:'completeTransactionAfterThrowing(…)', say:'异常先冒到 TransactionInterceptor：是 RuntimeException，回滚事务，再把异常原样抛出去。'},
+      {at:3, idx:2, line:-1, marks:{5:'err'}, kind:'fail', trace:[T(3,'err','#1 LogAspect.around：finally 里记一条日志，异常继续往外抛')], call:'LogAspect.around → finally', say:'再冒到日志切面：finally 里照样记日志，异常没被吞，继续往外抛。'},
+      {at:0, idx:2, line:-1, marks:{5:'err'}, kind:'fail', trace:[T(0,'err','OrderController 收到 StockNotEnoughException')], call:'throw', say:'Controller 收到异常。顺序是：事务先回滚，日志后记录，因为日志切面在外层。'}
+    ])},
+    self:{src:SRC_SELF, steps:[
+      HEAD[0],
+      {at:5, idx:2, line:2, marks:{1:'passed',2:'passed',3:'passed',4:'passed'}, trace:[T(1,'in','替身 → #0 → #1 → #2 TransactionInterceptor：开事务 A'),T(5,'in','真身 placeOrder：插订单')], call:'…（同正常调用）→ 真身 placeOrder', say:'前半段和正常调用一样：经过替身、三个拦截器，开了事务 A，来到真身的 placeOrder。'},
+      {at:5, idx:2, line:3, marks:{1:'skip',2:'skip',3:'skip',4:'skip'}, trace:[T(5,'in','this.audit(o)：this 是真身，直接调用，没进替身')], call:'this.audit(o)', say:'真身里写的是 this.audit(o)。this 指的是真身自己，不是替身，这次调用根本不经过拦截器链。'},
+      {at:5, idx:2, line:9, marks:{1:'skip',2:'skip',3:'skip',4:'skip'}, kind:'fail', trace:[T(6,'err','audit 的 @Transactional(REQUIRES_NEW) 没生效：用的还是事务 A')], call:'auditMapper.insert(o)', say:'audit 上写的 REQUIRES_NEW 形同虚设：没有开新事务，审计记录跟着事务 A 一起提交或回滚。日志切面也没记到 audit。'},
+      {at:5, idx:2, line:3, marks:{1:'skip',2:'skip',3:'skip',4:'skip'}, kind:'done', trace:[T(5,'note','改法：audit 挪到 AuditService；或注入自己 self.audit(o)；或 AopContext.currentProxy()')], call:'怎么改', say:'让调用经过替身：最推荐把 audit 挪到另一个 Bean；也可以注入自己（加 @Lazy）再 self.audit(o)；或者打开 exposeProxy，用 AopContext.currentProxy() 拿到替身。'}
+    ]},
+    fin:{src:SRC_FIN, steps:[
+      {at:0, idx:null, line:-1, trace:[T(0,'in','OrderController 调 orderService.summary()')], call:'orderService.summary()', say:'这次调的 summary() 被写成了 final。'},
+      {at:1, idx:null, line:1, marks:{2:'skip',3:'skip',4:'skip',5:'skip'}, trace:[T(1,'in','替身没能重写 final 方法：JVM 直接执行继承来的 summary()，在替身身上跑')], call:'OrderService.summary()（继承来的）', say:'CGLIB 靠生成子类、重写方法来拦截。final 方法重写不了，于是 JVM 执行父类里的 summary()，而且是在替身对象自己身上执行，真身根本没被叫到。'},
+      {at:1, idx:null, line:2, marks:{1:'err',2:'skip',3:'skip',4:'skip',5:'skip'}, kind:'fail', trace:[T(1,'err','this.orderMapper 是 null → NullPointerException')], call:'this.orderMapper.countToday()', say:'替身是用 Objenesis 造的，没调构造器，也没注入过字段。它的 orderMapper 是 null，一调就 NullPointerException。'},
+      {at:1, idx:null, line:1, marks:{1:'err',2:'skip',3:'skip',4:'skip',5:'skip'}, kind:'done', trace:[T(1,'note','改法：去掉 final；Kotlin 项目加 kotlin-spring 插件')], call:'怎么改', say:'把 final 去掉。用 Kotlin 写的话，类和方法默认就是 final，要加 kotlin-spring（all-open）插件。'}
+    ]}
+  };
+
+  function stateAt(sc,pos){
+    var marks={}, trace=[], fresh=0;
+    for(var i=0;i<=pos;i++){
+      var s=sc.steps[i];
+      if(s.marks){ marks={}; for(var k in s.marks) marks[k]=s.marks[k]; }
+      if(s.trace){ trace=trace.concat(s.trace); if(i===pos) fresh=s.trace.length; }
+    }
+    return {marks:marks, trace:trace, fresh:fresh};
+  }
+  var scene='ok', pos=0, timer=null;
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  function render(){
+    var sc=SC[scene], s=sc.steps[pos], S=stateAt(sc,pos);
+    var deepest=0; for(var j=0;j<=pos;j++){ if(sc.steps[j].at>deepest) deepest=sc.steps[j].at; }
+    for(var i=0;i<6;i++){
+      var cls='';
+      if(S.marks[i]) cls=S.marks[i]==='passed' ? 'passed' : S.marks[i];
+      if(i===s.at && cls!=='err') cls='on';
+      else if(!cls && i<=deepest && i!==s.at) cls='passed';
+      $('n'+i).className='nd'+(cls?' '+cls:'');
+    }
+    $('idx').textContent = 'currentInterceptorIndex = '+(s.idx===null||s.idx===undefined ? '—' : s.idx);
+    $('idxNote').textContent = s.idxNote || (s.idx===null||s.idx===undefined ? '这次调用根本没进链' : '');
+    var n=S.trace.length;
+    $('trace').innerHTML = S.trace.map(function(t,i){ return '<li class="'+t[1]+(i>=n-S.fresh?' new':'')+'" style="padding-left:'+(t[0]*12)+'px">'+esc(t[2])+'</li>'; }).join('');
+    $('src').innerHTML = sc.src.map(function(l,i){ return '<li'+(i===s.line?' class="cur"':'')+'>'+esc(l||' ')+'</li>'; }).join('');
+    $('cap').setAttribute('data-role', s.kind==='fail' ? 'bad' : (s.kind==='done' ? 'done' : 'px'));
+    $('capN').textContent=(pos+1)+'/'+sc.steps.length;
+    $('capCall').textContent=s.call;
+    $('capSay').textContent=s.say;
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===sc.steps.length-1;
+  }
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<SC[scene].steps.length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=SC[scene].steps.length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 2200);
+  });
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop(); scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+  $('walk').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+  render();
+})();
+</script>
+
+</body>
+</html>
