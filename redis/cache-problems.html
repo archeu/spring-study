@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>缓存穿透、击穿与雪崩</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: the cache is a shield in front of the database; each problem is a different way the shield leaks. Requests blue, cache teal, database brown, TTL purple, leaks red, defenses green. Two interactives: the Bloom filter and the database load lab. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --rq:#3150C4; --rq-tint:#E2E7FA;
+  --ch:#0D7A69; --ch-tint:#DCF0EB;
+  --db:#8A5A2B; --db-tint:#F3E6D8;
+  --tl:#6A3FC0; --tl-tint:#ECE5FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --rq:#90A4FF; --rq-tint:#1D2650;
+    --ch:#40C6B0; --ch-tint:#12352F;
+    --db:#D9A26B; --db-tint:#3A2A1A;
+    --tl:#B9A0FF; --tl-tint:#2A2148;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --rq:#90A4FF; --rq-tint:#1D2650;
+  --ch:#40C6B0; --ch-tint:#12352F;
+  --db:#D9A26B; --db-tint:#3A2A1A;
+  --tl:#B9A0FF; --tl-tint:#2A2148;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--rq)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button,input{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--rq);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="rq"]{--rc:var(--rq);--rt:var(--rq-tint)}
+[data-role="ch"]{--rc:var(--ch);--rt:var(--ch-tint)}
+[data-role="db"]{--rc:var(--db);--rt:var(--db-tint)}
+[data-role="tl"]{--rc:var(--tl);--rt:var(--tl-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.trio{margin-top:20px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.tri{border:2px solid var(--line);border-radius:18px;background:var(--card);padding:12px 14px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.tri svg{width:100%;height:auto;display:block}
+.tri h3{font-size:26px;color:var(--bad)}
+.tri h3 small{font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-left:8px}
+.tri p{font-size:14.5px}
+.hd-rq{fill:var(--rq)} .hd-bad{fill:var(--bad)} .hd-sh{fill:var(--ch)} .hd-shf{fill:var(--ch);opacity:.35}
+.hd-db{fill:var(--db)} .hd-dbt{fill:var(--db-tint)} .hd-dbo{stroke:var(--bad);stroke-width:3;fill:none}
+.hd-l{font-size:11px;fill:var(--muted)} .hd-lb{font-size:11.5px;font-weight:700;fill:var(--bad)}
+.hd-lw{font-size:11px;font-weight:700;fill:var(--on-accent)}
+.hd-gap{stroke:var(--bad);stroke-width:2;stroke-dasharray:3 3;fill:none}
+.hd-tl{fill:var(--tl)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--tl)} .an{color:var(--ch)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .pro{color:var(--good);font-weight:700}
+.t .con{color:var(--bad);font-weight:700}
+.t .tag{display:inline-block;font-size:12px;font-weight:700;padding:0 8px;border-radius:999px;background:var(--rt);color:var(--rc);white-space:nowrap}
+.fixes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.fx{border:2px solid var(--good);border-radius:14px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fx b{font-size:16px}
+.fx p{font-size:13.5px}
+.fx .pc{font-size:12.5px;color:var(--muted)}
+.fx .pc em{font-style:normal;font-weight:700;color:var(--good)}
+.fx .pc i{font-style:normal;font-weight:700;color:var(--bad)}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.btn{font-size:14px;padding:7px 13px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.pbtn{font-size:13px;padding:5px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.pbtn[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+
+/* ---------- flow ---------- */
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.fs{border:2px solid var(--rc);background:var(--rt);border-radius:12px;padding:6px 12px;font-size:14px;font-weight:600;display:flex;flex-direction:column;line-height:1.35}
+.fs small{font-weight:400;font-size:12px;color:var(--muted)}
+.fa{color:var(--line-strong);font-size:20px;font-weight:700;display:flex;flex-direction:column;align-items:center;line-height:1}
+.fa small{font-size:11px;font-weight:700;color:var(--muted)}
+.hr-bars{display:flex;flex-direction:column;gap:8px}
+.hrb{display:grid;grid-template-columns:7em minmax(0,1fr);gap:10px;align-items:center;font-size:13px}
+.hrb > span{color:var(--muted)}
+.hrb .trk{position:relative;height:24px;border-radius:0 5px 5px 0;background:var(--neutral-tint)}
+.hrb .fill{position:absolute;left:0;top:0;bottom:0;border-radius:0 5px 5px 0;background:var(--rc)}
+.hrb .val{position:absolute;top:50%;transform:translateY(-50%);font-family:var(--font-mono);font-size:12px;font-weight:600;padding:0 6px;white-space:nowrap}
+.hrb .cap{position:absolute;top:-4px;bottom:-4px;border-left:2px dashed var(--ink)}
+
+/* ---------- bloom ---------- */
+.bloom{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.bits{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:3px}
+.bit{border-radius:6px;border:1.5px solid var(--line-strong);text-align:center;padding:4px 0;display:flex;flex-direction:column;line-height:1.2;background:var(--card)}
+.bit b{font-family:var(--font-mono);font-size:14px}
+.bit small{font-family:var(--font-mono);font-size:9.5px;color:var(--muted)}
+.bit.one{background:var(--ch-tint);border-color:var(--ch)}
+.bit.hit{outline:3px solid var(--ink);outline-offset:1px}
+.bit.hit.zero{background:var(--bad-tint);border-color:var(--bad)}
+.bf-ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bf-ctl label{font-size:13px;color:var(--muted)}
+.bf-ctl input{width:8em;padding:5px 10px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card);font-family:var(--font-mono);font-size:13.5px}
+.bf-res{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.bf-res code{font-weight:700}
+.bf-ins{display:flex;flex-wrap:wrap;gap:6px;font-size:12px;color:var(--muted)}
+.bf-ins span{padding:2px 8px;border-radius:7px;background:var(--ch-tint);font-family:var(--font-mono);color:var(--ink)}
+
+/* ---------- breakdown ---------- */
+.bd{display:flex;flex-direction:column;gap:10px}
+.bdr{display:grid;grid-template-columns:8em minmax(0,1fr);gap:6px 14px;align-items:center;padding:10px 12px;border-radius:14px;background:var(--card);border:1.5px solid var(--line)}
+.bdr > b{font-size:15px}
+.bdt{position:relative;height:30px;border-radius:7px;background:var(--neutral-tint);overflow:hidden}
+.bds{position:absolute;top:0;bottom:0;display:flex;align-items:center;padding:0 8px;font-size:11.5px;font-weight:700;color:var(--on-accent);white-space:nowrap;overflow:hidden}
+.bds.b{background:var(--bad)} .bds.w{background:var(--warn)} .bds.s{background:var(--tl)} .bds.g{background:var(--good)} .bds.d{background:var(--db)}
+.bdo{grid-column:2;display:flex;flex-wrap:wrap;gap:6px}
+.bdo span{font-size:12px;padding:1px 9px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc)}
+.bdo b{font-family:var(--font-mono)}
+.bdax{display:grid;grid-template-columns:8em minmax(0,1fr);gap:14px;padding:0 12px}
+.bdax div{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+
+/* ---------- avalanche ---------- */
+.ttlh{display:flex;flex-direction:column;gap:6px}
+.ttlr{display:grid;grid-template-columns:8em minmax(0,1fr);gap:12px;align-items:end}
+.ttlr > span{font-size:13px;color:var(--muted);align-self:center}
+.hist{display:flex;align-items:flex-end;gap:2px;height:64px;border-bottom:1.5px solid var(--line-strong)}
+.hist i{flex:1 1 0;background:var(--tl);border-radius:3px 3px 0 0;min-height:0}
+.ttlax{display:grid;grid-template-columns:8em minmax(0,1fr);gap:12px}
+.ttlax div{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.ha{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ha .n{border:2px solid var(--rc);background:var(--rt);border-radius:10px;padding:4px 10px;font-size:13px;font-weight:600}
+.ha .n.x{text-decoration:line-through;border-style:dashed}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.lab-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.lab-row .lbl{font-size:13px;color:var(--muted)}
+.defs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.def{border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:4px;min-width:0}
+.def b{font-size:13.5px;display:flex;align-items:center;gap:8px}
+.def b::before{content:"";width:14px;height:14px;border-radius:4px;border:2px solid var(--line-strong);flex:none}
+.def[aria-pressed="true"]{border-color:var(--good);background:var(--good-tint)}
+.def[aria-pressed="true"] b::before{background:var(--good);border-color:var(--good)}
+.def span{font-size:11.5px;color:var(--muted);line-height:1.4}
+.def span.eff{font-weight:700}
+.def span.eff.y{color:var(--good)} .def span.eff.n{color:var(--bad)} .def span.eff.p{color:var(--warn)}
+.chartbox{border:1.5px solid var(--line);border-radius:14px;padding:10px;min-width:0;background:var(--card)}
+.chartbox svg{display:block;width:100%;height:auto;touch-action:pan-y}
+.c-ax{font-family:var(--font-mono);font-size:10.5px;fill:var(--muted)}
+.c-t{font-size:12.5px;fill:var(--muted);font-weight:500}
+.c-gl{stroke:var(--line);stroke-width:1}
+.c-base{stroke:var(--line-strong);stroke-width:1}
+.c-ok{fill:var(--ch)} .c-over{fill:var(--bad)}
+.c-cap{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:5 4}
+.c-capl{font-size:11px;font-weight:700;fill:var(--ink)}
+.c-ev{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 3}
+.c-evl{font-size:10.5px;fill:var(--ink)}
+.c-hl{fill:var(--ink);opacity:.08}
+.c-tipb{fill:var(--card);stroke:var(--line-strong);stroke-width:1}
+.c-tipt{font-size:11.5px;fill:var(--ink)}
+.c-hit{fill:transparent;cursor:crosshair}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;color:var(--ink);line-height:1.15;font-variant-numeric:tabular-nums}
+.tile span{font-size:12.5px}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .defs{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .trio,.fixes{grid-template-columns:1fr}
+  .two,.eras{grid-template-columns:1fr}
+  .tri{display:grid;grid-template-columns:minmax(0,200px) minmax(0,1fr);gap:4px 14px;align-items:center}
+  .tri svg{grid-row:span 2}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .bits{grid-template-columns:repeat(12,minmax(0,1fr))}
+  .tiles{grid-template-columns:1fr}
+  .bdr,.bdax,.ttlr,.ttlax{grid-template-columns:5.5em minmax(0,1fr)}
+}
+@media (max-width:520px){
+  .tri{display:flex}
+  .defs{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-crowd" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="14" cy="22" r="7"/><path fill="currentColor" d="M2 50c0-10 5.4-15 12-15s12 5 12 15z"/>
+    <circle fill="currentColor" cx="50" cy="22" r="7"/><path fill="currentColor" d="M38 50c0-10 5.4-15 12-15s12 5 12 15z"/>
+    <circle fill="currentColor" cx="32" cy="18" r="8"/><path fill="currentColor" d="M18 54c0-12 6.3-18 14-18s14 6 14 18z"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" d="M27 46h10M33 42l4 4-4 4"/>
+  </symbol>
+  <symbol id="i-shield" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l24 9v17c0 15-10 26-24 31C18 56 8 45 8 30V13z"/>
+    <path class="ks-paper" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M21 32l8 8 15-16"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 14v36c0 5 9.8 9 22 9s22-4 22-9V14z"/>
+    <ellipse fill="currentColor" cx="32" cy="14" rx="22" ry="9"/>
+    <ellipse class="k-paper" opacity=".3" cx="32" cy="14" rx="22" ry="9"/>
+    <path class="ks-paper" opacity=".6" stroke-width="2" d="M10 27c0 5 9.8 9 22 9s22-4 22-9M10 39c0 5 9.8 9 22 9s22-4 22-9"/>
+  </symbol>
+  <symbol id="i-hourglass" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="4" width="40" height="7" rx="2"/>
+    <rect fill="currentColor" x="12" y="53" width="40" height="7" rx="2"/>
+    <path fill="currentColor" d="M16 11h32c0 12-9 16-12 21 3 5 12 9 12 21H16c0-12 9-16 12-21-3-5-12-9-12-21z"/>
+    <path class="k-gold" d="M24 18h16c-2 5-6 7-8 10-2-3-6-5-8-10zM22 50c2-6 7-8 10-10 3 2 8 4 10 10z"/>
+  </symbol>
+  <symbol id="i-filter" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M6 8h52L38 32v22l-12 6V32z"/>
+    <rect class="k-gold" x="26" y="20" width="12" height="4" rx="1.5"/>
+  </symbol>
+  <symbol id="i-lock" viewBox="0 0 64 64">
+    <path stroke="var(--ink)" fill="none" stroke-width="5" d="M20 29v-8a12 12 0 0 1 24 0v8"/>
+    <rect fill="currentColor" x="10" y="27" width="44" height="33" rx="5"/>
+    <circle class="k-gold" cx="32" cy="42" r="5"/>
+    <rect class="k-gold" x="30" y="44" width="4" height="9" rx="1.5"/>
+  </symbol>
+  <symbol id="i-bolt" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M38 2L10 36h19l-5 26 30-38H35z"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">缓存穿透、击穿与雪崩</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">REDIS · CACHE-ASIDE · PENETRATION · BREAKDOWN · AVALANCHE</p>
+  <h1>缓存是数据库前面的一面盾，它会从三个地方漏</h1>
+  <p class="lead">平时 99% 的请求被 Redis 挡住，数据库只看到 1%。这面盾一漏，原本被挡住的流量就直接砸到数据库上。漏法有三种，名字容易混，看图记最快。</p>
+
+  <div class="trio">
+    <div class="tri"><svg id="hPen" viewBox="0 0 220 200" role="img" aria-label="穿透：请求查不存在的数据，缓存和数据库都没有，每次都打到数据库"></svg><h3>穿透<small>Penetration</small></h3><p>查一个<b>根本不存在</b>的数据。缓存里没有，库里也没有，所以永远缓存不上，每次都打到数据库。</p></div>
+    <div class="tri"><svg id="hBrk" viewBox="0 0 220 200" role="img" aria-label="击穿：一个热点 key 过期的瞬间，大量请求同时打到数据库"></svg><h3>击穿<small>Breakdown</small></h3><p><b>一个热点 key</b> 过期的那一刻，成千上万的请求同时发现缓存没了，一起去查库重建。</p></div>
+    <div class="tri"><svg id="hAva" viewBox="0 0 220 200" role="img" aria-label="雪崩：大批 key 同时过期或 Redis 宕机，流量全部压到数据库"></svg><h3>雪崩<small>Avalanche</small></h3><p><b>一大批 key</b> 同时过期，或者 Redis 整个挂了。整面盾都没了，流量全部压到数据库。</p></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="rq">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-crowd"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">请求<code>10,000 QPS</code></div>
+        <p>用户、爬虫、也可能是攻击者，<b>先到缓存</b>。</p>
+        <span class="belong">数量远超数据库能扛的</span>
+      </div>
+    </div>
+    <div class="who" data-role="ch">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-shield"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">盾<code>Redis 缓存</code></div>
+        <p>放在内存里，<b>单个实例每秒能扛几万次</b>读。</p>
+        <span class="belong">命中率决定数据库压力</span>
+      </div>
+    </div>
+    <div class="who" data-role="db">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">仓库<code>MySQL</code></div>
+        <p>数据的正本，<b>每秒只能扛几千次</b>查询。</p>
+        <span class="belong">被打满就整站变慢</span>
+      </div>
+    </div>
+    <div class="who" data-role="tl">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-hourglass"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">沙漏<code>TTL 过期时间</code></div>
+        <p>每个 key 写进去时就定好<b>什么时候作废</b>。</p>
+        <span class="belong">击穿和雪崩都跟它有关</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= HOW ================= -->
+<section id="how">
+  <div>
+    <h2>先看盾平时怎么挡</h2>
+    <p class="lead">最常用的写法叫 Cache-Aside（旁路缓存）：读的时候先查缓存，没有再查库并写回缓存；改数据时先改库，再删缓存。</p>
+  </div>
+  <div class="flow" aria-label="读数据的流程">
+    <span class="fs" data-role="rq">请求<small>查商品 888</small></span><span class="fa" aria-hidden="true">→</span>
+    <span class="fs" data-role="ch">查 Redis<small>GET product:888</small></span><span class="fa" aria-hidden="true">→<small>有</small></span>
+    <span class="fs" data-role="done">直接返回<small>99% 的请求到此为止</small></span>
+  </div>
+  <div class="flow" aria-label="缓存没有时的流程">
+    <span class="fs" data-role="ch">查 Redis<small>没有</small></span><span class="fa" aria-hidden="true">→</span>
+    <span class="fs" data-role="db">查数据库<small>SELECT … WHERE id = 888</small></span><span class="fa" aria-hidden="true">→</span>
+    <span class="fs" data-role="tl">写回 Redis<small>SET … EX 1800（30 分钟后过期）</small></span><span class="fa" aria-hidden="true">→</span>
+    <span class="fs" data-role="done">返回</span>
+  </div>
+  <div class="mini">
+    <b>命中率一掉，数据库压力成百倍地涨</b>
+    <div class="hr-bars" id="hrBars"></div>
+    <p>总共 10,000 QPS，虚线是数据库能扛的 2,000 QPS。命中率从 99% 掉到 90%，数据库压力就翻了 10 倍。三个问题，本质都是某一部分请求的命中率突然变成了 0。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">穿透</th><th scope="col">击穿</th><th scope="col">雪崩</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">数据存在吗</th><td>不存在，库里也没有</td><td>存在</td><td>存在</td></tr>
+        <tr><th scope="row">涉及多少 key</th><td>大量随机的、不存在的 key</td><td>一个热点 key</td><td>一大批 key，或者全部</td></tr>
+        <tr><th scope="row">怎么发生的</th><td>恶意攻击、爬虫、前端传错参数</td><td>热点 key 到期</td><td>同一时刻批量过期；Redis 宕机</td></tr>
+        <tr><th scope="row">持续多久</th><td>攻击多久就多久</td><td>重建完成前那一小会儿</td><td>过期：几秒到几分钟；宕机：直到恢复</td></tr>
+        <tr><th scope="row">主要解法</th><td><span class="tag" data-role="done">布隆过滤器</span> <span class="tag" data-role="done">缓存空值</span> <span class="tag" data-role="done">参数校验</span></td><td><span class="tag" data-role="done">互斥锁</span> <span class="tag" data-role="done">逻辑过期</span> <span class="tag" data-role="done">热点不过期</span></td><td><span class="tag" data-role="done">过期时间加随机值</span> <span class="tag" data-role="done">高可用</span> <span class="tag" data-role="done">多级缓存</span> <span class="tag" data-role="done">限流降级</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= PENETRATION ================= -->
+<section id="pen">
+  <div>
+    <h2>穿透：查的东西根本不存在</h2>
+    <p class="lead">有人拿 <code>id = -1</code>、<code>id = 99999999</code> 这种不存在的值来查。数据库查不到，就没东西可以写回缓存，下一次照样穿过去。攻击者换着 id 一直打，数据库就被拖垮。</p>
+  </div>
+  <div class="fixes">
+    <div class="fx"><b>① 参数校验</b><p>id 必须是正数、格式要对，明显不合法的直接拒绝。</p><span class="pc"><em>优</em> 最便宜 · <i>代</i> 只挡得住明显非法的，挡不住 id = 99999999</span></div>
+    <div class="fx"><b>② 缓存空值</b><p>库里查不到，也往缓存写一个空值，TTL 设短一点，比如 60 秒。</p><span class="pc"><em>优</em> 简单 · <i>代</i> 攻击者每次换 id 就没用，还会塞满一堆垃圾 key；新增数据时要删掉对应的空值</span></div>
+    <div class="fx"><b>③ 布隆过滤器</b><p>把所有存在的 id 先放进一个很小的位数组。它说“没有”，就一定没有，直接返回。</p><span class="pc"><em>优</em> 内存极小，随机 id 也挡得住 · <i>代</i> 会误判“有”；不好删除；新增数据要同步加进去</span></div>
+  </div>
+  <div class="bloom" id="bloom">
+    <h3>布隆过滤器怎么判断</h3>
+    <p class="tip">一个 24 位的位数组，3 个哈希函数。已经放进去 5 个商品 id，每个 id 把 3 个位置设成 1。查一个 id 时，只要它的 3 个位置里有一个是 0，就一定没放进去过。</p>
+    <div class="bf-ins" id="bfIns"></div>
+    <div class="bits" id="bfBits" aria-label="位数组"></div>
+    <div class="bf-ctl">
+      <button class="pbtn" data-bf="1003" aria-pressed="false">查 1003</button>
+      <button class="pbtn" data-bf="8888" aria-pressed="false">查 8888</button>
+      <button class="pbtn" data-bf="-1" aria-pressed="false">查 -1</button>
+      <button class="pbtn" data-bf="2024" aria-pressed="false">查 2024</button>
+      <label for="bfIn">或者自己输入：</label><input id="bfIn" type="text" inputmode="numeric" value="" placeholder="比如 1234" maxlength="12"><button class="btn primary" id="bfGo">查</button>
+    </div>
+    <p class="bf-res" id="bfRes" data-role="other" aria-live="polite"></p>
+    <p class="tip">真实场景：1 亿个 id、误判率 1%，大约需要 9.6 亿位（约 120 MB）和 7 个哈希函数。存成一个 Set 要好几个 GB。位数组越大、误判越少；这里只有 24 位，所以误判很容易碰到。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>缓存空值</b><span>用空字符串表示“库里也没有”</span></div>
+<pre><code>String json = redis.opsForValue().get(key);
+<span class="kw">if</span> (json != <span class="kw">null</span>) <span class="kw">return</span> json.isEmpty() ? <span class="kw">null</span> : parse(json);   <span class="cm">// "" 就是缓存的空值</span>
+Product p = productMapper.selectById(id);
+<span class="kw">if</span> (p == <span class="kw">null</span>) {
+    redis.opsForValue().set(key, <span class="an">""</span>, Duration.ofSeconds(<span class="kw">60</span>));        <span class="cm">// 空值只存 60 秒</span>
+    <span class="kw">return null</span>;
+}</code></pre>
+  </div>
+</section>
+
+<!-- ================= BREAKDOWN ================= -->
+<section id="brk">
+  <div>
+    <h2>击穿：一个热点 key 刚好过期</h2>
+    <p class="lead">爆款商品的 key 每秒被读 8,000 次。它在 20:00:00 过期，查库重建要 500 毫秒。这 500 毫秒里来的 4,000 个请求，全都发现缓存没有，全都去查库。</p>
+  </div>
+  <div class="bd">
+    <div class="bdr" data-role="bad"><b>不处理</b><div class="bdt"><span class="bds b" style="left:0;width:100%">4,000 个请求同时查库</span></div><div class="bdo"><span>查库 <b>4,000</b> 次</span><span>数据库一慢，重建更慢，堆的请求更多</span></div></div>
+    <div class="bdr" data-role="warn"><b>互斥锁</b><div class="bdt"><span class="bds d" style="left:0;width:100%">1 个线程拿到锁去查库</span></div><div class="bdo"><span>查库 <b>1</b> 次</span><span>其余 3,999 个请求<b>等</b>它建好再读缓存</span></div></div>
+    <div class="bdr" data-role="tl"><b>逻辑过期</b><div class="bdt"><span class="bds s" style="left:0;width:100%">后台 1 个线程重建，请求照样拿旧值</span></div><div class="bdo"><span>查库 <b>1</b> 次</span><span>4,000 个请求马上返回，但拿到的是<b>旧数据</b></span></div></div>
+    <div class="bdr" data-role="done"><b>热点不过期</b><div class="bdt"><span class="bds g" style="left:0;width:100%">key 一直在，定时任务每隔一会儿刷新</span></div><div class="bdo"><span>查库 <b>0</b> 次</span><span>要维护刷新任务，数据有延迟</span></div></div>
+    <div class="bdax" aria-hidden="true"><span></span><div><span>20:00:00.000 过期</span><span>+250 ms</span><span>+500 ms 重建完成</span></div></div>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>互斥锁重建</b><span>SET NX EX：只有一个人能拿到</span></div>
+<pre><code>String token = UUID.randomUUID().toString();
+Boolean ok = redis.opsForValue()
+    .setIfAbsent(<span class="an">"lock:"</span> + key, token, Duration.ofSeconds(<span class="kw">10</span>));  <span class="cm">// 锁一定要有过期时间</span>
+<span class="kw">if</span> (Boolean.TRUE.equals(ok)) {
+    <span class="kw">try</span> {
+        json = redis.opsForValue().get(key);                 <span class="cm">// 再查一次：可能别人刚建好</span>
+        <span class="kw">if</span> (json == <span class="kw">null</span>) json = rebuild(id);           <span class="cm">// 查库并写回缓存</span>
+    } <span class="kw">finally</span> {
+        unlock(<span class="an">"lock:"</span> + key, token);                      <span class="cm">// 用 Lua 比较 token 后再删，只删自己的锁</span>
+    }
+} <span class="kw">else</span> {
+    Thread.sleep(<span class="kw">50</span>);                                     <span class="cm">// 没抢到：稍等再读缓存（要限制重试次数）</span>
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>逻辑过期</b><span>Redis 上不设 TTL，过期时间写在值里</span></div>
+<pre><code><span class="cm">// 缓存里存的是 { data: …, expireAt: 1767225600 }</span>
+CacheBox box = read(key);
+<span class="kw">if</span> (box.expireAt &gt; now()) <span class="kw">return</span> box.data;             <span class="cm">// 没过期，直接用</span>
+<span class="kw">if</span> (tryLock(<span class="an">"lock:"</span> + key)) {                            <span class="cm">// 过期了：抢到锁的人去后台重建</span>
+    rebuildPool.submit(() -&gt; {
+        <span class="kw">try</span> { write(key, <span class="kw">new</span> CacheBox(load(id), now() + <span class="kw">1800</span>)); }
+        <span class="kw">finally</span> { unlock(<span class="an">"lock:"</span> + key); }
+    });
+}
+<span class="kw">return</span> box.data;                                           <span class="cm">// 不管抢没抢到，先返回旧值</span></code></pre>
+    </div>
+  </div>
+  <div class="note-box"><b>Spring 里</b><span><code>@Cacheable(cacheNames = "product", key = "#id", sync = true)</code>：同一个 JVM 里，同一个 key 只放一个线程去查库，其他线程等它。多台实例各查一次，通常也能接受。本地缓存 Caffeine 的 <code>cache.get(key, loader)</code> 也是同一个 key 只加载一次（<a href="../mybatis/mybatis-cache.html">MyBatis 第 04 篇</a>）。</span></div>
+</section>
+
+<!-- ================= AVALANCHE ================= -->
+<section id="ava">
+  <div>
+    <h2>雪崩：一大片 key 一起没了</h2>
+    <p class="lead">有两种起因。一种是大批 key 在同一时刻过期，比如凌晨预热时一起写进去、TTL 又都是 30 分钟；另一种是 Redis 本身挂了，整面盾消失。</p>
+  </div>
+  <div class="mini">
+    <b>起因一：同一个 TTL，同一时刻过期</b>
+    <div class="ttlh">
+      <div class="ttlr"><span>都是 30 分钟</span><div class="hist" id="ttlSame" role="img" aria-label="2 万个 key 全部在第 30 分钟过期"></div></div>
+      <div class="ttlr"><span>30 分钟 + 随机 0～5 分钟</span><div class="hist" id="ttlJit" role="img" aria-label="2 万个 key 分散在第 30 到 35 分钟之间过期"></div></div>
+      <div class="ttlax" aria-hidden="true"><span></span><div><span>第 29 分钟</span><span>30</span><span>31</span><span>32</span><span>33</span><span>34</span><span>35</span></div></div>
+    </div>
+    <p>每根柱子是 10 秒内过期的 key 数量（2 万个 key，示意）。上面全挤在一根柱子里，那 10 秒数据库要补查 2 万次；加了随机值，分散到 5 分钟里，每 10 秒只有六七百次。</p>
+  </div>
+  <div class="two">
+    <div class="mini">
+      <b>起因二：Redis 挂了，靠高可用顶上</b>
+      <div class="ha"><span class="n x" data-role="ch">主节点</span><span class="fa" aria-hidden="true">→</span><span class="n" data-role="tl">哨兵发现并投票</span><span class="fa" aria-hidden="true">→</span><span class="n" data-role="ch">从节点升为主</span><span class="fa" aria-hidden="true">→</span><span class="n" data-role="rq">客户端改连新主</span></div>
+      <p>主从 + 哨兵，或者 Redis Cluster：主节点挂了自动切到从节点，从节点里本来就有数据，不用重新预热。切换期间仍有十几秒左右不可用（看配置），这段要靠下面两招兜住。</p>
+    </div>
+    <div class="mini">
+      <b>兜底：多级缓存 + 限流降级</b>
+      <p><b>多级缓存</b>：应用里再放一层本地缓存（Caffeine），热点数据在本地就命中，Redis 挂了也还能挡住大部分。</p>
+      <p><b>限流降级</b>：给查库加一道闸，每秒最多放过数据库扛得住的量，多出来的请求返回兜底数据或“稍后再试”。数据库保住了，代价是一部分用户拿不到真数据。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LAB ================= -->
+<section id="lab">
+  <div>
+    <h2>数据库压力实验台</h2>
+    <p class="lead">选一个出事的场景，再打开几种防护，看 60 秒内数据库每秒要扛多少查询。数据库最多扛 2,000 QPS（虚线），超过就是红色。每种防护下面会告诉你它在这个场景里有没有用。</p>
+  </div>
+  <div class="lab">
+    <div class="lab-row" role="group" aria-label="场景"><span class="lbl">场景：</span>
+      <button class="pbtn" data-sc="pen-rep" aria-pressed="false">穿透：反复查 100 个不存在的 id</button>
+      <button class="pbtn" data-sc="pen-rand" aria-pressed="false">穿透：每次换一个随机 id</button>
+      <button class="pbtn" data-sc="hot" aria-pressed="false">击穿：爆款的 key 过期</button>
+      <button class="pbtn" data-sc="ava-exp" aria-pressed="true">雪崩：一批 key 同时过期</button>
+      <button class="pbtn" data-sc="ava-down" aria-pressed="false">雪崩：Redis 挂了</button>
+    </div>
+    <div class="defs" id="defs"></div>
+    <div class="chartbox"><svg id="labSvg" viewBox="0 0 640 230" role="img" aria-label="60 秒内数据库每秒的查询量"></svg></div>
+    <div class="tiles" id="labTiles"></div>
+    <p class="verdict" id="labVerdict" data-role="bad"></p>
+    <p class="tip">模型是示意：总流量 10,000 QPS，平时命中率 99%（数据库 100 QPS）；攻击流量 3,000 QPS；爆款 key 每秒 8,000 次读、重建 500 ms；限流把查库控制在 1,800 QPS。鼠标移到柱子上看每一秒的数值。</p>
+  </div>
+</section>
+
+<!-- ================= TABLE ================= -->
+<section id="cmp">
+  <div>
+    <h2>十种防护，各自的代价</h2>
+    <p class="lead">实际项目里通常组合使用：参数校验 + 布隆过滤器挡穿透，热点用互斥锁或逻辑过期挡击穿，TTL 加随机值 + 高可用 + 限流降级挡雪崩。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">方案</th><th scope="col">防什么</th><th scope="col">好处</th><th scope="col">代价</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">参数校验</th><td><span class="tag" data-role="bad">穿透</span></td><td><span class="pro">+</span> 最便宜</td><td><span class="con">−</span> 只能挡明显非法的请求</td></tr>
+        <tr><th scope="row">缓存空值</th><td><span class="tag" data-role="bad">穿透</span></td><td><span class="pro">+</span> 简单，重复查同一批 id 时很有效</td><td><span class="con">−</span> 随机 id 时没用，还占内存；新增数据后要删空值</td></tr>
+        <tr><th scope="row">布隆过滤器</th><td><span class="tag" data-role="bad">穿透</span></td><td><span class="pro">+</span> 内存极小，随机 id 也挡得住</td><td><span class="con">−</span> 有误判；普通布隆过滤器不能删除；要先装入全部 id，新增要同步</td></tr>
+        <tr><th scope="row">互斥锁重建</th><td><span class="tag" data-role="warn">击穿</span></td><td><span class="pro">+</span> 数据库只查一次，数据是新的</td><td><span class="con">−</span> 其他请求要等；锁要设过期，释放时要防删错</td></tr>
+        <tr><th scope="row">逻辑过期</th><td><span class="tag" data-role="warn">击穿</span></td><td><span class="pro">+</span> 没有人需要等，响应最快</td><td><span class="con">−</span> 重建期间返回旧数据；写法复杂；要提前预热</td></tr>
+        <tr><th scope="row">热点不过期 + 定时刷新</th><td><span class="tag" data-role="warn">击穿</span></td><td><span class="pro">+</span> 不过期就不会击穿</td><td><span class="con">−</span> 要维护刷新任务；数据更新有延迟</td></tr>
+        <tr><th scope="row">过期时间加随机值</th><td><span class="tag" data-role="tl">雪崩</span></td><td><span class="pro">+</span> 一行代码</td><td><span class="con">−</span> 只解决“同时过期”，Redis 挂了不管用</td></tr>
+        <tr><th scope="row">Redis 高可用</th><td><span class="tag" data-role="tl">雪崩</span></td><td><span class="pro">+</span> 主节点挂了自动切换，数据还在</td><td><span class="con">−</span> 多花机器；切换期间仍有短暂不可用</td></tr>
+        <tr><th scope="row">多级缓存</th><td><span class="tag" data-role="warn">击穿</span> <span class="tag" data-role="tl">雪崩</span></td><td><span class="pro">+</span> Redis 出问题时还有本地这一层</td><td><span class="con">−</span> 多份数据，一致性更难；占应用内存</td></tr>
+        <tr><th scope="row">限流降级</th><td><span class="tag" data-role="other">三种都能兜底</span></td><td><span class="pro">+</span> 数据库一定不会被打垮</td><td><span class="con">−</span> 一部分用户拿到兜底数据或报错</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>合在一起的读法</b><span>Spring Data Redis + MyBatis，示意</span></div>
+<pre><code><span class="kw">public</span> Product get(<span class="kw">long</span> id) {
+    <span class="kw">if</span> (id &lt;= <span class="kw">0</span>) <span class="kw">return null</span>;                                  <span class="cm">// ① 参数校验</span>
+    <span class="kw">if</span> (!bloom.mightContain(id)) <span class="kw">return null</span>;                   <span class="cm">// ② 布隆过滤器说没有，就一定没有</span>
+    String key = <span class="an">"product:"</span> + id;
+    String json = redis.opsForValue().get(key);
+    <span class="kw">if</span> (json != <span class="kw">null</span>) <span class="kw">return</span> json.isEmpty() ? <span class="kw">null</span> : parse(json);
+    <span class="kw">return</span> rebuildWithLock(id, key);                            <span class="cm">// ③ 没命中：互斥锁重建（见上）</span>
+}
+
+<span class="kw">void</span> writeCache(String key, Product p) {
+    <span class="kw">if</span> (p == <span class="kw">null</span>) { redis.opsForValue().set(key, <span class="an">""</span>, Duration.ofSeconds(<span class="kw">60</span>)); <span class="kw">return</span>; }  <span class="cm">// ④ 空值短 TTL</span>
+    <span class="kw">long</span> ttl = <span class="kw">1800</span> + ThreadLocalRandom.current().nextInt(<span class="kw">300</span>);                     <span class="cm">// ⑤ 30 分钟 + 随机 0～5 分钟</span>
+    redis.opsForValue().set(key, toJson(p), Duration.ofSeconds(ttl));
+}</code></pre>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：Boot 2 和 Boot 3</h2>
+    <p class="lead">三个问题和解法跟 Java 版本无关。变化在客户端库和 Spring 的配置写法。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>配置前缀 <code>spring.redis.*</code>，默认客户端 Lettuce</li>
+        <li>本地缓存用 Caffeine 2.x（3.x 要 JDK 11）</li>
+        <li><code>RedisCacheConfiguration.entryTtl</code> 只能给一个固定 TTL，想加随机值要自己扩展 CacheManager</li>
+        <li>布隆过滤器常用 Guava（单机）或 Redisson 的 <code>RBloomFilter</code>（放在 Redis 里，多实例共享）</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>配置前缀改成 <code>spring.data.redis.*</code>，老前缀不再生效</li>
+        <li>Caffeine 3.x</li>
+        <li>Spring Data Redis 3.2 起，<code>entryTtl</code> 可以传一个函数按条目算 TTL，加随机值方便了</li>
+        <li>Redis 8 起布隆过滤器（<code>BF.ADD</code> / <code>BF.EXISTS</code>）直接内置，之前要装 RedisBloom 模块</li>
+        <li>JDK 21 虚拟线程下，互斥锁等待的线程不再占平台线程，但数据库照样只能扛那么多</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>Cache-Aside 读写流程</span><span>穿透靠过滤</span><span>击穿靠只让一个人重建</span><span>雪崩靠打散和兜底</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">很多坑出在解法本身：防护加上了，却引入了新问题。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-filter"/></svg><b>新上架的商品，一直显示“不存在”</b><p>布隆过滤器只在启动时装了一次 id，新增数据没加进去，它就一定说“没有”。新增时同步写入过滤器，并定期全量重建。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-filter"/></svg><b>商品删了，布隆过滤器还说“可能有”</b><p>普通布隆过滤器删不掉，只会误判多一点，请求会走到缓存和数据库那一步，不算错。删得多了就定期重建，或者换支持删除的布谷鸟过滤器（Cuckoo Filter）。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-hourglass"/></svg><b>先查不到，后来新增了，还是查不到</b><p>空值缓存的 TTL 设得太长。空值 TTL 要短（几十秒），新增数据时顺手删掉对应的 key。Spring 的 RedisCache 默认也会缓存 null，而且用的是和正常数据一样长的 TTL。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>拿锁的线程挂了，锁再也没人释放</b><p>用 <code>SETNX</code> 加锁后再单独 <code>EXPIRE</code>，中间一挂就成了死锁。要用一条命令 <code>SET key token NX EX 10</code>。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>把别人的锁删了</b><p>自己的锁已经过期、被别人拿到了，自己执行完又 <code>DEL</code> 掉。释放前要比较 token，用 Lua 脚本保证“比较 + 删除”一起完成；或者直接用 Redisson 的锁。</p></div>
+    <div class="pit" data-role="warn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>加了锁，数据库还是被查了好多次</b><p>拿到锁后没有再查一次缓存。前一个线程刚建好缓存、放了锁，后一个线程拿到锁又去查库。拿锁后先再读一次缓存。</p></div>
+    <div class="pit" data-role="tl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-hourglass"/></svg><b>每天同一时间数据库被打一次</b><p>定时任务在同一时刻预热所有 key，TTL 又一样，于是每天同一时间一起过期。TTL 加随机值，或者分批预热。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-shield"/></svg><b>Redis 一卡，整个接口卡 60 秒</b><p>没配超时，Lettuce 默认命令超时是 60 秒。配 <code>spring.data.redis.timeout</code>（Boot 2 是 <code>spring.redis.timeout</code>），Redis 出错时降级去查库，并配合限流。</p></div>
+    <div class="pit" data-role="tl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bolt"/></svg><b>用了逻辑过期，第一次请求还是打到了库</b><p>逻辑过期的 key 在 Redis 上永不过期，前提是它一开始就在。热点数据要在上线或活动前提前写进去。</p></div>
+    <div class="pit" data-role="other"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>缓存里的数据和库里不一样</b><p>先删缓存再改库：删完、改完之间有人读，把旧值又写回了缓存。改成先改库再删缓存；要求更高时延迟一会儿再删一次，或者订阅 binlog 删缓存。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7、Spring Boot 2 / 3 为例，数字均为示意。相关：<a href="../mybatis/mybatis-cache.html">MyBatis 缓存与 Caffeine</a> · <a href="../perf/load-testing.html">系统压测</a> · <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var BF_M=24, BF_K=3, BF_IDS=['1001','1002','1003','1004','1005'];
+function fnv(s){ var h=2166136261; for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619)>>>0; } return h>>>0; }
+function djb(s){ var h=5381; for(var i=0;i<s.length;i++){ h=(Math.imul(h,33)+s.charCodeAt(i))>>>0; } return h>>>0; }
+function bfPos(s){ var a=fnv(s), b=djb(s)|1, out=[]; for(var i=0;i<BF_K;i++) out.push(((a+Math.imul(i,b))>>>0)%BF_M); return out; }
+function bfBits(){ var bits=[]; for(var i=0;i<BF_M;i++) bits.push(0); BF_IDS.forEach(function(s){ bfPos(s).forEach(function(p){ bits[p]=1; }); }); return bits; }
+function bfQuery(s){
+  var bits=bfBits(), pos=bfPos(s), all=pos.every(function(p){ return bits[p]===1; });
+  var real=BF_IDS.indexOf(s)>=0;
+  return {pos:pos, maybe:all, real:real, kind: !all ? 'no' : (real ? 'yes' : 'fp')};
+}
+
+var T=10000, BASE=100, CAP=2000, LIMIT=1800;
+function simCache(sc,d){
+  var load=[], cost={stale:0,wait:0,degraded:0,junk:0,fp:0};
+  var avaProf={30:9900,31:5900,32:2900,33:900};
+  for(var t=0;t<60;t++){
+    var L=BASE;
+    if(sc==='pen-rep'||sc==='pen-rand'){
+      if(t>=10 && t<40){
+        if(d.bloom){ L+=30; cost.fp+=30; }
+        else if(d.nullc && sc==='pen-rep'){ if(t===10) L+=100; }
+        else { L+=3000; if(d.nullc) cost.junk+=3000; }
+      }
+    }
+    if(sc==='hot' && (t===20||t===21)){
+      if(d.logic){ if(t===20){ L+=1; cost.stale+=4000; } }
+      else if(d.local){ if(t===20) L+=8; }
+      else if(d.mutex){ if(t===20){ L+=1; cost.wait+=3999; } }
+      else { L+= t===20 ? 4000 : 2000; }
+    }
+    if(sc==='ava-exp'){
+      var ex = d.jitter ? (t>=30 ? 400 : 0) : (avaProf[t]||0);
+      if(d.local) ex=Math.round(ex*0.15);
+      L+=ex;
+    }
+    if(sc==='ava-down'){
+      var end=d.ha?42:60;
+      if(t>=30 && t<end) L = d.local ? 1500 : T;
+    }
+    if(d.limit && L>LIMIT){ cost.degraded+=L-LIMIT; L=LIMIT; }
+    load.push(L);
+  }
+  var peak=Math.max.apply(null,load), over=load.filter(function(v){return v>CAP;}).length;
+  return {load:load, cost:cost, peak:peak, over:over};
+}
+function effectOf(sc,k,d,res){
+  if(k==='limit') return res.cost.degraded>0 ? ['y','有用：挡下 '+res.cost.degraded.toLocaleString('en-US')+' 次查库，这些请求拿到兜底数据'] : ['p','没触发：数据库本来就没超过限流线'];
+  var pen=(sc==='pen-rep'||sc==='pen-rand'), ava=(sc==='ava-exp'||sc==='ava-down');
+  if(k==='bloom') return pen ? ['y','有用：不存在的 id 直接挡掉，误判的 1% 会漏过去'] : ['n','用不上：查的数据都是存在的'];
+  if(k==='nullc'){
+    if(!pen) return ['n','用不上：查的数据都是存在的'];
+    if(d.bloom) return ['p','被布隆过滤器挡在前面，这里基本用不到'];
+    return sc==='pen-rep' ? ['y','有用：这 100 个 id 查一次就缓存住了'] : ['n','没用：每次 id 都不一样，空值命中不了，还白存了一堆垃圾 key'];
+  }
+  if(k==='mutex'||k==='logic'){
+    if(sc==='hot') return ['y', k==='mutex' ? '有用：只有一个线程查库，其他人等' : '有用：一个线程后台重建，大家先拿旧值'];
+    if(sc==='ava-exp') return ['p','帮助有限：过期的是成千上万个不同的 key，每个还得查一次'];
+    if(sc==='ava-down') return ['n','用不上：Redis 都连不上了'];
+    return ['n','用不上：数据根本不存在，没得重建'];
+  }
+  if(k==='jitter') return sc==='ava-exp' ? ['y','有用：过期时间被打散到 5 分钟里'] : (sc==='hot' ? ['n','用不上：只有一个 key，打散不了'] : ['n','用不上：不是同时过期的问题']);
+  if(k==='local'){
+    if(sc==='hot') return ['y','有用：每台实例各查一次库就行'];
+    if(ava) return ['y','有用：热点数据在本地命中，挡掉约 85%'];
+    return ['n','用不上：不存在的数据，本地也没有'];
+  }
+  if(k==='ha') return sc==='ava-down' ? ['y','有用：12 秒后切到从节点，数据还在'] : ['n','用不上：Redis 没挂'];
+  return ['n',''];
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function fmt(v){ return Math.round(v).toLocaleString('en-US'); }
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- hero pictures ---------- */
+  function dots(rows,cols,x0,y0,dx,dy,cls,skip){ var h=''; for(var r=0;r<rows;r++) for(var c=0;c<cols;c++){ var k=cls(r,c); if(k) h+='<circle class="'+k+'" cx="'+(x0+c*dx)+'" cy="'+(y0+r*dy)+'" r="5"/>'; } return h; }
+  function dbShape(x,y,over){ return '<path class="hd-db" d="M'+(x-34)+' '+y+'v30c0 5 15 9 34 9s34-4 34-9v-30z"/><ellipse class="hd-db" cx="'+x+'" cy="'+y+'" rx="34" ry="9"/><ellipse class="hd-dbt" cx="'+x+'" cy="'+y+'" rx="34" ry="9" opacity=".45"/>'+(over?'<path class="hd-dbo" d="M'+(x-40)+' '+(y-4)+'v38c0 7 18 12 40 12s40-5 40-12v-38"/>':''); }
+  var H={};
+  H.pen = dots(3,9,30,16,20,16,function(r,c){ return c===4?'hd-bad':'hd-rq'; })
+    + '<rect class="hd-sh" x="12" y="78" width="88" height="16" rx="4"/><rect class="hd-sh" x="120" y="78" width="88" height="16" rx="4"/>'
+    + '<text class="hd-lw" x="56" y="90" text-anchor="middle">缓存</text><text class="hd-lw" x="164" y="90" text-anchor="middle">缓存</text>'
+    + '<rect class="hd-gap" x="101" y="76" width="18" height="20" rx="3"/>'
+    + '<circle class="hd-bad" cx="110" cy="108" r="5"/><circle class="hd-bad" cx="110" cy="124" r="5"/>'
+    + '<text class="hd-lb" x="124" y="118">id = -1</text>'
+    + dbShape(110,148,false) + '<text class="hd-lw" x="110" y="172" text-anchor="middle">也没有</text>';
+  H.brk = dots(3,9,30,16,20,16,function(r,c){ return (c>=3&&c<=5)?'hd-bad':'hd-rq'; })
+    + '<rect class="hd-sh" x="12" y="78" width="78" height="16" rx="4"/><rect class="hd-sh" x="130" y="78" width="78" height="16" rx="4"/>'
+    + '<rect class="hd-gap" x="92" y="76" width="36" height="20" rx="3"/>'
+    + '<g transform="translate(98 52) scale(.4)"><use href="#i-hourglass" width="64" height="64" style="color:var(--tl)"/></g>'
+    + dots(3,3,98,106,12,11,function(){ return 'hd-bad'; })
+    + '<text class="hd-lb" x="90" y="120" text-anchor="end">热点 key 过期</text>'
+    + dbShape(110,148,true);
+  H.ava = dots(3,9,30,16,20,16,function(r,c){ return 'hd-bad'; })
+    + '<rect class="hd-shf" x="10" y="100" width="44" height="12" rx="3" transform="rotate(-18 32 106)"/><rect class="hd-shf" x="166" y="100" width="44" height="12" rx="3" transform="rotate(16 188 106)"/>'
+    + '<rect class="hd-shf" x="150" y="128" width="30" height="10" rx="3" transform="rotate(-30 165 133)"/><rect class="hd-shf" x="34" y="128" width="30" height="10" rx="3" transform="rotate(28 49 133)"/>'
+    + dots(2,7,50,84,20,18,function(){ return 'hd-bad'; })
+    + dbShape(110,148,true) + '<text class="hd-lw" x="110" y="172" text-anchor="middle">打满</text>';
+  $('hPen').innerHTML=H.pen; $('hBrk').innerHTML=H.brk; $('hAva').innerHTML=H.ava;
+
+  /* ---------- hit-rate bars ---------- */
+  var HR=[[99,100],[95,500],[90,1000],[50,5000],[0,10000]];
+  $('hrBars').innerHTML=HR.map(function(h){
+    var v=h[1], w=v/10000*100, over=v>CAP, inside=w>55;
+    return '<div class="hrb" data-role="'+(over?'bad':'ch')+'" title="命中率 '+h[0]+'%：数据库 '+fmt(v)+' QPS"><span>命中率 '+h[0]+'%</span><div class="trk"><div class="fill" style="width:'+w+'%"></div><span class="val" style="'+(inside?'right:'+(100-w)+'%;color:var(--on-accent)':'left:'+w+'%')+'">'+fmt(v)+' QPS</span><span class="cap" style="left:'+(CAP/10000*100)+'%"></span></div></div>';
+  }).join('');
+
+  /* ---------- bloom ---------- */
+  var bits=bfBits();
+  $('bfIns').innerHTML='已放入：'+BF_IDS.map(function(s){ return '<span>'+s+' → '+bfPos(s).join(', ')+'</span>'; }).join('');
+  function renderBits(q){
+    $('bfBits').innerHTML=bits.map(function(b,i){
+      var hit=q && q.pos.indexOf(i)>=0;
+      return '<div class="bit'+(b?' one':'')+(hit?' hit':'')+(hit&&!b?' zero':'')+'"><b>'+b+'</b><small>'+i+'</small></div>';
+    }).join('');
+  }
+  function runBf(s){
+    s=String(s).trim().slice(0,12);
+    if(!s){ return; }
+    var q=bfQuery(s), r=$('bfRes');
+    renderBits(q);
+    document.querySelectorAll('[data-bf]').forEach(function(b){ b.setAttribute('aria-pressed',String(b.getAttribute('data-bf')===s)); });
+    var where='位置 '+q.pos.join('、')+' 上是 '+q.pos.map(function(p){return bits[p];}).join('、');
+    if(q.kind==='no'){ r.setAttribute('data-role','done'); r.innerHTML='<code>'+esc(s)+'</code>：'+where+'。有 0，<b>一定不存在</b>，直接返回，不碰 Redis 也不碰数据库。'; }
+    else if(q.kind==='yes'){ r.setAttribute('data-role','ch'); r.innerHTML='<code>'+esc(s)+'</code>：'+where+'。全是 1，<b>可能存在</b>，放行去查缓存和数据库。它确实存在。'; }
+    else { r.setAttribute('data-role','bad'); r.innerHTML='<code>'+esc(s)+'</code>：'+where+'。全是 1，判断为<b>可能存在</b>，但它其实没放进去过。这就是<b>误判</b>：这次请求会漏到数据库。误判只会是“没有说成有”，不会把有的说成没有。'; }
+  }
+  document.querySelectorAll('[data-bf]').forEach(function(b){ b.addEventListener('click',function(){ $('bfIn').value=''; runBf(b.getAttribute('data-bf')); }); });
+  $('bfGo').addEventListener('click',function(){ runBf($('bfIn').value); });
+  $('bfIn').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); runBf($('bfIn').value); } });
+  runBf('2024');
+
+  /* ---------- TTL histograms ---------- */
+  function hist(id,counts){ var mx=Math.max.apply(null,counts); $(id).innerHTML=counts.map(function(c,i){ return '<i style="height:'+(c/mx*100)+'%" title="第 '+(29+i/6).toFixed(1)+' 分钟附近：'+fmt(c)+' 个 key 过期"></i>'; }).join(''); }
+  var same=[], jit=[], buckets=36; // 29:00–35:00 in 10 s buckets
+  for(var i=0;i<buckets;i++){ same.push(i===6?20000:0); jit.push(i>=6 && i<36 ? 20000/30 : 0); }
+  hist('ttlSame',same);
+  // jitter bars scaled against the same max so the two rows share one scale
+  (function(){ $('ttlJit').innerHTML=jit.map(function(c,i){ return '<i style="height:'+(c/20000*100)+'%" title="'+fmt(c)+' 个 key 过期"></i>'; }).join(''); })();
+
+  /* ---------- lab ---------- */
+  var DEFS=[['nullc','缓存空值'],['bloom','布隆过滤器'],['mutex','互斥锁重建'],['logic','逻辑过期'],['jitter','过期时间加随机值'],['local','本地缓存（多级）'],['ha','Redis 高可用'],['limit','限流降级']];
+  var sc='ava-exp', d={};
+  var EVENTS={
+    'pen-rep':[[10,'攻击开始'],[40,'攻击结束']], 'pen-rand':[[10,'攻击开始'],[40,'攻击结束']],
+    'hot':[[20,'爆款 key 过期']], 'ava-exp':[[30,'一批 key 同时过期']], 'ava-down':[[30,'Redis 挂了']]
+  };
+  function niceMax(v){ var p=Math.pow(10,Math.floor(Math.log10(v))), m=v/p; return (m<=1?1:m<=2?2:m<=2.5?2.5:m<=5?5:10)*p; }
+  function drawLab(res){
+    var svg=$('labSvg'), W=640, L=54, R=14, Tp=26, Hh=164, B=Tp+Hh;
+    var ymax=niceMax(Math.max(res.peak,CAP)*1.1), bw=(W-L-R)/60;
+    function Y(v){ return B-v/ymax*Hh; }
+    var h='';
+    [0,0.5,1].forEach(function(f){ var v=ymax*f, y=Y(v);
+      h+='<line class="'+(f===0?'c-base':'c-gl')+'" x1="'+L+'" y1="'+y.toFixed(1)+'" x2="'+(W-R)+'" y2="'+y.toFixed(1)+'"/><text class="c-ax" x="'+(L-6)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="end">'+fmt(v)+'</text>'; });
+    h+='<text class="c-t" x="'+L+'" y="13">数据库每秒查询量（QPS）</text>';
+    var evs=(EVENTS[sc]||[]).slice(); if(sc==='ava-down' && d.ha) evs.push([42,'切到从节点']);
+    evs.forEach(function(e,i){ var x=L+e[0]*bw; h+='<line class="c-ev" x1="'+x.toFixed(1)+'" y1="'+(Tp-4)+'" x2="'+x.toFixed(1)+'" y2="'+B+'"/><text class="c-evl" x="'+(x+3).toFixed(1)+'" y="'+(Tp+8+i*12)+'">'+e[1]+'</text>'; });
+    res.load.forEach(function(v,i){ var x=L+i*bw+1, y=Y(v), hh=Math.max(1,B-y);
+      h+='<rect class="'+(v>CAP?'c-over':'c-ok')+'" x="'+x.toFixed(1)+'" y="'+(B-hh).toFixed(1)+'" width="'+(bw-2).toFixed(1)+'" height="'+hh.toFixed(1)+'" rx="1.5"/>'; });
+    var cy=Y(CAP); h+='<line class="c-cap" x1="'+L+'" y1="'+cy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+cy.toFixed(1)+'"/><text class="c-capl" x="'+(W-R)+'" y="'+(cy-5).toFixed(1)+'" text-anchor="end">数据库容量 2,000</text>';
+    [0,10,20,30,40,50,60].forEach(function(s){ h+='<text class="c-ax" x="'+(L+s*bw).toFixed(1)+'" y="'+(B+15)+'" text-anchor="middle">'+s+' s</text>'; });
+    h+='<g class="c-hov" visibility="hidden"><rect class="c-hl" y="'+Tp+'" height="'+Hh+'"/><g class="c-tip"><rect class="c-tipb" width="128" height="38" rx="6"/><text class="c-tipt" x="9" y="16"></text><text class="c-tipt" x="9" y="31"></text></g></g>';
+    h+='<rect class="c-hit" x="'+L+'" y="'+Tp+'" width="'+(W-L-R)+'" height="'+Hh+'"/>';
+    svg.innerHTML=h;
+    var g=svg.querySelector('.c-hov'), hl=g.querySelector('.c-hl'), tip=g.querySelector('.c-tip'), tt=tip.querySelectorAll('text');
+    function show(evt){
+      var pt=svg.createSVGPoint(); pt.x=evt.clientX; pt.y=evt.clientY; var m=svg.getScreenCTM(); if(!m) return;
+      var loc=pt.matrixTransform(m.inverse()), i=Math.max(0,Math.min(59,Math.floor((loc.x-L)/bw))), v=res.load[i], x=L+i*bw;
+      hl.setAttribute('x',x.toFixed(1)); hl.setAttribute('width',bw.toFixed(1));
+      tt[0].textContent='第 '+i+' 秒'; tt[1].textContent='查库 '+fmt(v)+' 次'+(v>CAP?'（超了）':'');
+      var tx = x+bw+6+128>W-R ? x-6-128 : x+bw+6;
+      tip.setAttribute('transform','translate('+tx.toFixed(1)+','+(Tp+30)+')');
+      g.setAttribute('visibility','visible');
+    }
+    var hit=svg.querySelector('.c-hit');
+    hit.addEventListener('pointermove',show); hit.addEventListener('pointerdown',show);
+    hit.addEventListener('pointerleave',function(){ g.setAttribute('visibility','hidden'); });
+  }
+  function renderLab(){
+    var res=simCache(sc,d);
+    $('defs').innerHTML=DEFS.map(function(x){
+      var on=!!d[x[0]], e=on?effectOf(sc,x[0],d,res):null;
+      return '<button class="def" data-def="'+x[0]+'" aria-pressed="'+on+'"><b>'+x[1]+'</b>'+(e?'<span class="eff '+e[0]+'">'+esc(e[1])+'</span>':'<span>点一下打开</span>')+'</button>';
+    }).join('');
+    document.querySelectorAll('[data-def]').forEach(function(b){ b.addEventListener('click',function(){ var k=b.getAttribute('data-def'); d[k]=!d[k]; renderLab(); var nb=document.querySelector('[data-def="'+k+'"]'); if(nb) nb.focus(); }); });
+    drawLab(res);
+    var c=res.cost, costs=[];
+    if(c.stale) costs.push('返回旧数据 '+fmt(c.stale)+' 次');
+    if(c.wait) costs.push(fmt(c.wait)+' 个请求要等最多 0.5 秒');
+    if(c.degraded) costs.push(fmt(c.degraded)+' 次请求被降级');
+    if(c.junk) costs.push('存了 '+fmt(c.junk)+' 个没用的空值');
+    if(c.fp) costs.push('误判放过 '+fmt(c.fp)+' 次');
+    $('labTiles').innerHTML=
+      '<div class="tile" data-role="'+(res.peak>CAP?'bad':'ch')+'"><small>数据库最高每秒查询</small><b>'+fmt(res.peak)+'</b><span>容量 2,000</span></div>'+
+      '<div class="tile" data-role="'+(res.over?'bad':'done')+'"><small>超过容量的秒数</small><b>'+res.over+' 秒</b><span>'+(res.over?'这段时间整站变慢甚至报错':'一直在容量以内')+'</span></div>'+
+      '<div class="tile" data-role="'+(costs.length?'warn':'other')+'"><small>付出的代价</small><span>'+(costs.length?costs.map(esc).join('<br>'):'没有')+'</span></div>';
+    var v=$('labVerdict');
+    if(res.over){ v.setAttribute('data-role','bad'); v.textContent='数据库被打满了 '+res.over+' 秒，最高每秒 '+fmt(res.peak)+' 次查询，是容量的 '+(res.peak/CAP).toFixed(1)+' 倍。试试打开对这个场景有用的防护。'; }
+    else { v.setAttribute('data-role','done'); v.textContent='数据库扛住了，最高每秒 '+fmt(res.peak)+' 次查询。'+(costs.length?'代价：'+costs.join('；')+'。':''); }
+  }
+  document.querySelectorAll('[data-sc]').forEach(function(b){ b.addEventListener('click',function(){
+    sc=b.getAttribute('data-sc');
+    document.querySelectorAll('[data-sc]').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); });
+    renderLab();
+  }); });
+  renderLab();
+})();
+</script>
+
+</body>
+</html>
