@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>布隆过滤器与 HyperLogLog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Two probabilistic tools: the Bloom filter (teal bit array, a doorman who is never wrong about "no") and HyperLogLog (purple registers, counting heads from coin-flip streaks). Hashes amber, false positives red, exact answers green. Interactives: Bloom false-positive lab and HLL estimator. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --bf:#0D7A69; --bf-tint:#DCF0EB;
+  --hl:#6A3FC0; --hl-tint:#ECE5FA;
+  --hs:#9A6B00; --hs-tint:#FBF0CF;
+  --st:#3150C4; --st-tint:#E2E7FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --bf:#40C6B0; --bf-tint:#12352F;
+    --hl:#B9A0FF; --hl-tint:#2A2148;
+    --hs:#F2C94C; --hs-tint:#3A3212;
+    --st:#90A4FF; --st-tint:#1D2650;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --bf:#40C6B0; --bf-tint:#12352F;
+  --hl:#B9A0FF; --hl-tint:#2A2148;
+  --hs:#F2C94C; --hs-tint:#3A3212;
+  --st:#90A4FF; --st-tint:#1D2650;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--st)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button,input{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--st);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="bf"]{--rc:var(--bf);--rt:var(--bf-tint)}
+[data-role="hl"]{--rc:var(--hl);--rt:var(--hl-tint)}
+[data-role="hs"]{--rc:var(--hs);--rt:var(--hs-tint)}
+[data-role="st"]{--rc:var(--st);--rt:var(--st-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.duo{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h3{color:var(--rc);font-size:26px}
+.way h3 small{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);margin-left:8px}
+.way p{font-size:14.5px}
+.answers{display:flex;flex-wrap:wrap;gap:6px}
+.answers span{font-size:12.5px;padding:3px 10px;border-radius:999px;border:1.5px solid var(--rc);background:var(--rt);color:var(--ink)}
+.mini-bits{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px}
+.mini-bits i{aspect-ratio:1;border-radius:2px;background:var(--neutral-tint);border:1px solid var(--line-strong)}
+.mini-bits i.on{background:var(--bf);border-color:var(--bf)}
+.coins{display:flex;gap:3px;align-items:center;flex-wrap:wrap;font-family:var(--font-mono);font-size:12px}
+.coins i{font-style:normal;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-weight:700;border:1.5px solid var(--hl);background:var(--card)}
+.coins i.t{background:var(--hl);color:var(--on-accent)}
+.mem{display:flex;flex-direction:column;gap:6px}
+.mr{display:grid;grid-template-columns:9em minmax(0,1fr) 6em;gap:10px;align-items:center;font-size:13px}
+.mr > span:first-child{color:var(--muted)}
+.mr .trk{height:20px;border-radius:0 5px 5px 0;background:var(--neutral-tint);position:relative}
+.mr .fill{position:absolute;left:0;top:0;bottom:0;border-radius:0 5px 5px 0;background:var(--rc)}
+.mr b{font-family:var(--font-mono);font-size:12.5px}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .kw{color:var(--hl)} .an{color:var(--bf)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--hs-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mini > b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--hs);font-weight:700}
+.t td.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:5px 12px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums}
+.tile span{font-size:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.row .lbl{font-size:13px;color:var(--muted);min-width:5.5em}
+
+/* ---------- bloom how ---------- */
+.steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.st{border:2px solid var(--rc);border-radius:16px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.st h3{font-size:20px;color:var(--rc)}
+.hrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px}
+.hrow code{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--hs-tint);border:1px solid var(--hs)}
+.bits16{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:2px}
+.bits16 span{border:1.5px solid var(--line-strong);border-radius:4px;text-align:center;font-family:var(--font-mono);font-size:11px;padding:2px 0;background:var(--card)}
+.bits16 span.on{background:var(--bf);border-color:var(--bf);color:var(--on-accent)}
+.bits16 span.chk{outline:2.5px solid var(--hs);outline-offset:0}
+.bits16 span.zero{background:var(--bad-tint);border-color:var(--bad)}
+.qlbl{font-size:12.5px;color:var(--muted)}
+#bfTiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+.formula{font-family:var(--font-mono);font-size:14px;padding:8px 12px;border-radius:10px;background:var(--code-bg);border:1.5px solid var(--line);overflow-x:auto;white-space:nowrap}
+
+/* ---------- bloom lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.labg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.bitgrid{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:2px}
+.bitgrid i{aspect-ratio:1;border-radius:2px;background:var(--neutral-tint);border:1px solid var(--line)}
+.bitgrid i.on{background:var(--bf);border-color:var(--bf)}
+.slider{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.slider input[type=range]{width:min(320px,100%);accent-color:var(--bf)}
+.slider output{font-family:var(--font-mono);font-weight:700}
+.chartbox{border:1.5px solid var(--line);border-radius:12px;padding:8px;background:var(--card)}
+.chartbox svg{display:block;width:100%;height:auto}
+.c-ax{font-family:var(--font-mono);font-size:10px;fill:var(--muted)}
+.c-t{font-size:11.5px;fill:var(--muted);font-weight:500}
+.c-gl{stroke:var(--line);stroke-width:1}
+.c-base{stroke:var(--line-strong);stroke-width:1}
+.c-line{fill:none;stroke:var(--bad);stroke-width:2}
+.c-area{fill:var(--bad-tint)}
+.c-pt{fill:var(--bad);stroke:var(--card);stroke-width:2}
+.c-lbl{font-size:11px;font-weight:700;fill:var(--ink)}
+.c-reg{fill:var(--hl)}
+
+/* ---------- hll ---------- */
+.hbits{display:flex;flex-wrap:wrap;gap:2px;font-family:var(--font-mono);font-size:12px}
+.hbits span{padding:3px 0;width:18px;text-align:center;border-radius:3px}
+.hbits .ix{background:var(--hl);color:var(--on-accent)}
+.hbits .z{background:var(--hs-tint);border:1px solid var(--hs)}
+.hbits .one{background:var(--good);color:var(--on-accent)}
+.hbits .rest{background:var(--neutral-tint);color:var(--muted)}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:14px;height:12px;border-radius:3px}
+.why3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+
+/* ---------- versions ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .duo,.two,.steps,.labg,.eras,.why3{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .mr{grid-template-columns:6.5em minmax(0,1fr) 5em}
+  .mini-bits{grid-template-columns:repeat(16,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .tiles{grid-template-columns:1fr}
+  .bits16 span{font-size:9px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-bits" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="20" width="56" height="24" rx="4"/>
+    <rect class="k-paper" x="9" y="25" width="8" height="14" rx="2"/>
+    <rect class="k-gold" x="20" y="25" width="8" height="14" rx="2"/>
+    <rect class="k-paper" x="31" y="25" width="8" height="14" rx="2"/>
+    <rect class="k-gold" x="42" y="25" width="8" height="14" rx="2"/>
+    <rect class="k-paper" x="53" y="25" width="4" height="14" rx="1"/>
+  </symbol>
+  <symbol id="i-hash" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="26"/>
+    <path class="ks-paper" stroke-width="4" stroke-linecap="round" d="M24 18l-4 28M40 18l-4 28M16 26h32M14 38h32"/>
+  </symbol>
+  <symbol id="i-coin" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="32" r="26"/>
+    <circle class="ks-paper" stroke-width="3" cx="32" cy="32" r="19"/>
+    <path class="k-gold" d="M26 22h12v4h-8v4h7v4h-7v8h-4z"/>
+  </symbol>
+  <symbol id="i-buckets" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="4" y="36" width="10" height="22" rx="2"/>
+    <rect fill="currentColor" x="18" y="20" width="10" height="38" rx="2"/>
+    <rect fill="currentColor" x="32" y="30" width="10" height="28" rx="2"/>
+    <rect fill="currentColor" x="46" y="12" width="10" height="46" rx="2"/>
+    <rect class="k-gold" x="46" y="6" width="10" height="5" rx="1.5"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M32 4l29 52H3z"/>
+    <rect class="k-paper" x="29" y="22" width="6" height="18" rx="2"/>
+    <circle class="k-paper" cx="32" cy="47" r="3.5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Redis</span><span aria-hidden="true">/</span><span class="tb-here">布隆过滤器与 HyperLogLog</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">BLOOM FILTER · BF.ADD · BF.EXISTS · HYPERLOGLOG · PFADD · PFCOUNT · PFMERGE</p>
+  <h1>容忍一点点误差，换回几百上千倍的内存</h1>
+  <p class="lead">有些问题不需要绝对精确。“这个用户 ID 存不存在”允许偶尔答错一次“存在”；“今天有多少不同的人来过”差 1% 也没关系。布隆过滤器和 HyperLogLog 就是用这点误差，把几个 GB 的数据压成几 MB 甚至 12 KB。</p>
+
+  <div class="duo">
+    <div class="way" data-role="bf">
+      <h3>布隆过滤器<small>Bloom Filter</small></h3>
+      <div class="mini-bits" aria-hidden="true"><i></i><i class="on"></i><i></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i></i><i class="on"></i><i></i><i></i><i class="on"></i><i></i><i></i><i class="on"></i><i></i><i></i></div>
+      <p>像门口的保安：说“没来过”就一定没来过；说“来过”，有小概率认错人。</p>
+      <div class="answers"><span>回答：在不在？</span><span>不能删</span><span>不能列出成员</span></div>
+    </div>
+    <div class="way" data-role="hl">
+      <h3>HyperLogLog<small>PFADD / PFCOUNT</small></h3>
+      <div class="coins" aria-hidden="true"><i>正</i>…<i class="t">反</i><i class="t">反</i><i class="t">反</i><i class="t">反</i><i class="t">反</i><i>正</i><span>　最长连着 5 个反面 → 大概抛了 2<sup>5</sup> 次</span></div>
+      <p>像数人头：不记谁来过，只记一个“最稀罕的现象”有多稀罕，由此估出大概多少人。</p>
+      <div class="answers"><span>回答：有多少个不同的？</span><span>误差约 0.81%</span><span>固定 12 KB</span></div>
+    </div>
+  </div>
+  <div class="mini">
+    <b>同样是 1 亿个用户 ID，存法不同，内存差多少（对数刻度）</b>
+    <div class="mem">
+      <div class="mr" data-role="st"><span>Set（精确）</span><div class="trk"><div class="fill" style="width:96.8%"></div></div><b>约 6 GB</b></div>
+      <div class="mr" data-role="bf"><span>布隆过滤器 1%</span><div class="trk"><div class="fill" style="width:72.6%"></div></div><b>约 120 MB</b></div>
+      <div class="mr" data-role="other"><span>Bitmap（ID 是连续整数时）</span><div class="trk"><div class="fill" style="width:58.5%"></div></div><b>12.5 MB</b></div>
+      <div class="mr" data-role="hl"><span>HyperLogLog</span><div class="trk"><div class="fill" style="width:15.6%"></div></div><b>12 KB</b></div>
+    </div>
+    <p>刻度是对数的：左端 1 KB，右端 10 GB，每往右七分之一就大 10 倍。Set 的大小是粗略估算；Bitmap 只在 ID 是从 0 开始的连续整数时这么省，ID 是字符串就用不了。</p>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="bf">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bits"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">位数组<code>m 个 bit</code></div>
+        <p>布隆过滤器的全部家当，<b>一开始全是 0</b>。</p>
+        <span class="belong">越大，误判越少</span>
+      </div>
+    </div>
+    <div class="who" data-role="hs">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-hash"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">哈希函数<code>k 个</code></div>
+        <p>把一个元素<b>映射到 k 个位置</b>，同一个元素每次结果都一样。</p>
+        <span class="belong">太少太多都不好</span>
+      </div>
+    </div>
+    <div class="who" data-role="hl">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-coin"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">抛硬币<code>前导 0 的个数</code></div>
+        <p>哈希值像抛硬币，<b>连续的 0 越长越罕见</b>，罕见说明人多。</p>
+        <span class="belong">HyperLogLog 的核心</span>
+      </div>
+    </div>
+    <div class="who" data-role="st">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-buckets"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">分桶<code>16384 个寄存器</code></div>
+        <p>只看一次运气偏差太大，<b>分成很多桶再取平均</b>。</p>
+        <span class="belong">每桶 6 bit，共 12 KB</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= BLOOM HOW ================= -->
+<section id="bloom">
+  <div>
+    <h2>布隆过滤器：写进去、查一查</h2>
+    <p class="lead">一个 m 位的位数组，加上 k 个哈希函数。下面用 16 位、3 个哈希函数举例（<a href="cache-problems.html">Redis 第 01 篇</a>里它用来挡缓存穿透）。</p>
+  </div>
+  <div class="steps">
+    <div class="st" data-role="bf">
+      <h3>写入 user:1 和 user:2</h3>
+      <div class="hrow"><code>user:1</code>→ 3 个哈希 → 位置 <b>2、7、11</b></div>
+      <div class="hrow"><code>user:2</code>→ 3 个哈希 → 位置 <b>5、7、14</b></div>
+      <div class="bits16" aria-label="写入后第 2、5、7、11、14 位是 1"><span>0</span><span>0</span><span class="on">1</span><span>0</span><span>0</span><span class="on">1</span><span>0</span><span class="on">1</span><span>0</span><span>0</span><span>0</span><span class="on">1</span><span>0</span><span>0</span><span class="on">1</span><span>0</span></div>
+      <p class="tip">把这几个位置设成 1。第 7 位被两个元素共用了，这就是为什么不能删除：把 user:1 的位清掉，user:2 也会“消失”。</p>
+    </div>
+    <div class="st" data-role="hs">
+      <h3>查询 user:3 和 user:9</h3>
+      <div class="hrow"><code>user:3</code>→ 位置 2、<b>9</b>、14 → 第 9 位是 0 → <b style="color:var(--good)">一定不存在</b></div>
+      <div class="hrow"><code>user:9</code>→ 位置 5、11、14 → 全是 1 → <b style="color:var(--bad)">说“可能存在”，其实是误判</b></div>
+      <div class="qlbl">查 user:3（框出的是它的 3 个位置）</div>
+      <div class="bits16" aria-label="user:3 检查第 2、9、14 位，第 9 位是 0"><span>0</span><span>0</span><span class="on chk">1</span><span>0</span><span>0</span><span class="on">1</span><span>0</span><span class="on">1</span><span>0</span><span class="zero chk">0</span><span>0</span><span class="on">1</span><span>0</span><span>0</span><span class="on chk">1</span><span>0</span></div>
+      <div class="qlbl">查 user:9</div>
+      <div class="bits16" aria-label="user:9 检查第 5、11、14 位，全是 1"><span>0</span><span>0</span><span class="on">1</span><span>0</span><span>0</span><span class="on chk">1</span><span>0</span><span class="on">1</span><span>0</span><span>0</span><span>0</span><span class="on chk">1</span><span>0</span><span>0</span><span class="on chk">1</span><span>0</span></div>
+      <p class="tip">只要有一位是 0，就肯定没写过。全是 1 时，也可能是别的元素凑巧把这几位都点亮了。</p>
+    </div>
+  </div>
+  <div class="formula">误判率 ≈ (1 − e<sup>−k·n/m</sup>)<sup>k</sup>　　最好的 k ≈ (m / n) · ln 2　　需要的位数 m ≈ −n · ln p / (ln 2)²</div>
+  <p class="tip">n 是已经放进去的元素个数，p 是想要的误判率。直觉上：位数组越满（n/m 越大），误判越多；哈希函数太少，每个元素留下的“指纹”太短；太多又会把位数组点得太满。</p>
+</section>
+
+<!-- ================= BLOOM LAB ================= -->
+<section id="bflab">
+  <div>
+    <h2>误判率实验室</h2>
+    <p class="lead">调位数组大小、哈希函数个数、放进去多少元素，看位数组被点亮了多少，以及拿 4000 个没放进去的元素去查，有多少被误判成“存在”。</p>
+  </div>
+  <div class="lab">
+    <div class="row"><span class="lbl">位数组 m：</span><div class="seg-btns" role="group" aria-label="位数组大小"><button data-m="64" aria-pressed="false">64 位</button><button data-m="128" aria-pressed="true">128 位</button><button data-m="256" aria-pressed="false">256 位</button></div>
+      <span class="lbl">哈希个数 k：</span><div class="seg-btns" role="group" aria-label="哈希函数个数"><button data-k="1" aria-pressed="false">1</button><button data-k="2" aria-pressed="false">2</button><button data-k="3" aria-pressed="true">3</button><button data-k="4" aria-pressed="false">4</button><button data-k="6" aria-pressed="false">6</button><button data-k="8" aria-pressed="false">8</button></div></div>
+    <div class="slider"><label for="bfN" class="lbl">已放入 n：</label><input type="range" id="bfN" min="0" max="128" step="1" value="20"><output id="bfNo" for="bfN">20 个</output></div>
+    <div class="labg">
+      <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+        <div class="bitgrid" id="bitgrid" role="img" aria-label="位数组，深色为 1"></div>
+        <div class="tiles" id="bfTiles"></div>
+      </div>
+      <div class="chartbox"><svg id="bfChart" viewBox="0 0 400 220" role="img" aria-label="误判率随放入元素个数变化的理论曲线"></svg></div>
+    </div>
+    <p class="verdict" id="bfV" data-role="bf"></p>
+  </div>
+</section>
+
+<!-- ================= BLOOM PROD ================= -->
+<section id="bfprod">
+  <div>
+    <h2>生产上要开多大、怎么用</h2>
+    <p class="lead">按公式算：元素越多、要求误判率越低，位数组越大，哈希次数也越多。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">预计元素数</th><th scope="col">误判率 1%</th><th scope="col">误判率 0.1%</th><th scope="col">误判率 0.01%</th></tr></thead>
+      <tbody id="bfSize"></tbody>
+    </table>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>RedisBloom 命令</b><span>Redis 8 内置，之前要装模块</span></div>
+<pre><code>BF.RESERVE user:bf 0.01 100000000   <span class="cm"># 误判率 1%，预计 1 亿个</span>
+BF.ADD user:bf u:1001                <span class="cm">→ 1（新加入）</span>
+BF.MADD user:bf u:1002 u:1003
+BF.EXISTS user:bf u:9999             <span class="cm">→ 0 一定没有；1 可能有</span>
+BF.INFO user:bf                      <span class="cm"># 容量、已放入个数、占多少内存</span>
+
+<span class="cm"># 不先 RESERVE 就 BF.ADD，会按默认容量 100、误判率 1% 自动建一个，</span>
+<span class="cm"># 很快就要叠很多层</span>
+
+<span class="cm"># 放满后默认自动再叠一层更大的子过滤器（EXPANSION 2），</span>
+<span class="cm"># 新层的误判率更低，总误判率仍控制在目标附近；NONSCALING 则不扩</span>
+<span class="cm"># 代价是每次查询要把每一层都查一遍</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>Java：Redisson / Guava</b><span>不用装模块</span></div>
+<pre><code><span class="cm">// Redisson：底下用 Redis 的 Bitmap，多个实例共享</span>
+RBloomFilter&lt;String&gt; bf = redisson.getBloomFilter(<span class="an">"user:bf"</span>);
+bf.tryInit(<span class="kw">100_000_000L</span>, <span class="kw">0.01</span>);     <span class="cm">// 只在第一次生效</span>
+bf.add(<span class="an">"u:1001"</span>);
+<span class="kw">boolean</span> maybe = bf.contains(<span class="an">"u:9999"</span>);
+
+<span class="cm">// Guava：放在本机内存里，每个实例各一份</span>
+BloomFilter&lt;String&gt; local = BloomFilter.create(
+        Funnels.stringFunnel(StandardCharsets.UTF_8), <span class="kw">1_000_000</span>, <span class="kw">0.01</span>);</code></pre>
+    </div>
+  </div>
+  <div class="note-box"><b>要能删除？</b><span>普通布隆过滤器删不了。要删除用布谷鸟过滤器（Cuckoo Filter）：它存的是每个元素的一小段“指纹”，可以 <code>CF.DEL</code>，内存和布隆是同一个量级。代价是只能删确实加过的元素，删一个没加过的，可能把别人的指纹删掉。命令是 <code>CF.RESERVE</code>、<code>CF.ADD</code>、<code>CF.EXISTS</code>、<code>CF.DEL</code>。</span></div>
+</section>
+
+<!-- ================= HLL HOW ================= -->
+<section id="hll">
+  <div>
+    <h2>HyperLogLog：从抛硬币里估人数</h2>
+    <p class="lead">一直抛硬币，记下“最长连着出了几次反面”。连着 5 次反面的概率是 1/32，你见到了，说明大概抛了 32 次左右。HyperLogLog 把每个元素哈希成一串 0 和 1，就像一次抛硬币。</p>
+  </div>
+  <div class="mini">
+    <b>Redis 怎么拆一个 64 位的哈希值</b>
+    <div class="hbits" aria-label="前 14 位选桶，后面数第一个 1 出现在第几位">
+      <span class="ix">1</span><span class="ix">0</span><span class="ix">1</span><span class="ix">1</span><span class="ix">0</span><span class="ix">0</span><span class="ix">1</span><span class="ix">0</span><span class="ix">1</span><span class="ix">0</span><span class="ix">0</span><span class="ix">1</span><span class="ix">1</span><span class="ix">0</span>
+      <span class="z">0</span><span class="z">0</span><span class="z">0</span><span class="one">1</span><span class="rest">0</span><span class="rest">1</span><span class="rest">1</span><span class="rest">…</span>
+    </div>
+    <div class="lg"><span><i style="background:var(--hl)"></i>14 位：选 16384 个桶中的哪一个</span><span><i style="background:var(--hs-tint);border:1px solid var(--hs)"></i>后 50 位：开头连着几个 0</span><span><i style="background:var(--good)"></i>第一个 1 在第 4 位，这个桶记 4（只保留最大值）</span></div>
+    <p>为了好看画成从左往右数；Redis 实际用低 14 位选桶、从低位往高位数，道理一样。</p>
+  </div>
+  <div class="why3">
+    <div class="mini"><b>为什么要分桶</b><p>只看一个“最长纪录”，运气成分太大：第一个人就碰上 20 个 0，估出来就是一百万。分成 16384 个桶，每个桶各记各的，最后取调和平均，误差降到约 1.04 / √16384 ≈ 0.81%。</p></div>
+    <div class="mini"><b>为什么是 12 KB</b><p>每个桶记的是“最多连着几个 0”，最大也就 50 多，用 6 位就够。16384 × 6 位 = 12288 字节。元素少的时候还会用更省的稀疏格式，超过 3000 字节（<code>hll-sparse-max-bytes</code>）才转成这 12 KB。</p></div>
+    <div class="mini"><b>为什么重复不影响</b><p>同一个元素哈希值永远一样，落在同一个桶、同一个数字，取最大值时什么都不会变。所以它天然就是“去重计数”。</p></div>
+  </div>
+</section>
+
+<!-- ================= HLL LAB ================= -->
+<section id="hlllab">
+  <div>
+    <h2>估数实验台</h2>
+    <p class="lead">往里加不重复的用户，看两个 HyperLogLog 的估算：一个只有 64 个桶（下面画出来的），一个和 Redis 一样有 16384 个桶。再加一批已经来过的老用户，看看数字会不会变。</p>
+  </div>
+  <div class="lab">
+    <div class="row">
+      <button class="btn primary" data-add="100">+100 个新用户</button>
+      <button class="btn" data-add="1000">+1,000</button>
+      <button class="btn" data-add="10000">+10,000</button>
+      <button class="btn" data-add="100000">+100,000</button>
+      <button class="btn" data-add="dup">+1,000 个老用户（重复）</button>
+      <button class="btn" data-add="reset">清空</button>
+    </div>
+    <div class="tiles" id="hlTiles"></div>
+    <div class="chartbox"><svg id="hlChart" viewBox="0 0 640 170" role="img" aria-label="64 个桶各自记录的最长前导零"></svg></div>
+    <p class="verdict" id="hlV" data-role="hl"></p>
+  </div>
+</section>
+
+<!-- ================= HLL CMD ================= -->
+<section id="hllcmd">
+  <div>
+    <h2>HyperLogLog 命令和典型用法</h2>
+    <p class="lead">最常见的用途是统计 UV：每天一个 key，用户来了就 PFADD；要看一周的 UV，把七天合并起来再数。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>redis-cli</b><span>Redis 2.8.9 起就有</span></div>
+<pre><code>PFADD uv:2026-11-05 user:1 user:2 user:3   <span class="cm">→ 1（有桶被更新了）</span>
+PFADD uv:2026-11-05 user:1                 <span class="cm">→ 0（来过了，没有桶变化）</span>
+PFCOUNT uv:2026-11-05                      <span class="cm">→ 3</span>
+PFMERGE uv:week45 uv:2026-11-02 … uv:2026-11-08   <span class="cm"># 合并一周</span>
+PFCOUNT uv:week45
+PFCOUNT uv:2026-11-05 uv:2026-11-06        <span class="cm"># 多个 key 临时合并再数，比较慢</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>Spring Data Redis</b><span>HyperLogLogOperations</span></div>
+<pre><code>HyperLogLogOperations&lt;String, String&gt; hll = redis.opsForHyperLogLog();
+hll.add(<span class="an">"uv:"</span> + today, userId);
+Long uv = hll.size(<span class="an">"uv:"</span> + today);
+hll.union(<span class="an">"uv:week45"</span>, days.toArray(<span class="kw">new</span> String[<span class="kw">0</span>]));   <span class="cm">// 就是 PFMERGE</span></code></pre>
+    </div>
+  </div>
+  <p class="tip">它本质是一个 String，能 GET 出来、能跟着 RDB 一起持久化。单个 key 的 PFCOUNT 会把结果缓存在头部，没有新写入时直接返回；Redis 的估算公式在原论文基础上改进过，小基数和大基数都比较准。</p>
+</section>
+
+<!-- ================= COMPARE ================= -->
+<section id="cmp">
+  <div>
+    <h2>该用哪一个</h2>
+    <p class="lead">先问清楚要回答的是哪个问题：“在不在”、“有多少个”，还是“都有谁”。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">Set</th><th scope="col">Bitmap</th><th scope="col">布隆过滤器</th><th scope="col">布谷鸟过滤器</th><th scope="col">HyperLogLog</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">精确吗</th><td class="good">精确</td><td class="good">精确</td><td class="mid">“不在”精确，“在”有误判</td><td class="mid">同布隆</td><td class="mid">误差约 0.81%</td></tr>
+        <tr><th scope="row">判断某个在不在</th><td class="good">能</td><td class="good">能</td><td class="good">能</td><td class="good">能</td><td class="bad">不能</td></tr>
+        <tr><th scope="row">数有多少个</th><td class="good">SCARD</td><td class="good">BITCOUNT</td><td class="mid">只能估</td><td class="mid">只能估</td><td class="good">PFCOUNT</td></tr>
+        <tr><th scope="row">列出都有谁</th><td class="good">能</td><td class="mid">能（遍历位）</td><td class="bad">不能</td><td class="bad">不能</td><td class="bad">不能</td></tr>
+        <tr><th scope="row">删除</th><td class="good">能</td><td class="good">能</td><td class="bad">不能</td><td class="good">能</td><td class="bad">不能</td></tr>
+        <tr><th scope="row">1 亿个时的内存</th><td class="bad">约 6 GB</td><td class="good">12.5 MB（ID 连续时）</td><td>约 120 MB（1%）</td><td>和布隆同一量级</td><td class="good">12 KB</td></tr>
+        <tr><th scope="row">典型用途</th><td>好友列表、标签</td><td>签到、在线状态</td><td>防缓存穿透、爬虫去重</td><td>需要删除的黑名单</td><td>UV、搜索词去重计数</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= VERSIONS ================= -->
+<section id="ver">
+  <div>
+    <h2>Redis 版本，以及 JDK 8 和 JDK 17</h2>
+    <p class="lead">HyperLogLog 很早就是内置类型；布隆过滤器长期是模块，Redis 8 才内置。Java 这边两种都有现成的库。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Redis 7 及以前 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>HyperLogLog 2.8.9 起内置</li>
+        <li>BF.* 和 CF.* 要装 RedisBloom 模块，或用 Redis Stack；云厂商的托管版不一定有</li>
+        <li>没模块时用 Redisson 的 <code>RBloomFilter</code>（基于 Bitmap），或 Guava 的本地 <code>BloomFilter</code></li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Redis 8 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>布隆、布谷鸟，以及 Count-Min Sketch、Top-K、t-digest 这些概率结构都内置了</li>
+        <li>Spring Data Redis 有 <code>opsForHyperLogLog()</code>，但没有 BF 命令的 API；可以用 Jedis 的 <code>bfAdd</code> / <code>bfExists</code>，或者 Redisson</li>
+        <li>Redisson、Guava 在 JDK 8 和 17 上用法一样</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>布隆“说没有就一定没有”</span><span>布隆不能删</span><span>HLL 固定 12 KB</span><span>HLL 误差约 0.81%</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">概率结构的坑，基本都是没想清楚它能回答什么、不能回答什么。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bits"/></svg><b>上线半年后，布隆过滤器的误判率从 1% 涨到 44%</b><p>按 100 万、1% 建的，实际塞了 300 万。Redisson 和 Guava 的过滤器不会扩容，误判率一路上涨；RedisBloom 默认会叠新层，误判率稳得住，但查询要多查几层。建的时候按增长预留容量，或者定期重建。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>新注册的用户被当成“不存在”拦掉了</b><p>写数据库时忘了同时写过滤器，它就一定说“没有”。新增数据的地方都要同步 BF.ADD，启动时全量加载一次。</p></div>
+    <div class="pit" data-role="bf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bits"/></svg><b>删掉的商品，过滤器还说“可能有”</b><p>布隆删不掉，只是多查一次库，不算错。删得多了误判会升高，定期重建，或改用布谷鸟过滤器。</p></div>
+    <div class="pit" data-role="bf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-hash"/></svg><b>Java 写入的过滤器，Go 服务查不到</b><p>各家库的哈希算法和位置计算都不一样，Guava、Redisson、RedisBloom 互不兼容。所有服务用同一种实现，最省事的是都调 BF.* 命令。</p></div>
+    <div class="pit" data-role="hs"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-warn"/></svg><b>误判率设成 0.0001%，内存和 CPU 都涨了</b><p>1% 时每个元素约 9.6 位、7 次哈希；0.0001% 要 28.8 位、20 次哈希。误判率每降 10 倍，每个元素多花约 4.8 位。一般 1% 配合“说有时再查一次库”就够了。</p></div>
+    <div class="pit" data-role="hs"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bits"/></svg><b>一个布隆过滤器几百 MB，成了大 key</b><p>迁移、持久化都卡（<a href="redis-bigkey-hotkey.html">Redis 第 08 篇</a>）。按 ID 取模拆成几个过滤器，分到不同节点。</p></div>
+    <div class="pit" data-role="hl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-coin"/></svg><b>想用 HyperLogLog 判断“这个用户今天来过没”</b><p>它只能数个数，不能查成员。要判断某人来没来过，用 Bitmap（ID 是整数时）或 Set。</p></div>
+    <div class="pit" data-role="hl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-coin"/></svg><b>用 HyperLogLog 的数字做结算，对不上账</b><p>它有约 1% 的误差。报表、看趋势没问题；要和钱、合同挂钩的计数，用精确的 Set 或数据库。</p></div>
+    <div class="pit" data-role="hl"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-buckets"/></svg><b>报表里 PFCOUNT 30 个 key，接口很慢</b><p>多个 key 时要临时合并，不走缓存。提前用 PFMERGE 合并好周、月的 key，查询时只数一个。</p></div>
+    <div class="pit" data-role="st"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-buckets"/></svg><b>用 Set 统计每天的 UV，几周后内存告急</b><p>每天几千万个 ID，每个 Set 几个 GB。只要数字就换 HyperLogLog，一天一个 key 只要 12 KB。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 Redis 7 / 8 为例。相关：<a href="cache-problems.html">缓存穿透、击穿与雪崩</a> · <a href="redis-data-encoding.html">Redis 数据结构与编码</a> · <a href="redis-bigkey-hotkey.html">Redis 大 key 与热 key</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+function fmix(h){ h^=h>>>16; h=Math.imul(h,0x85ebca6b); h^=h>>>13; h=Math.imul(h,0xc2b2ae35); h^=h>>>16; return h>>>0; }
+function hashInt(i,seed){ return fmix((Math.imul(i,0x9E3779B1)^seed)>>>0); }
+function bfPos(i,k,m){ var h1=hashInt(i,0x1234567), h2=hashInt(i,0x7654321)|1, out=[]; for(var j=0;j<k;j++) out.push(((h1+Math.imul(j,h2))>>>0)%m); return out; }
+function bfRun(m,k,n){
+  var bits=new Uint8Array(m), i, j;
+  for(i=0;i<n;i++){ var p=bfPos(i,k,m); for(j=0;j<k;j++) bits[p[j]]=1; }
+  var fp=0, T=4000;
+  for(var t=0;t<T;t++){ var q=bfPos(1000000+t,k,m), all=true; for(j=0;j<k;j++){ if(!bits[q[j]]){ all=false; break; } } if(all) fp++; }
+  var set=0; for(j=0;j<m;j++) set+=bits[j];
+  return {bits:bits, fill:set/m, fp:fp/T, th:bfTheory(m,k,n)};
+}
+function bfTheory(m,k,n){ return Math.pow(1-Math.exp(-k*n/m),k); }
+function bfSize(n,p){ var m=Math.ceil(-n*Math.log(p)/(Math.LN2*Math.LN2)); return {m:m, k:Math.max(1,Math.round(m/n*Math.LN2)), mb:m/8/1e6}; }
+
+function hllNew(p){ return {p:p, m:1<<p, reg:new Uint8Array(1<<p)}; }
+function hllAdd(s,i){ var h=hashInt(i,0x5bd1e995), idx=h>>>(32-s.p), w=(h<<s.p)>>>0, r=w===0?(32-s.p+1):Math.clz32(w)+1; if(r>s.reg[idx]){ s.reg[idx]=r; return true; } return false; }
+var P2=[]; for(var _i=0;_i<64;_i++) P2.push(Math.pow(2,-_i));
+function hllEst(s){
+  var m=s.m, sum=0, z=0;
+  for(var j=0;j<m;j++){ sum+=P2[s.reg[j]]; if(!s.reg[j]) z++; }
+  var a = m===16?0.673 : m===32?0.697 : m===64?0.709 : 0.7213/(1+1.079/m);
+  var E=a*m*m/sum;
+  if(E<=2.5*m && z>0) E=m*Math.log(m/z);
+  return E;
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  function fmt(v){ return Math.round(v).toLocaleString('en-US'); }
+  function pct(v){ return v<0.001 ? (v*100).toFixed(2)+'%' : (v<0.1 ? (v*100).toFixed(1)+'%' : Math.round(v*100)+'%'); }
+
+  /* ---------- bloom lab ---------- */
+  var M=128, K=3, N=20;
+  function renderBf(){
+    var r=bfRun(M,K,N), h='';
+    for(var i=0;i<M;i++) h+='<i'+(r.bits[i]?' class="on"':'')+'></i>';
+    $('bitgrid').innerHTML=h;
+    $('bfNo').textContent=N+' 个';
+    var kOpt = N>0 ? M/N*Math.LN2 : null;
+    $('bfTiles').innerHTML=
+      '<div class="tile" data-role="bf"><small>位数组被点亮</small><b>'+Math.round(r.fill*100)+'%</b><span>'+Math.round(r.fill*M)+' / '+M+' 位</span></div>'+
+      '<div class="tile" data-role="'+(r.fp>0.1?'bad':(r.fp>0.02?'hs':'done'))+'"><small>实测误判</small><b>'+pct(r.fp)+'</b><span>4000 次查询里 '+Math.round(r.fp*4000)+' 次</span></div>'+
+      '<div class="tile" data-role="other"><small>公式算的误判</small><b>'+pct(r.th)+'</b><span>(1 − e^(−kn/m))^k</span></div>'+
+      '<div class="tile" data-role="hs"><small>这个 n 下最好的 k</small><b>'+(kOpt===null?'—':(kOpt>20?'很大':kOpt.toFixed(1)))+'</b><span>(m / n) · ln 2</span></div>';
+    drawBfChart(r);
+    var v=$('bfV');
+    if(N===0){ v.setAttribute('data-role','bf'); v.textContent='什么都没放，所有位都是 0，查什么都回答“一定不存在”。'; }
+    else if(kOpt<=12 && K-kOpt>=2){ v.setAttribute('data-role','hs'); v.textContent='在这个 m 和 n 下，最好的哈希个数大约是 '+kOpt.toFixed(1)+'。现在用 '+K+' 个，太多了，每个元素点亮 '+K+' 位，位数组已经亮了 '+Math.round(r.fill*100)+'%。换成接近 '+Math.max(1,Math.round(kOpt))+' 的试试，误判会更低。'; }
+    else if(r.fill>0.6 || r.th>0.2){ v.setAttribute('data-role','bad'); v.textContent='位数组已经被点亮了 '+Math.round(r.fill*100)+'%，随便一个元素的几个位置大概率都是 1，误判率飙升。放的元素太多了，要换更大的位数组。'; }
+    else if(kOpt<=12 && kOpt-K>=2){ v.setAttribute('data-role','hs'); v.textContent='在这个 m 和 n 下，最好的哈希个数大约是 '+kOpt.toFixed(1)+'。现在只用 '+K+' 个，每个元素留下的痕迹太少，别的元素很容易凑巧撞上。换成接近 '+Math.round(kOpt)+' 的试试，误判会更低。'; }
+    else { v.setAttribute('data-role','done'); v.textContent='位数组还有 '+Math.round((1-r.fill)*100)+'% 是 0，哈希个数也合适，误判率在 '+pct(r.th)+' 左右。实测和公式会差一点，是随机抽样的波动。'; }
+  }
+  function drawBfChart(r){
+    var W=400, L=40, R=12, T=22, H=150, B=T+H, X=function(n){ return L+n/M*(W-L-R); }, Y=function(p){ return B-p*H; };
+    var h='<text class="c-t" x="'+L+'" y="13">误判率随放入个数变化（k = '+K+'，m = '+M+'）</text>';
+    [0,0.5,1].forEach(function(f){ var y=Y(f); h+='<line class="'+(f===0?'c-base':'c-gl')+'" x1="'+L+'" y1="'+y+'" x2="'+(W-R)+'" y2="'+y+'"/><text class="c-ax" x="'+(L-5)+'" y="'+(y+3.5)+'" text-anchor="end">'+(f*100)+'%</text>'; });
+    var pts=[]; for(var n=0;n<=M;n+=Math.max(1,M/64)) pts.push(X(n).toFixed(1)+','+Y(bfTheory(M,K,n)).toFixed(1));
+    h+='<path class="c-area" d="M'+X(0)+','+B+' L'+pts.join(' L')+' L'+X(M)+','+B+' Z" opacity=".6"/><polyline class="c-line" points="'+pts.join(' ')+'"/>';
+    var px=X(N), py=Y(r.th);
+    h+='<circle class="c-pt" cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="5"><title>n = '+N+'：公式误判率 '+pct(r.th)+'</title></circle>';
+    var right=px>W-120, ly=py<T+22?py+18:py-8; h+='<text class="c-lbl" x="'+(px+(right?-8:8)).toFixed(1)+'" y="'+ly.toFixed(1)+'" text-anchor="'+(right?'end':'start')+'">n = '+N+'，'+pct(r.th)+'</text>';
+    [0,M/4,M/2,3*M/4,M].forEach(function(n){ h+='<text class="c-ax" x="'+X(n).toFixed(1)+'" y="'+(B+14)+'" text-anchor="middle">'+n+'</text>'; });
+    h+='<text class="c-ax" x="'+(W-R)+'" y="'+(B+28)+'" text-anchor="end">已放入的元素个数 n</text>';
+    $('bfChart').innerHTML=h;
+  }
+  function bindSeg(attr,fn){ document.querySelectorAll('['+attr+']').forEach(function(b){ b.addEventListener('click',function(){ fn(parseInt(b.getAttribute(attr),10)); document.querySelectorAll('['+attr+']').forEach(function(x){ x.setAttribute('aria-pressed',String(x===b)); }); renderBf(); }); }); }
+  bindSeg('data-m',function(v){ var ratio=N/M; M=v; $('bfN').max=String(M); N=Math.min(M,Math.round(ratio*M)); $('bfN').value=String(N); });
+  bindSeg('data-k',function(v){ K=v; });
+  $('bfN').addEventListener('input',function(){ N=parseInt(this.value,10); renderBf(); });
+  renderBf();
+
+  /* ---------- bloom size table ---------- */
+  (function(){
+    var ns=[[1e6,'100 万'],[1e7,'1000 万'],[1e8,'1 亿']], ps=[0.01,0.001,0.0001];
+    $('bfSize').innerHTML=ns.map(function(n){
+      return '<tr><th scope="row">'+n[1]+'</th>'+ps.map(function(p){ var s=bfSize(n[0],p); return '<td class="num">'+(s.mb<10?s.mb.toFixed(1):fmt(s.mb))+' MB · '+s.k+' 个哈希</td>'; }).join('')+'</tr>';
+    }).join('');
+  })();
+
+  /* ---------- HLL lab ---------- */
+  var A=hllNew(6), Bk=hllNew(14), count=0;
+  function addN(k){ for(var i=0;i<k;i++){ hllAdd(A,count+i); hllAdd(Bk,count+i); } count+=k; }
+  function addDup(){ var a0=Array.from(A.reg).join(','), b0=hllEst(Bk); for(var i=0;i<Math.min(1000,count);i++){ hllAdd(A,i); hllAdd(Bk,i); } return a0===Array.from(A.reg).join(',') && b0===hllEst(Bk); }
+  var dupMsg=null;
+  function renderHl(){
+    var ea=hllEst(A), eb=hllEst(Bk), erA=count?(ea/count-1):0, erB=count?(eb/count-1):0;
+    function sign(e){ return (e>=0?'+':'')+(e*100).toFixed(Math.abs(e)<0.01?2:1)+'%'; }
+    $('hlTiles').innerHTML=
+      '<div class="tile" data-role="done"><small>真实的不重复人数</small><b>'+fmt(count)+'</b><span>重复来的不算</span></div>'+
+      '<div class="tile" data-role="hl"><small>Redis 同款（16384 桶）估算</small><b>'+fmt(eb)+'</b><span>误差 '+(count?sign(erB):'—')+'，占 12 KB</span></div>'+
+      '<div class="tile" data-role="'+(Math.abs(erA)>0.1?'bad':'hs')+'"><small>64 个桶的估算</small><b>'+fmt(ea)+'</b><span>误差 '+(count?sign(erA):'—')+'，理论约 ±13%</span></div>'+
+      '<div class="tile" data-role="other"><small>精确存储要</small><b>'+(count*60/1e6<1?Math.round(count*60/1e3)+' KB':(count*60/1e6).toFixed(1)+' MB')+'</b><span>按每个 ID 约 60 字节的 Set 粗算</span></div>';
+    var W=640, L=30, R=8, T=18, H=118, Bm=T+H, mx=Math.max(8, Math.max.apply(null, Array.from(A.reg))), bw=(W-L-R)/64;
+    var h='<text class="c-t" x="'+L+'" y="12">64 个桶，每个桶记录见过的最长“开头连着几个 0（再加 1）”</text>';
+    [0,0.5,1].forEach(function(f){ var y=Bm-f*H; h+='<line class="'+(f===0?'c-base':'c-gl')+'" x1="'+L+'" y1="'+y.toFixed(1)+'" x2="'+(W-R)+'" y2="'+y.toFixed(1)+'"/><text class="c-ax" x="'+(L-4)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="end">'+Math.round(mx*f)+'</text>'; });
+    for(var j=0;j<64;j++){ var v=A.reg[j], hh=v/mx*H; if(v) h+='<rect class="c-reg" x="'+(L+j*bw+1).toFixed(1)+'" y="'+(Bm-hh).toFixed(1)+'" width="'+(bw-2).toFixed(1)+'" height="'+hh.toFixed(1)+'" rx="1.5"><title>桶 '+j+'：'+v+'</title></rect>'; }
+    h+='<text class="c-ax" x="'+L+'" y="'+(Bm+14)+'">桶 0</text><text class="c-ax" x="'+(W-R)+'" y="'+(Bm+14)+'" text-anchor="end">桶 63</text>';
+    $('hlChart').innerHTML=h;
+    var v=$('hlV');
+    if(dupMsg!==null){ v.setAttribute('data-role','done'); v.textContent=dupMsg ? '又来了 1,000 个老用户，所有桶的数字一个都没变，估算值也没变。重复的元素哈希值一样，落在同一个桶、同一个数，取最大值时不会有任何变化。' : '加入的人里有新用户，所以估算有变化。'; dupMsg=null; }
+    else if(!count){ v.setAttribute('data-role','hl'); v.textContent='还没有人来，所有桶都是 0。'; }
+    else { v.setAttribute('data-role','hl'); v.textContent='人越多，每个桶里见过的“连着的 0”就越长，柱子越高。64 个桶的估算误差常在一两成，16384 个桶就稳定在 1% 以内，这就是 Redis 选 16384 的原因。'; }
+  }
+  document.querySelectorAll('[data-add]').forEach(function(b){ b.addEventListener('click',function(){
+    var a=b.getAttribute('data-add');
+    if(a==='reset'){ A=hllNew(6); Bk=hllNew(14); count=0; }
+    else if(a==='dup'){ dupMsg = count ? addDup() : null; }
+    else addN(parseInt(a,10));
+    renderHl();
+  }); });
+  addN(5000); renderHl();
+})();
+</script>
+
+</body>
+</html>
