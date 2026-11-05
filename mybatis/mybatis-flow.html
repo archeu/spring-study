@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>MyBatis 执行流程</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the Spring pages. Colors follow MyBatis's layers: interface (blue), config (purple), executor (orange), JDBC (teal), database (brown). Anchor = the query walk-through. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --api:#3150C4; --api-tint:#E2E7FA;
+  --conf:#6A3FC0; --conf-tint:#ECE5FA;
+  --exec:#B85F0C; --exec-tint:#FBE9D5;
+  --jdbc:#0D7A69; --jdbc-tint:#DCF0EB;
+  --db:#8A5A2B; --db-tint:#F3E6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --skin:#F1C6A0; --hair:#3B2A21; --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --api:#90A4FF; --api-tint:#1D2650;
+    --conf:#B9A0FF; --conf-tint:#2A2148;
+    --exec:#F4A651; --exec-tint:#3A2812;
+    --jdbc:#40C6B0; --jdbc-tint:#12352F;
+    --db:#D9A26B; --db-tint:#3A2A1A;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --api:#90A4FF; --api-tint:#1D2650;
+  --conf:#B9A0FF; --conf-tint:#2A2148;
+  --exec:#F4A651; --exec-tint:#3A2812;
+  --jdbc:#40C6B0; --jdbc-tint:#12352F;
+  --db:#D9A26B; --db-tint:#3A2A1A;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--api)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--api);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="api"]{--rc:var(--api);--rt:var(--api-tint)}
+[data-role="conf"]{--rc:var(--conf);--rt:var(--conf-tint)}
+[data-role="exec"]{--rc:var(--exec);--rt:var(--exec-tint)}
+[data-role="jdbc"]{--rc:var(--jdbc);--rt:var(--jdbc-tint)}
+[data-role="db"]{--rc:var(--db);--rt:var(--db-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-hair{fill:var(--hair)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)}
+.k-gold{fill:var(--gold)} .k-line{fill:var(--line-strong)}
+.ks-ink{stroke:var(--ink);fill:none} .ks-paper{stroke:var(--card);fill:none}
+.ks-dash{stroke:var(--line-strong);fill:none;stroke-width:2.4;stroke-dasharray:4 3}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.trans{margin-top:24px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.3fr) auto minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:stretch}
+.tp{border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;background:var(--rt);border:2px solid var(--rc)}
+.tp small{font-size:12.5px;color:var(--muted)}
+.tp > code{font-size:13px;font-weight:600;overflow-wrap:anywhere;line-height:1.5}
+.tp pre{padding:0;font-size:12.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:visible}
+.pchip{align-self:flex-start;font-family:var(--font-mono);font-size:12px;padding:1px 8px;border-radius:6px;background:var(--gold);color:var(--ink);font-weight:600}
+.rows{border-collapse:collapse;font-family:var(--font-mono);font-size:12px;width:100%}
+.rows th,.rows td{border:1px solid var(--rc);padding:3px 6px;text-align:left}
+.rows th{font-weight:600;color:var(--muted)}
+.tarr{align-self:center;color:var(--line-strong);font-size:22px;line-height:1}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:120px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:32px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:13px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--api)} .kw{color:var(--exec)} .st-s{color:var(--jdbc)} .tg{color:var(--conf)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--exec-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:20px;line-height:1;text-align:center;align-self:center}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:620px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:500;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.warn{background:var(--bad-tint)}
+
+/* ---------- boot ---------- */
+.bflow{display:grid;grid-template-columns:minmax(0,1.15fr) auto minmax(0,1fr);gap:14px;align-items:center}
+.ms{background:var(--card);border:2px solid var(--conf);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.ms-h{display:flex;align-items:center;gap:10px}
+.ms-h svg{width:40px;height:40px;color:var(--conf);flex:none}
+.ms-h b{font-family:var(--font-display);font-weight:400;font-size:22px}
+.ms-h small{display:block;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.ms dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 12px;font-size:13.5px}
+.ms dt{color:var(--muted);white-space:nowrap}
+.ms dd{margin:0;overflow-wrap:anywhere}
+.ms dd code{font-weight:600}
+.ms dd.key{padding:2px 8px;border-radius:6px;background:var(--conf-tint)}
+.cfg{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.cfg b{color:var(--ink)}
+.cfg span{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--conf-tint);color:var(--ink)}
+
+/* ---------- main line ---------- */
+.lanes{display:flex;flex-direction:column;gap:10px}
+.lane{display:grid;grid-template-columns:120px minmax(0,1fr);gap:12px;align-items:stretch}
+.lane-l{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 12px;border-radius:12px;background:var(--rt)}
+.lane-l b{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--rc);line-height:1.2}
+.lane-l small{font-size:12px;color:var(--muted)}
+.lane-s{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.stn{display:grid;grid-template-columns:26px minmax(0,1fr);gap:0 8px;align-items:start;background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;min-width:0;max-width:100%}
+.stn .n{grid-row:span 2;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--rc);color:var(--on-accent);font-family:var(--font-mono);font-size:12px;font-weight:600}
+.stn b{font-size:15px;line-height:1.35}
+.stn code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.arr{color:var(--line-strong);font-size:18px;line-height:1}
+.stack{list-style:none;margin:0;padding:14px 16px;display:flex;flex-direction:column;gap:3px;font-family:var(--font-mono);font-size:12.5px}
+.stack li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:3px 10px;border-radius:6px;border-left:4px solid var(--rc);background:var(--rt);overflow-wrap:anywhere}
+.stack li small{font-family:var(--font-body);font-size:12px;color:var(--muted);white-space:nowrap}
+
+/* ---------- walk-through ---------- */
+.sim{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:16px;align-items:start}
+.track{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.reqline{font-family:var(--font-mono);font-size:13px;padding:8px 12px;border-radius:10px;background:var(--console-bg);color:var(--console-fg);overflow-wrap:anywhere}
+.reqline small{display:block;font-family:var(--font-body);color:var(--console-dim);font-size:12px}
+.gsl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.gs{display:grid;grid-template-columns:26px minmax(0,1fr) 20px;gap:0 10px;align-items:center;padding:6px 10px;border-radius:10px;border:1.5px solid transparent;transition:background .25s,border-color .25s,opacity .25s}
+.gs.in{margin-left:22px}
+.gs .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.gs-t{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 8px;min-width:0}
+.gs-t b{font-size:14.5px;font-weight:500}
+.gs-t code{font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.gs-t::after{font-size:11px;padding:0 6px;border-radius:5px;border:1px dashed var(--line-strong);color:var(--muted)}
+.gs-grp{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);padding:4px 10px 0 22px;border-left:2px dashed var(--rc);margin-left:11px}
+.mk{font-weight:700;text-align:center;font-size:14px}
+.gs.passed{opacity:.7}
+.gs.passed .mk::before{content:"✓";color:var(--good)}
+.gs.on{border-color:var(--api);background:var(--api-tint)}
+.gs.on .n{background:var(--api);color:var(--on-accent)}
+.gs.on .mk::before{content:"◀";color:var(--api)}
+.gs.bad{border-color:var(--bad);background:var(--bad-tint)}
+.gs.bad .n{background:var(--bad);color:var(--on-accent)}
+.gs.bad .mk::before{content:"✕";color:var(--bad)}
+.gs.done{border-color:var(--good);background:var(--good-tint)}
+.gs.done .n{background:var(--good);color:var(--on-accent)}
+.gs.done .mk::before{content:"★";color:var(--good)}
+.gs.done .gs-t::after{content:"命中"}
+.gs.skip{opacity:.45}
+.gs.skip .gs-t b{text-decoration:line-through}
+.gs.skip .mk::before{content:"–"}
+.gs.skip .gs-t::after{content:"没走到"}
+.track-foot{font-size:12.5px;color:var(--muted)}
+.side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.box{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:background .25s,border-color .25s}
+.box.hl{border-color:var(--rc);background:var(--rt)}
+.box h3{font-family:var(--font-body);font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.empty{font-size:13.5px;color:var(--muted)}
+.tpl{font-size:12px;color:var(--muted)}
+.tpl code{display:block;overflow-wrap:anywhere;color:var(--conf)}
+.sqltxt{padding:8px 10px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);font-size:12.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.prms{display:flex;flex-wrap:wrap;gap:5px}
+.pa{font-family:var(--font-mono);font-size:11.5px;padding:1px 7px;border-radius:5px;border:1px dashed var(--line-strong)}
+.pa.f{border:1px solid var(--good);background:var(--good-tint)}
+.pa.f::before{content:"✓ ";color:var(--good);font-weight:700}
+.kv{display:grid;grid-template-columns:6.5em minmax(0,1fr);gap:8px;align-items:baseline;font-size:13px}
+.kv > span{color:var(--muted)}
+.kv code{font-weight:600;overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chips span{font-family:var(--font-mono);font-size:11.5px;padding:1px 8px;border-radius:5px;background:var(--exec);color:var(--on-accent);font-weight:600}
+.chips em{font-style:normal;font-size:12.5px;color:var(--muted)}
+.dbc{display:flex;align-items:center;gap:10px;border-top:1px dashed var(--line);padding-top:8px;font-size:13px;color:var(--muted)}
+.dbc svg{width:26px;height:26px;color:var(--db);flex:none}
+.dbc b{font-family:var(--font-display);font-weight:400;font-size:26px;color:var(--db);line-height:1;font-variant-numeric:tabular-nums}
+.res{font-family:var(--font-mono);font-size:12.5px;padding:8px 10px;border-radius:8px;overflow-wrap:anywhere;animation:pop .35s ease}
+.res.ok{background:var(--good-tint);border:1px solid var(--good)}
+.res.no{background:var(--bad-tint);border:1px solid var(--bad)}
+@keyframes pop{from{transform:scale(.9);opacity:.2}to{transform:none;opacity:1}}
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,20px);font-weight:500;line-height:1.5;min-width:0;overflow-wrap:anywhere}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+
+/* ---------- sql ---------- */
+.dyn{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px;align-items:start}
+.tags{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.tag{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.tag code{font-weight:600;color:var(--conf);font-size:13px}
+.tag span{font-size:13px;color:var(--muted)}
+.inj{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.inj label{font-size:14px;font-weight:500}
+.inj input{font-family:var(--font-mono);font-size:15px;padding:10px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--code-bg);color:var(--ink);width:100%}
+.ij-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.ij{border-radius:14px;padding:12px 14px;border:2px solid var(--rc);background:var(--rt);display:flex;flex-direction:column;gap:6px;min-width:0;transition:background .2s,border-color .2s}
+.ij h3{font-family:var(--font-mono);font-size:16px;color:var(--rc)}
+.ij .sqltxt{background:var(--card)}
+.ij p{font-size:13.5px}
+.ij p.v{font-weight:600}
+
+/* ---------- cache ---------- */
+.cdia{display:grid;grid-template-columns:minmax(0,1fr) auto 150px;gap:14px;align-items:center}
+.ns{border:2px solid var(--conf);border-radius:18px;padding:14px;background:var(--conf-tint);display:flex;flex-direction:column;gap:12px;min-width:0}
+.ns-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.ns-h b{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--conf)}
+.ns-h code{font-size:13px}
+.ns-h small{flex-basis:100%;font-size:13px;color:var(--muted)}
+.ss-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.ss{border:2px solid var(--exec);border-radius:14px;padding:10px 12px;background:var(--card);display:flex;flex-direction:column;gap:6px;min-width:0}
+.ss b{font-family:var(--font-mono);font-size:13px}
+.ss small{font-size:12.5px;color:var(--muted)}
+.dbbox{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;font-size:13px;color:var(--muted)}
+.dbbox svg{width:84px;height:84px;color:var(--db)}
+.qorder{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px}
+.qorder span{padding:4px 12px;border-radius:999px;font-weight:600}
+.qorder .q2{background:var(--conf-tint)} .qorder .q1{background:var(--exec-tint)} .qorder .q0{background:var(--db-tint)}
+
+/* ---------- plugin ---------- */
+.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fo{background:var(--card);border:2px solid var(--rc);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fo-h{display:flex;align-items:center;gap:8px}
+.fo-h svg{width:30px;height:30px;color:var(--rc);flex:none}
+.fo-h b{font-family:var(--font-mono);font-size:13px;overflow-wrap:anywhere}
+.fo code{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.fo p{font-size:13.5px}
+.pcode{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start}
+.facts{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.facts code{overflow-wrap:anywhere}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.era .codebox{border-radius:12px}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast,.four{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .trans{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
+  .trans .tarr.mid{display:none}
+}
+@media (max-width:900px){
+  .bflow,.sim,.dyn,.cdia,.pcode,.eras{grid-template-columns:1fr}
+  .bflow .fa,.cdia .fa{transform:rotate(90deg)}
+}
+@media (max-width:720px){
+  .trans{grid-template-columns:1fr}
+  .trans .tarr{transform:rotate(90deg)}
+  .trans .tarr.mid{display:block}
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:92px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:28px}
+  .pits,.minis,.ij-row{grid-template-columns:1fr}
+  .tags{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lane{grid-template-columns:1fr;gap:6px}
+  .lane-l{flex-direction:row;align-items:baseline;gap:10px}
+  .lane-s .arr{display:none}
+  .stn{flex:1 1 220px}
+}
+@media (max-width:600px){
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+  .gs.in{margin-left:12px}
+  .ss-row{grid-template-columns:1fr}
+  .stack li{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .four,.tags{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  .res{animation:none}
+  .gs,.box,.cap,.ij{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-proxy" viewBox="0 0 64 64">
+    <circle class="ks-dash" cx="42" cy="19" r="9"/>
+    <path class="ks-dash" d="M26 60c0-13 7-20 16-20s16 7 16 20"/>
+    <path fill="currentColor" d="M5 63c0-14 8.5-22 19.5-22S44 49 44 63z"/>
+    <circle class="k-skin" cx="24.5" cy="28" r="9.5"/>
+    <path class="k-hair" d="M15 26c0-6.5 4.3-10.5 9.5-10.5S34 19.5 34 26c-2.5-2.5-6-3.8-9.5-3.8S17.5 23.5 15 26z"/>
+    <rect class="k-ink" x="14.5" y="25" width="20" height="6.5" rx="3.2"/>
+    <circle class="k-paper" cx="20.5" cy="28.2" r="1.7"/>
+    <circle class="k-paper" cx="28.5" cy="28.2" r="1.7"/>
+  </symbol>
+  <symbol id="i-book" viewBox="0 0 64 64">
+    <rect class="k-ink" x="12" y="8" width="42" height="52" rx="3"/>
+    <rect class="k-paper" x="14" y="9" width="38" height="48" rx="1.5"/>
+    <rect class="k-gold" x="46" y="12" width="12" height="6" rx="1.5"/>
+    <rect class="k-line" x="46" y="22" width="12" height="6" rx="1.5"/>
+    <rect class="k-gold" x="46" y="32" width="12" height="6" rx="1.5"/>
+    <rect fill="currentColor" x="8" y="4" width="42" height="52" rx="3"/>
+    <rect class="k-paper" opacity=".9" x="15" y="13" width="28" height="10" rx="1.5"/>
+    <rect class="k-paper" opacity=".4" x="15" y="29" width="24" height="2.8" rx="1.4"/>
+    <rect class="k-paper" opacity=".4" x="15" y="35" width="19" height="2.8" rx="1.4"/>
+    <rect class="k-paper" opacity=".4" x="15" y="41" width="22" height="2.8" rx="1.4"/>
+  </symbol>
+  <symbol id="i-gear" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2"/>
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2" transform="rotate(45 32 32)"/>
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2" transform="rotate(90 32 32)"/>
+    <rect fill="currentColor" x="27.5" y="4" width="9" height="56" rx="2" transform="rotate(135 32 32)"/>
+    <circle fill="currentColor" cx="32" cy="32" r="19"/>
+    <circle class="k-paper" cx="32" cy="32" r="8"/>
+  </symbol>
+  <symbol id="i-sql" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M12 4h30l10 10v46H12z"/>
+    <path class="k-paper" opacity=".5" d="M42 4v10h10z"/>
+    <rect class="k-paper" x="18" y="20" width="24" height="3.4" rx="1.7"/>
+    <rect class="k-paper" x="18" y="29" width="13" height="3.4" rx="1.7"/>
+    <rect class="k-gold" x="34" y="26" width="11" height="9" rx="2"/>
+    <rect class="k-paper" x="18" y="40" width="26" height="3.4" rx="1.7"/>
+    <rect class="k-paper" x="18" y="48" width="17" height="3.4" rx="1.7"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 14v36c0 5 9.8 9 22 9s22-4 22-9V14z"/>
+    <ellipse fill="currentColor" cx="32" cy="14" rx="22" ry="9"/>
+    <ellipse class="k-paper" opacity=".3" cx="32" cy="14" rx="22" ry="9"/>
+    <path class="ks-paper" opacity=".6" stroke-width="2" d="M10 27c0 5 9.8 9 22 9s22-4 22-9M10 39c0 5 9.8 9 22 9s22-4 22-9"/>
+  </symbol>
+  <symbol id="i-unbox" viewBox="0 0 64 64">
+    <rect class="k-gold" x="19" y="6" width="12" height="12" rx="2"/>
+    <rect class="k-line" x="34" y="12" width="11" height="11" rx="2"/>
+    <path fill="currentColor" opacity=".7" d="M8 30 3 21h22l5 9zM56 30l5-9H39l-5 9z"/>
+    <path fill="currentColor" d="M8 30h48v26a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4z"/>
+    <rect class="k-paper" opacity=".45" x="15" y="38" width="34" height="3" rx="1.5"/>
+    <rect class="k-paper" opacity=".45" x="15" y="45" width="34" height="3" rx="1.5"/>
+  </symbol>
+  <symbol id="i-chat" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M8 10h48a4 4 0 0 1 4 4v28a4 4 0 0 1-4 4H26L14 56V46H8a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4z"/>
+    <circle class="k-paper" cx="20" cy="28" r="3.5"/>
+    <circle class="k-paper" cx="32" cy="28" r="3.5"/>
+    <circle class="k-paper" cx="44" cy="28" r="3.5"/>
+  </symbol>
+  <symbol id="i-note" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="11" y="5" width="43" height="55" rx="4"/>
+    <rect class="k-ink" x="6" y="12" width="10" height="4" rx="2"/>
+    <rect class="k-ink" x="6" y="24" width="10" height="4" rx="2"/>
+    <rect class="k-ink" x="6" y="36" width="10" height="4" rx="2"/>
+    <rect class="k-ink" x="6" y="48" width="10" height="4" rx="2"/>
+    <rect class="k-paper" opacity=".85" x="21" y="14" width="25" height="3" rx="1.5"/>
+    <rect class="k-paper" opacity=".85" x="21" y="22" width="19" height="3" rx="1.5"/>
+    <rect class="k-paper" opacity=".85" x="21" y="30" width="22" height="3" rx="1.5"/>
+    <circle class="k-gold" cx="40" cy="47" r="7"/>
+    <path class="ks-ink" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M36.5 47l2.5 2.5 4.5-5"/>
+  </symbol>
+  <symbol id="i-plug" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 18h14a6 6 0 1 1 12 0h14v14a6 6 0 1 0 0 12v14H36a6 6 0 1 1-12 0H10V44a6 6 0 1 0 0-12z"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>MyBatis</span><span aria-hidden="true">/</span><span class="tb-here">MyBatis 执行流程</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">MYBATIS 3.5 · MAPPER · SQLSESSION · EXECUTOR</p>
+  <h1>一行 Java，怎么变成 SQL，又变回对象</h1>
+  <p class="lead">你只写了一个接口方法和一段 SQL。中间那些活：找到 SQL、填参数、发给数据库、把一行行结果变成对象，全是 MyBatis 替你干的。</p>
+
+  <div class="trans">
+    <div class="tp" data-role="api"><small>你写的调用</small><code>orderMapper.selectById(7)</code></div>
+    <span class="tarr" aria-hidden="true">→</span>
+    <div class="tp" data-role="jdbc"><small>MyBatis 拼出的 SQL</small><pre><code>SELECT id, order_no, amount
+FROM t_order
+WHERE id = ?</code></pre><span class="pchip">? ← 7</span></div>
+    <span class="tarr mid" aria-hidden="true">→</span>
+    <div class="tp" data-role="db"><small>数据库回来的行</small>
+      <table class="rows"><thead><tr><th>id</th><th>order_no</th><th>amount</th></tr></thead><tbody><tr><td>7</td><td>NO20261105</td><td>99.00</td></tr></tbody></table>
+    </div>
+    <span class="tarr" aria-hidden="true">→</span>
+    <div class="tp" data-role="api"><small>你拿到的对象</small><code>Order{id=7, orderNo="NO20261105", amount=99.00}</code></div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="api">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-proxy"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">替身<code>MapperProxy</code></div>
+        <p>你注入的 Mapper 接口，背后是它。拿<b>接口全名 + 方法名</b>去找 SQL。</p>
+        <span class="belong">JDK 动态代理</span>
+      </div>
+    </div>
+    <div class="who" data-role="conf">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-book"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">总手册<code>Configuration</code></div>
+        <p>启动时把 XML 全读进来，<b>每条 SQL 一页</b>，叫 MappedStatement。</p>
+        <span class="belong">启动时编好，运行时只查</span>
+      </div>
+    </div>
+    <div class="who" data-role="exec">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-gear"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">执行器<code>Executor</code></div>
+        <p>管缓存：<b>先翻缓存</b>，没有才去数据库。</p>
+        <span class="belong">每个 SqlSession 一个</span>
+      </div>
+    </div>
+    <div class="who" data-role="jdbc">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sql"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">跑腿三兄弟<code>StatementHandler 等</code></div>
+        <p>准备语句、<b>填问号</b>、拆结果。最后干活的都是 JDBC。</p>
+        <span class="belong">Statement · Parameter · ResultSet Handler</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="api"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-chat"/></svg><span><b>会话</b> SqlSession，一次和数据库打交道的过程</span></span>
+    <span class="ex" data-role="exec"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-note"/></svg><span><b>两级缓存</b> 会话内的一级、命名空间的二级</span></span>
+    <span class="ex" data-role="jdbc"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-unbox"/></svg><span><b>翻译</b> TypeHandler，Java 类型和 JDBC 类型互转</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><span><b>插件</b> 能插在四个对象上，分页插件就是这么来的</span></span>
+  </div>
+</header>
+
+<!-- ================= BOOT ================= -->
+<section id="boot">
+  <div>
+    <h2>启动时：先把手册编好</h2>
+    <p class="lead">MyBatis 启动时把配置和每个 Mapper XML 读一遍，一条 SQL 变成手册里的一页。运行时不再读 XML，只按编号翻页。</p>
+  </div>
+  <div class="bflow">
+    <div class="codebox">
+      <div class="code-bar"><code>OrderMapper.xml</code></div>
+<pre><code><span class="tg">&lt;mapper</span> namespace=<span class="st-s">"com.shop.mapper.OrderMapper"</span><span class="tg">&gt;</span>
+  <span class="tg">&lt;select</span> id=<span class="st-s">"selectById"</span> resultType=<span class="st-s">"Order"</span><span class="tg">&gt;</span>
+    SELECT id, order_no, amount
+    FROM t_order
+    WHERE id = #{id}
+  <span class="tg">&lt;/select&gt;</span>
+<span class="tg">&lt;/mapper&gt;</span></code></pre>
+    </div>
+    <span class="fa" aria-hidden="true">→</span>
+    <div class="ms">
+      <div class="ms-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-book"/></svg><div><b>手册里的一页</b><small>MappedStatement</small></div></div>
+      <dl>
+        <dt>编号</dt><dd class="key"><code>com.shop.mapper.OrderMapper.selectById</code></dd>
+        <dt>类型</dt><dd>SELECT</dd>
+        <dt>SQL</dt><dd>RawSqlSource：没有动态标签，<code>#{id}</code> 启动时就换成了 <code>?</code></dd>
+        <dt>结果</dt><dd>按 <code>Order</code> 自动映射</dd>
+        <dt>语句</dt><dd>PREPARED，也就是 PreparedStatement</dd>
+        <dt>缓存</dt><dd>useCache=true，flushCache=false（select 的默认值）</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="note-box"><b>关键</b><span>编号 = <code>namespace</code> + <code>id</code>。运行时替身拿“接口全名 + 方法名”来翻页，两边必须一字不差。对不上就是那句 <code>Invalid bound statement (not found)</code>。</span></div>
+  <div class="cfg"><b>总手册里还有：</b><span>所有 MappedStatement</span><span>ResultMap</span><span>Mapper 接口登记表</span><span>TypeHandler 登记表</span><span>插件链</span><span>二级缓存</span></div>
+  <div class="minis">
+    <div class="mini"><b>在 Spring Boot 里谁来编</b><p><code>MybatisAutoConfiguration</code> 读 <code>mybatis.*</code> 配置，造好 SqlSessionFactory 和 SqlSessionTemplate。就是<a href="../spring/spring-boot-autoconfig.html">第 03 篇</a>讲的自动配置。</p></div>
+    <div class="mini"><b>Mapper 怎么变成 Bean</b><p><code>@MapperScan</code> 或 <code>@Mapper</code> 把每个接口登记成 MapperFactoryBean，你注入拿到的就是 MapperProxy。</p></div>
+    <div class="mini"><b>XML 从哪读</b><p><code>mybatis.mapper-locations</code> 指定的路径；或者放在和接口同一个包路径下，登记接口时会顺手加载。</p></div>
+  </div>
+</section>
+
+<!-- ================= MAIN ================= -->
+<section id="main-line">
+  <div>
+    <h2>运行时：一次查询经过的人</h2>
+    <p class="lead">从上往下一层层交下去，结果再一层层交回来。</p>
+  </div>
+  <div class="lanes">
+    <div class="lane" data-role="api">
+      <div class="lane-l"><b>接口层</b><small>你看得见的</small></div>
+      <div class="lane-s">
+        <div class="stn"><span class="n">1</span><b>替身翻手册，找到这一页</b><code>MapperProxy → MapperMethod</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">2</span><b>变成一次会话调用</b><code>sqlSession.selectOne("…selectById", 7)</code></div>
+      </div>
+    </div>
+    <div class="lane" data-role="exec">
+      <div class="lane-l"><b>执行器</b><small>拼 SQL、查缓存</small></div>
+      <div class="lane-s">
+        <div class="stn"><span class="n">3</span><b>拼出最终 SQL，算缓存 key</b><code>getBoundSql · createCacheKey</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">4</span><b>查二级缓存</b><code>CachingExecutor</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">5</span><b>查一级缓存</b><code>BaseExecutor.localCache</code></div>
+      </div>
+    </div>
+    <div class="lane" data-role="jdbc">
+      <div class="lane-l"><b>JDBC</b><small>真正干活</small></div>
+      <div class="lane-s">
+        <div class="stn"><span class="n">6</span><b>准备语句</b><code>StatementHandler</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">7</span><b>填问号</b><code>ParameterHandler</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">8</span><b>执行</b><code>ps.execute()</code></div><span class="arr" aria-hidden="true">→</span>
+        <div class="stn"><span class="n">9</span><b>行变对象</b><code>ResultSetHandler</code></div>
+      </div>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span>打个断点看调用栈，就是这样一层套一层（最上面先调用）</span></div>
+    <ol class="stack">
+      <li data-role="api"><span>orderMapper.selectById(7)</span><small>其实是 MapperProxy</small></li>
+      <li data-role="api" style="margin-left:12px"><span>MapperProxy.invoke → MapperMethod.execute</span><small>翻手册</small></li>
+      <li data-role="api" style="margin-left:24px"><span>SqlSessionTemplate.selectOne</span><small>Spring 里才有这层</small></li>
+      <li data-role="api" style="margin-left:36px"><span>DefaultSqlSession.selectOne → selectList</span><small>会话</small></li>
+      <li data-role="exec" style="margin-left:48px"><span>CachingExecutor.query</span><small>二级缓存</small></li>
+      <li data-role="exec" style="margin-left:60px"><span>BaseExecutor.query → queryFromDatabase</span><small>一级缓存</small></li>
+      <li data-role="exec" style="margin-left:72px"><span>SimpleExecutor.doQuery</span><small>默认执行器</small></li>
+      <li data-role="jdbc" style="margin-left:84px"><span>PreparedStatementHandler.query</span><small>JDBC</small></li>
+      <li data-role="db" style="margin-left:96px"><span>PreparedStatement.execute()</span><small>数据库</small></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ================= WALK ================= -->
+<section id="walk">
+  <div>
+    <h2>跟着一次调用走一遍</h2>
+    <p class="lead">选一个剧情，一步一步看：SQL 拼成了什么样，缓存里有什么，数据库被查了几次，最后返回了什么。</p>
+  </div>
+
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-first" data-scene="first" aria-pressed="true">第一次查询</button>
+    <button class="tab" id="sc-tx" data-scene="tx" aria-pressed="false">同一事务再查</button>
+    <button class="tab" id="sc-notx" data-scene="notx" aria-pressed="false">没开事务再查</button>
+    <button class="tab" id="sc-dyn" data-scene="dyn" aria-pressed="false">动态 SQL</button>
+    <button class="tab" id="sc-ins" data-scene="ins" aria-pressed="false">插入拿 id</button>
+    <button class="tab" id="sc-miss" data-scene="miss" aria-pressed="false">XML 没加载</button>
+  </div>
+
+  <div class="sim">
+    <div class="track">
+      <div class="reqline" id="reqline">orderMapper.selectById(7)</div>
+      <ol class="gsl">
+        <li class="gs" id="g0"><span class="n">1</span><span class="gs-t"><b>替身翻手册</b><code>MapperProxy → MapperMethod</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g1"><span class="n">2</span><span class="gs-t"><b>会话</b><code>SqlSessionTemplate → DefaultSqlSession</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs-grp" data-role="exec">Executor 里面</li>
+        <li class="gs in" id="g2"><span class="n">3</span><span class="gs-t"><b>拼 SQL</b><code>getBoundSql + CacheKey</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs in" id="g3"><span class="n">4</span><span class="gs-t"><b>二级缓存</b><code>CachingExecutor</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs in" id="g4"><span class="n">5</span><span class="gs-t"><b>一级缓存</b><code>BaseExecutor.localCache</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs-grp" data-role="jdbc">StatementHandler 里面（JDBC）</li>
+        <li class="gs in" id="g5"><span class="n">6</span><span class="gs-t"><b>准备语句</b><code>prepareStatement</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs in" id="g6"><span class="n">7</span><span class="gs-t"><b>填问号</b><code>ParameterHandler + TypeHandler</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs in" id="g7"><span class="n">8</span><span class="gs-t"><b>执行</b><code>ps.execute()</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs in" id="g8"><span class="n">9</span><span class="gs-t"><b>处理结果</b><code>ResultSetHandler · KeyGenerator</code></span><span class="mk" aria-hidden="true"></span></li>
+        <li class="gs" id="g9"><span class="n">10</span><span class="gs-t"><b>回程</b><code>放缓存，返回</code></span><span class="mk" aria-hidden="true"></span></li>
+      </ol>
+      <p class="track-foot">剧情里 OrderMapper.xml 没写 &lt;cache/&gt;，也就是没开二级缓存，这是最常见的配置。</p>
+    </div>
+    <div class="side">
+      <div class="box" id="box-sql" data-role="jdbc"><h3>SQL · BoundSql</h3><div id="sql"></div></div>
+      <div class="box" id="box-cache" data-role="exec"><h3>会话和缓存</h3><div id="cache"></div></div>
+      <div class="box" id="box-res" data-role="other"><h3>返回给你的</h3><div id="res"></div></div>
+    </div>
+  </div>
+
+  <div class="cap" id="cap" data-role="api" aria-live="polite">
+    <div class="cap-n" id="capN">1/10</div>
+    <div class="cap-who"><code id="capCall">MapperProxy.invoke</code></div>
+    <div class="cap-say" id="capSay"></div>
+  </div>
+  <div class="ctrl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+</section>
+
+<!-- ================= SQL ================= -->
+<section id="sql-build">
+  <div>
+    <h2>拼 SQL：动态标签，#{} 和 ${}</h2>
+    <p class="lead">第 3 步“拼 SQL”有两件事：先按参数把动态标签算一遍，再把 #{} 换成问号。</p>
+  </div>
+  <div class="dyn">
+    <div class="codebox">
+      <div class="code-bar"><code>selectByCond</code></div>
+<pre><code><span class="tg">&lt;select</span> id=<span class="st-s">"selectByCond"</span> resultType=<span class="st-s">"Order"</span><span class="tg">&gt;</span>
+  SELECT id, order_no, amount FROM t_order
+  <span class="tg">&lt;where&gt;</span>
+    <span class="tg">&lt;if</span> test=<span class="st-s">"status != null"</span><span class="tg">&gt;</span>
+      AND status = #{status}
+    <span class="tg">&lt;/if&gt;</span>
+    <span class="tg">&lt;if</span> test=<span class="st-s">"keyword != null and keyword != ''"</span><span class="tg">&gt;</span>
+      AND order_no LIKE CONCAT('%', #{keyword}, '%')
+    <span class="tg">&lt;/if&gt;</span>
+  <span class="tg">&lt;/where&gt;</span>
+<span class="tg">&lt;/select&gt;</span></code></pre>
+    </div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th scope="col">status</th><th scope="col">keyword</th><th scope="col">拼出来的 WHERE</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>null</td><td><code>WHERE status = ?</code></td></tr>
+          <tr><td>null</td><td>"1105"</td><td><code>WHERE order_no LIKE CONCAT('%', ?, '%')</code><br><small>开头的 AND 被 &lt;where&gt; 去掉了</small></td></tr>
+          <tr><td>1</td><td>"1105"</td><td><code>WHERE status = ? AND order_no LIKE …</code></td></tr>
+          <tr><td>null</td><td>null</td><td class="warn">没有 WHERE，整张表都查出来</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="tags">
+    <div class="tag"><code>&lt;if&gt;</code><span>条件成立才留下这段</span></div>
+    <div class="tag"><code>&lt;where&gt;</code><span>有内容才加 WHERE，去掉开头的 AND / OR</span></div>
+    <div class="tag"><code>&lt;set&gt;</code><span>UPDATE 用，去掉末尾多余的逗号</span></div>
+    <div class="tag"><code>&lt;foreach&gt;</code><span>把集合展开成 IN (?, ?, ?) 或批量 VALUES</span></div>
+    <div class="tag"><code>&lt;choose&gt;</code><span>多选一，相当于 if / else if / else</span></div>
+    <div class="tag"><code>&lt;sql&gt; + &lt;include&gt;</code><span>抽出公共片段，比如列名清单</span></div>
+  </div>
+
+  <div class="inj" id="inj">
+    <label for="injIn">用户在搜索框里输入（可以改）：</label>
+    <input id="injIn" type="text" value="tom' OR '1'='1" autocomplete="off" spellcheck="false">
+    <div class="ij-row">
+      <div class="ij" data-role="done">
+        <h3>WHERE name = #{name}</h3>
+        <pre class="sqltxt" id="ijHash"></pre>
+        <p id="ijHashP"></p>
+        <p class="v">输入原样当成一个字符串值，查不到人，也改不了 SQL。</p>
+      </div>
+      <div class="ij" id="ijDollarBox" data-role="bad">
+        <h3>WHERE name = '${name}'</h3>
+        <pre class="sqltxt" id="ijDollar"></pre>
+        <p class="v" id="ijVerdict"></p>
+      </div>
+    </div>
+    <p class="tip"><code>#{}</code> 变成问号，用 PreparedStatement 传值；<code>${}</code> 是直接把字符串拼进 SQL。表名、ORDER BY 的列名这类不能用问号的地方才用 <code>${}</code>，而且只接受白名单里的值。</p>
+  </div>
+</section>
+
+<!-- ================= CACHE ================= -->
+<section id="cache-sec">
+  <div>
+    <h2>两级缓存</h2>
+    <p class="lead">查询顺序是先二级、再一级、最后数据库。一级默认开着，二级要自己在 XML 里写 &lt;cache/&gt;。</p>
+  </div>
+  <div class="cdia">
+    <div class="ns">
+      <div class="ns-h"><b>二级缓存</b><code>OrderMapper 命名空间</code><small>写了 &lt;cache/&gt; 才有。所有 SqlSession 共用，会话提交或关闭后，结果才放进来。</small></div>
+      <div class="ss-row">
+        <div class="ss"><b>SqlSession #1</b><small>一级缓存，只有 #1 自己能看到</small><div class="chips"><span>selectById · 7</span></div></div>
+        <div class="ss"><b>SqlSession #2</b><small>一级缓存，只有 #2 自己能看到</small><div class="chips"><span>selectByCond · 1</span></div></div>
+      </div>
+    </div>
+    <span class="fa" aria-hidden="true">→</span>
+    <div class="dbbox"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><span>两级都没命中，才查数据库</span></div>
+  </div>
+  <div class="qorder"><b>查询顺序：</b><span class="q2">二级缓存</span><span aria-hidden="true">→</span><span class="q1">一级缓存</span><span aria-hidden="true">→</span><span class="q0">数据库</span></div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col"></th><th scope="col">一级缓存</th><th scope="col">二级缓存</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">默认</th><td>开着</td><td>关着，要在 Mapper XML 里写 <code>&lt;cache/&gt;</code></td></tr>
+        <tr><th scope="row">范围</th><td>一个 SqlSession</td><td>一个 namespace，跨 SqlSession</td></tr>
+        <tr><th scope="row">什么时候放进去</th><td>查完马上放</td><td>SqlSession 提交或关闭之后</td></tr>
+        <tr><th scope="row">什么时候清空</th><td>本会话任何增删改、commit、rollback、close</td><td>本 namespace 的增删改</td></tr>
+        <tr><th scope="row">在 Spring 里</th><td>没开事务时每次调用都是新会话，基本用不上</td><td>多台机器各存各的；别的 namespace 改了同一张表不会清，容易读到脏数据</td></tr>
+        <tr><th scope="row">要求</th><td>无</td><td>实体要实现 <code>Serializable</code>，默认返回的是序列化出来的副本</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tip">实际项目里，二级缓存很少开。要缓存，一般在 Service 层用 Redis 自己管。</p>
+</section>
+
+<!-- ================= PLUGIN ================= -->
+<section id="plugin">
+  <div>
+    <h2>插件：能插在哪四个地方</h2>
+    <p class="lead">MyBatis 只允许拦这四个对象。插件就是给它们套一层 JDK 动态代理，方法被调用时先经过你。</p>
+  </div>
+  <div class="four">
+    <div class="fo" data-role="exec"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>Executor</b></div><code>query · update · commit · rollback</code><p>例：PageHelper 分页，在这里改写 SQL、先查总数。</p></div>
+    <div class="fo" data-role="jdbc"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>StatementHandler</b></div><code>prepare · parameterize · query · update</code><p>例：慢 SQL 统计、多租户自动加条件。</p></div>
+    <div class="fo" data-role="jdbc"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>ParameterHandler</b></div><code>setParameters</code><p>例：入库前给手机号加密。</p></div>
+    <div class="fo" data-role="jdbc"><div class="fo-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plug"/></svg><b>ResultSetHandler</b></div><code>handleResultSets</code><p>例：查出来后给身份证号打码。</p></div>
+  </div>
+  <div class="pcode">
+    <div class="codebox">
+      <div class="code-bar"><span>一个统计慢 SQL 的插件</span></div>
+<pre><code><span class="an">@Intercepts</span>(<span class="an">@Signature</span>(type = StatementHandler.<span class="kw">class</span>, method = <span class="st-s">"query"</span>,
+        args = {Statement.<span class="kw">class</span>, ResultHandler.<span class="kw">class</span>}))
+<span class="kw">public class</span> SlowSqlPlugin <span class="kw">implements</span> Interceptor {
+    <span class="an">@Override</span>
+    <span class="kw">public</span> Object intercept(Invocation inv) <span class="kw">throws</span> Throwable {
+        <span class="kw">long</span> start = System.currentTimeMillis();
+        <span class="kw">try</span> {
+            <span class="kw">return</span> inv.proceed();                <span class="cm">// 继续往下走</span>
+        } <span class="kw">finally</span> {
+            <span class="kw">long</span> cost = System.currentTimeMillis() - start;
+            <span class="kw">if</span> (cost &gt; 500) log.warn(<span class="st-s">"慢 SQL {} ms"</span>, cost);
+        }
+    }
+}</code></pre>
+    </div>
+    <ul class="facts">
+      <li>在 Spring Boot 里声明成 <code>@Bean</code> 就行，自动配置会把所有 Interceptor 装进去。</li>
+      <li>多个插件一层套一层：后登记的在最外层，最先执行。</li>
+      <li>插件拿到的是真实对象的方法调用，改错了会影响每一条 SQL。写之前先想清楚要拦哪个方法。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：流程一样，依赖版本不同</h2>
+    <p class="lead">MyBatis 本体两边都是 3.5.x，上面讲的流程完全一样。变的是和 Spring Boot 对接的那几个包。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li><code>mybatis-spring-boot-starter</code> 2.3.x（配 Boot 2.7），里面是 mybatis-spring 2.1.x</li>
+        <li>MyBatis-Plus 用 <code>mybatis-plus-boot-starter</code></li>
+        <li>注解里写长 SQL，只能用字符串拼接：</li>
+      </ul>
+      <div class="codebox">
+<pre><code><span class="an">@Select</span>(<span class="st-s">"SELECT id, order_no, amount "</span> +
+        <span class="st-s">"FROM t_order "</span> +
+        <span class="st-s">"WHERE status = #{status}"</span>)
+List&lt;Order&gt; selectByStatus(<span class="kw">int</span> status);</code></pre>
+      </div>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li><code>mybatis-spring-boot-starter</code> 3.0.x，里面是 mybatis-spring 3.0.x，最低要 JDK 17</li>
+        <li>MyBatis-Plus 要换成 <code>mybatis-plus-spring-boot3-starter</code>，用老的会启动失败</li>
+        <li>自动配置登记在 <code>AutoConfiguration.imports</code> 里（<a href="../spring/spring-boot-autoconfig.html">第 03 篇</a>）</li>
+        <li>注解里的 SQL 可以用文本块，好读多了：</li>
+      </ul>
+      <div class="codebox">
+<pre><code><span class="an">@Select</span>(<span class="st-s">"""
+        SELECT id, order_no, amount
+        FROM t_order
+        WHERE status = #{status}
+        """</span>)
+List&lt;Order&gt; selectByStatus(<span class="kw">int</span> status);</code></pre>
+      </div>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>启动时编手册</span><span>MapperProxy → SqlSession → Executor → StatementHandler</span><span>两级缓存</span><span>四大对象和插件</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">先想清楚问题出在哪一步：启动时编手册、拼 SQL、查缓存，还是把行变成对象。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="conf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-book"/></svg><b>Invalid bound statement (not found)</b><p>手册里没有这一页。查 <code>mybatis.mapper-locations</code> 的路径；XML 放在 src/main/java 下的话，Maven 默认不打包；再核对 namespace 和 id 跟接口全名、方法名是否一致。</p></div>
+    <div class="pit" data-role="api"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-proxy"/></svg><b>Parameter 'status' not found. Available parameters are [arg1, arg0, param1, param2]</b><p>方法有多个参数，没写 <code>@Param</code>，编译时又没带 <code>-parameters</code>，MyBatis 拿不到参数名。给每个参数加上 <code>@Param("status")</code>。</p></div>
+    <div class="pit" data-role="bad"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sql"/></svg><b>用了 ${}，被 SQL 注入</b><p>值一律用 <code>#{}</code>。排序列名这类只能用 <code>${}</code> 的，先和白名单比对。</p></div>
+    <div class="pit" data-role="jdbc"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-unbox"/></svg><b>查出来 orderNo 是 null</b><p>列名 <code>order_no</code> 和属性名 <code>orderNo</code> 对不上。配 <code>mybatis.configuration.map-underscore-to-camel-case=true</code>，或者写 resultMap。</p></div>
+    <div class="pit" data-role="api"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-proxy"/></svg><b>TooManyResultsException: Expected one result (or null) … but found: 2</b><p>返回单个对象的方法查出了多行。检查 WHERE 条件，或者把返回类型改成 List。</p></div>
+    <div class="pit" data-role="exec"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-note"/></svg><b>一级缓存：不开事务不生效，开了事务又读到旧数据</b><p>没事务时每次调用一个新 SqlSession；有事务时，同一会话里第二次查直接拿缓存，看不到别人刚改的数据。不想要它，配 <code>local-cache-scope=statement</code>。</p></div>
+    <div class="pit" data-role="conf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sql"/></svg><b>&lt;if test="status != null and status != ''"&gt;，status 传 0，条件没了</b><p>OGNL 把 <code>''</code> 当成 0 来比，0 != '' 不成立。数字参数只判断 <code>!= null</code>。</p></div>
+    <div class="pit" data-role="conf"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sql"/></svg><b>&lt;foreach&gt; 遇到空集合，SQL 报语法错</b><p>拼出了 <code>IN ()</code>。调用前先判空，空集合直接返回空结果。</p></div>
+    <div class="pit" data-role="jdbc"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-unbox"/></svg><b>insert 之后拿不到 id</b><p>方法返回的是影响行数。配 <code>useGeneratedKeys="true" keyProperty="id"</code>，id 会写回你传进去的那个对象。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>查一个列表，日志里刷出一堆小 SQL</b><p>N+1 问题：<code>&lt;association&gt;</code> / <code>&lt;collection&gt;</code> 用了 select 嵌套查询，每一行再查一次。改成 JOIN 加 resultMap，或者打开懒加载。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 MyBatis 3.5、mybatis-spring-boot-starter 2.3 / 3.0 为例。相关：<a href="../spring/spring-aop-tx.html">Spring AOP 与事务</a>（事务决定了用哪个 SqlSession） · <a href="../spring/spring-boot-autoconfig.html">Spring Boot 自动配置</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- walk-through ---------- */
+  var N=10;
+  var SEL='SELECT id, order_no, amount\nFROM t_order\nWHERE id = ?';
+  var Q7={text:SEL, params:['? ← 7']};
+  var Q7F={text:SEL, params:['setLong(1, 7)'], filled:1};
+  var ORDER7='Order{id=7, orderNo="NO20261105", amount=99.00}';
+  var NOC2='没配 <cache/>，不查';
+
+  var SC={
+    first:{req:'orderMapper.selectById(7)', note:'第一次调用', init:{sess:'—', c1:[], c2:NOC2, db:0}, steps:[
+      {at:0, call:'MapperProxy.invoke(…)', say:'你注入的 orderMapper 其实是 JDK 动态代理。它把接口全名和方法名拼成 com.shop.mapper.OrderMapper.selectById，去手册里翻到这一页：一条 SELECT，返回单个 Order。'},
+      {at:1, hl:'cache', sess:'#1', call:'sqlSession.selectOne("…selectById", 7)', say:'变成一次 SqlSession 调用。在 Spring 里先经过 SqlSessionTemplate：有事务就用事务绑定的那个，没有就新开一个。这里新开了 #1。'},
+      {at:2, hl:'sql', sql:Q7, call:'ms.getBoundSql(7)', say:'从手册那一页取出 SQL。这条没有动态标签，#{id} 启动时就换成了 ?。再用“编号 + SQL + 参数值”算出缓存 key。'},
+      {at:3, hl:'cache', call:'CachingExecutor.query(…)', say:'二级缓存：OrderMapper.xml 没写 <cache/>，这一层直接放行。'},
+      {at:4, hl:'cache', call:'BaseExecutor.query(…)', say:'一级缓存：#1 里还没查过这个 key，没命中，准备去数据库。'},
+      {at:5, call:'PreparedStatementHandler.prepare(…)', say:'默认用 PreparedStatement。拿到数据库连接，调用 connection.prepareStatement(sql)。'},
+      {at:6, hl:'sql', sql:Q7F, call:'LongTypeHandler.setParameter(…)', say:'ParameterHandler 按顺序填问号。参数是 Long，交给 LongTypeHandler，它调用 ps.setLong(1, 7)。'},
+      {at:7, hl:'cache', db:1, call:'ps.execute()', say:'把 SQL 发给数据库。数据库回来一行：7 | NO20261105 | 99.00。'},
+      {at:8, hl:'res', res:{t:ORDER7, ok:1}, call:'DefaultResultSetHandler.handleResultSets(…)', say:'ResultSetHandler 先 new 一个 Order，再按列名填值。order_no 能对上 orderNo，是因为开了驼峰映射。每个值都由 TypeHandler 从 ResultSet 里读出来。'},
+      {at:9, hl:'cache', kind:'done', c1:['selectById · 7'], call:'localCache.putObject(key, list)', say:'结果先放进 #1 的一级缓存，再一路返回。selectOne 看到正好一条，把它交给你。'}
+    ]},
+    tx:{req:'orderMapper.selectById(7)', note:'同一个 @Transactional 方法里，第二次调用', init:{sess:'#1', c1:['selectById · 7'], c2:NOC2, db:1}, steps:[
+      {at:0, call:'MapperProxy.invoke(…)', say:'同一个 @Transactional 方法里，又调用了一次 selectById(7)。'},
+      {at:1, hl:'cache', call:'SqlSessionTemplate', say:'当前事务已经绑了一个 SqlSession，就是刚才那个 #1，接着用。'},
+      {at:2, hl:'sql', sql:Q7, call:'ms.getBoundSql(7)', say:'SQL 和参数都一样，算出的缓存 key 也和上次一样。'},
+      {at:3, call:'CachingExecutor.query(…)', say:'二级缓存没配，放行。'},
+      {at:4, hl:'cache', marks:{4:'done',5:'skip',6:'skip',7:'skip',8:'skip'}, res:{t:ORDER7+'，和上次是同一个对象', ok:1}, kind:'done', call:'localCache.getObject(key)', say:'一级缓存命中，直接拿出上次的结果，不碰数据库。发到数据库的 SQL 还是 1 条。'},
+      {at:9, kind:'done', call:'return', say:'返回。拿到的是缓存里的同一个对象：改了它的字段，后面再查拿到的也是改过的。'}
+    ]},
+    notx:{req:'orderMapper.selectById(7)', note:'没加 @Transactional，紧接着第二次调用', init:{sess:'#1（已关闭）', c1:[], c2:NOC2, db:1}, steps:[
+      {at:0, call:'MapperProxy.invoke(…)', say:'没有事务，紧接着又调用了一次 selectById(7)。上一次用的 #1 已经关掉了。'},
+      {at:1, hl:'cache', sess:'#2', call:'SqlSessionTemplate', say:'没有事务可以绑，只能新开一个 SqlSession #2。一级缓存跟着会话走，#2 的是空的。'},
+      {at:2, sql:Q7, call:'ms.getBoundSql(7)', say:'缓存 key 和上次一样。'},
+      {at:4, hl:'cache', call:'BaseExecutor.query(…)', say:'可 #2 的一级缓存是空的，没命中。'},
+      {at:7, hl:'cache', db:2, sql:Q7F, call:'ps.execute()', say:'准备语句、填问号，又查了一次数据库。发到数据库的 SQL 变成 2 条。'},
+      {at:9, hl:'cache', kind:'done', sess:'#2（已关闭）', res:{t:ORDER7+'，是个新对象', ok:1}, call:'SqlSessionTemplate 关闭 #2', say:'用完就关掉 #2，它的一级缓存也一起没了。所以在 Spring 里不开事务，一级缓存基本用不上。'}
+    ]},
+    dyn:{req:'orderMapper.selectByCond(1, null)', note:'status = 1，keyword = null', init:{sess:'—', c1:[], c2:NOC2, db:0}, steps:[
+      {at:0, call:'MapperProxy.invoke(…)', say:'两个参数都写了 @Param。手册里这一页带 <where> 和 <if>，是条动态 SQL，每次调用都要现拼。'},
+      {at:1, sess:'#1', call:'sqlSession.selectList(…)', say:'返回类型是 List，变成 selectList 调用，拿到 SqlSession #1。'},
+      {at:2, hl:'sql', sql:{tpl:'<where> <if status != null> AND status = #{status} </if> <if keyword …> … </if> </where>', text:'SELECT id, order_no, amount\nFROM t_order\nWHERE status = ?', params:['? ← 1']}, call:'DynamicSqlSource.getBoundSql(…)', say:'用 OGNL 算每个 <if>：status 不是 null，留下 AND status = #{status}；keyword 是 null，那段整个丢掉。<where> 去掉开头多余的 AND，最后 #{} 换成 ?。'},
+      {at:4, hl:'cache', call:'BaseExecutor.query(…)', say:'二级缓存没配，一级缓存没命中。'},
+      {at:6, hl:'sql', sql:{tpl:'<where> <if status != null> AND status = #{status} </if> <if keyword …> … </if> </where>', text:'SELECT id, order_no, amount\nFROM t_order\nWHERE status = ?', params:['setInt(1, 1)'], filled:1}, call:'IntegerTypeHandler.setParameter(…)', say:'status 是 Integer，IntegerTypeHandler 调用 ps.setInt(1, 1)。'},
+      {at:7, hl:'cache', db:1, call:'ps.execute()', say:'数据库回来 3 行。'},
+      {at:9, hl:'res', kind:'done', c1:['selectByCond · 1, null'], res:{t:'List<Order>，3 个', ok:1}, call:'handleResultSets → 返回', say:'3 行变成 3 个 Order 装进 List，放进一级缓存后返回。'}
+    ]},
+    ins:{req:'orderMapper.insert(order)', note:'同一个事务里，前面查过一次 selectById(7)', init:{sess:'#1', c1:['selectById · 7'], c2:NOC2, db:1}, steps:[
+      {at:0, call:'MapperProxy.invoke(…)', say:'调用 insert(order)，order 里还没有 id。替身认出这是条 INSERT。'},
+      {at:1, call:'sqlSession.insert(…)', say:'同一个事务里，用的还是 SqlSession #1。'},
+      {at:2, hl:'sql', sql:{text:'INSERT INTO t_order (order_no, amount)\nVALUES (?, ?)', params:['? ← "NO20261106"','? ← 59.00']}, call:'ms.getBoundSql(order)', say:'#{orderNo}、#{amount} 换成两个 ?，值从 order 对象的属性里取。'},
+      {at:4, hl:'cache', c1:[], call:'BaseExecutor.update(…)', say:'增删改不查缓存。执行前先清空 #1 的一级缓存：数据要变了，旧结果不能再用。'},
+      {at:6, hl:'sql', sql:{text:'INSERT INTO t_order (order_no, amount)\nVALUES (?, ?)', params:['setString(1, "NO20261106")','setBigDecimal(2, 59.00)'], filled:1}, call:'StringTypeHandler · BigDecimalTypeHandler', say:'按类型分别交给 StringTypeHandler、BigDecimalTypeHandler 填值。'},
+      {at:7, hl:'cache', db:2, call:'ps.execute()', say:'执行 INSERT，影响 1 行。'},
+      {at:8, call:'Jdbc3KeyGenerator.processAfter(…)', say:'没有结果集要拆。配了 useGeneratedKeys="true" keyProperty="id"，Jdbc3KeyGenerator 读出数据库生成的 id 1001，写回你传进来的 order。'},
+      {at:9, hl:'res', kind:'done', res:{t:'返回 1（影响行数）；order.getId() = 1001', ok:1}, call:'return', say:'方法返回的是影响行数 1，不是 id。id 在 order 对象里。'}
+    ]},
+    miss:{req:'orderMapper.selectById(7)', note:'mapper-locations 写错了，OrderMapper.xml 没被读到', init:{sess:'—', c1:[], c2:'—', db:0}, steps:[
+      {at:0, hl:'res', marks:{0:'bad'}, kind:'fail', res:{t:'BindingException: Invalid bound statement (not found): com.shop.mapper.OrderMapper.selectById', ok:0}, call:'new MapperMethod(…)', say:'替身拿 com.shop.mapper.OrderMapper.selectById 去手册里翻，没有这一页，当场抛 BindingException。SQL 都没开始拼。'},
+      {at:0, marks:{1:'skip',2:'skip',3:'skip',4:'skip',5:'skip',6:'skip',7:'skip',8:'skip',9:'skip'}, kind:'fail', call:'排查', say:'手册缺页，问题出在启动时：mapper-locations 没配或路径写错；XML 放在 src/main/java 下，Maven 默认不打包；namespace、id 和接口全名、方法名对不上。'}
+    ]}
+  };
+
+  function stateAt(sc,pos){
+    var st={sess:sc.init.sess, c1:sc.init.c1, c2:sc.init.c2, db:sc.init.db, sql:null, res:null, marks:{}};
+    for(var i=0;i<=pos;i++){
+      var s=sc.steps[i];
+      ['sess','c1','c2','db','sql','res'].forEach(function(k){ if(s[k]!==undefined) st[k]=s[k]; });
+      if(s.marks) for(var k in s.marks) st.marks[k]=s.marks[k];
+    }
+    return st;
+  }
+  function sqlHtml(q){
+    if(!q) return '<p class="empty">还没拼</p>';
+    var h='';
+    if(q.tpl) h+='<div class="tpl">模板<code>'+esc(q.tpl)+'</code></div>';
+    h+='<pre class="sqltxt">'+esc(q.text)+'</pre>';
+    h+='<div class="prms">'+q.params.map(function(p){return '<span class="pa'+(q.filled?' f':'')+'">'+esc(p)+'</span>';}).join('')+'</div>';
+    return h;
+  }
+  function cacheHtml(st){
+    var h='<div class="kv"><span>SqlSession</span><code>'+esc(st.sess)+'</code></div>';
+    h+='<div class="kv"><span>一级缓存</span><div class="chips">'+(st.c1.length?st.c1.map(function(c){return '<span>'+esc(c)+'</span>';}).join(''):'<em>空</em>')+'</div></div>';
+    h+='<div class="kv"><span>二级缓存</span><div class="chips"><em>'+esc(st.c2)+'</em></div></div>';
+    h+='<div class="dbc"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><span>发到数据库的 SQL</span><b>'+st.db+'</b><span>条</span></div>';
+    return h;
+  }
+  function resHtml(r){
+    if(!r) return '<p class="empty">还在路上……</p>';
+    return '<div class="res '+(r.ok?'ok':'no')+'">'+esc(r.t)+'</div>';
+  }
+
+  var scene='first', pos=0, timer=null;
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  function render(){
+    var sc=SC[scene], s=sc.steps[pos], st=stateAt(sc,pos);
+    var reach=(s.reach!=null?s.reach:s.at);
+    $('reqline').innerHTML=esc(sc.req)+'<small>'+esc(sc.note)+'</small>';
+    for(var i=0;i<N;i++){
+      var cls='';
+      if(st.marks[i]) cls=st.marks[i];
+      else if(i===s.at) cls='on';
+      else if(i<=reach) cls='passed';
+      $('g'+i).className='gs'+(i>=2&&i<=8?' in':'')+(cls?' '+cls:'');
+    }
+    $('sql').innerHTML=sqlHtml(st.sql);
+    $('cache').innerHTML=cacheHtml(st);
+    $('res').innerHTML=resHtml(st.res);
+    $('box-res').setAttribute('data-role', st.res ? (st.res.ok?'done':'bad') : 'other');
+    $('box-sql').classList.toggle('hl', s.hl==='sql');
+    $('box-cache').classList.toggle('hl', s.hl==='cache');
+    $('box-res').classList.toggle('hl', s.hl==='res');
+    $('cap').setAttribute('data-role', s.kind==='fail' ? 'bad' : (s.kind==='done' ? 'done' : 'api'));
+    $('capN').textContent=(pos+1)+'/'+sc.steps.length;
+    $('capCall').textContent=s.call;
+    $('capSay').textContent=s.say;
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===sc.steps.length-1;
+  }
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<SC[scene].steps.length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=SC[scene].steps.length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 2200);
+  });
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop(); scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+  $('walk').addEventListener('keydown', function(e){
+    if(e.target.tagName==='INPUT') return;
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+  render();
+
+  /* ---------- #{} vs ${} ---------- */
+  function inj(){
+    var v=$('injIn').value;
+    $('ijHash').textContent='SELECT * FROM t_user\nWHERE name = ?';
+    $('ijHashP').textContent='第 1 个参数：'+JSON.stringify(v);
+    $('ijDollar').textContent="SELECT * FROM t_user\nWHERE name = '"+v+"'";
+    var broken = v.indexOf("'")>=0;
+    $('ijDollarBox').setAttribute('data-role', broken ? 'bad' : 'other');
+    $('ijVerdict').textContent = broken
+      ? 'SQL 被改写了：输入里的单引号提前结束了字符串，后面的内容变成了 SQL 的一部分。'
+      : '这次没出事。只要输入里带一个单引号，SQL 就会被改写。';
+  }
+  $('injIn').addEventListener('input', inj);
+  inj();
+})();
+</script>
+
+</body>
+</html>
