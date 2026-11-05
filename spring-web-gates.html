@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring MVC 请求关卡</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column. Hero = the cast of three characters; the request "office building" stepper is the anchor; reference blocks follow quietly. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --filter:#0D7A69; --filter-tint:#DCF0EB;
+  --inter:#B85F0C; --inter-tint:#FBE9D5;
+  --config:#3150C4; --config-tint:#E2E7FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --skin:#F1C6A0; --hair:#3B2A21; --gold:#E2B33C; --eye:#2A2320;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --filter:#40C6B0; --filter-tint:#12352F;
+    --inter:#F4A651; --inter-tint:#3A2812;
+    --config:#90A4FF; --config-tint:#1D2650;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --filter:#40C6B0; --filter-tint:#12352F;
+  --inter:#F4A651; --inter-tint:#3A2812;
+  --config:#90A4FF; --config-tint:#1D2650;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:44px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(38px,6.6vw,66px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:40em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible{outline:3px solid var(--config);outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* role colors */
+[data-role="filter"],[data-node="filter"]{--rc:var(--filter);--rt:var(--filter-tint)}
+[data-role="ic"],[data-node="ic"]{--rc:var(--inter);--rt:var(--inter-tint)}
+[data-role="config"]{--rc:var(--config);--rt:var(--config-tint)}
+[data-role="ds"],[data-node="ds"],[data-role="ctrl"],[data-node="ctrl"],[data-role="browser"],[data-node="browser"],[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-hair{fill:var(--hair)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)}
+.k-gold{fill:var(--gold)} .k-eye{fill:var(--eye)} .k-line{fill:var(--line-strong)}
+.ks-paper{stroke:var(--card);fill:none} .ks-eye{stroke:var(--eye);fill:none} .ks-ink{stroke:var(--ink);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:156px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:36px;line-height:1.1;color:var(--rc)}
+.plate code{font-size:15px;color:var(--ink);margin-left:6px;vertical-align:middle}
+.who p{max-width:19em}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink)}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- journey stage ---------- */
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.stage{display:grid;grid-template-columns:118px minmax(0,1fr);gap:14px;align-items:center}
+.node{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:14px;border:2px solid transparent;transition:background .25s,border-color .25s;min-width:0}
+.node .ico{width:58px;height:58px;flex:none}
+.nlabel{font-weight:700;font-size:15px;text-align:center;line-height:1.3;min-width:0}
+.nlabel code{display:block;font-weight:400;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.node.active{border-color:var(--rc);background:var(--rt)}
+.slot{min-height:30px;display:flex;align-items:center;justify-content:center}
+.n-browser{background:var(--card);border-color:var(--line)}
+.n-browser.active{border-color:var(--rc)}
+.building{position:relative;border:2px solid var(--line-strong);border-radius:20px;padding:34px 14px 14px;background:var(--card);min-width:0}
+.tag{position:absolute;top:9px;left:16px;font-size:12px;letter-spacing:.06em;color:var(--muted)}
+.band{border:2.5px dashed var(--filter);border-radius:16px;padding:12px;display:grid;grid-template-columns:108px minmax(0,1fr);gap:12px;align-items:center;transition:background .25s}
+.band.on{border-style:solid;background:var(--filter-tint)}
+.band-guard.active{background:var(--card)}
+.company{position:relative;border:2px solid var(--line);border-radius:14px;padding:32px 12px 12px;background:var(--paper);display:flex;flex-direction:column;gap:12px;min-width:0}
+.co-row{display:grid;grid-template-columns:minmax(0,1fr) 18px minmax(0,1fr) 18px minmax(0,1fr);align-items:center;gap:4px}
+.arr{color:var(--line-strong);text-align:center;font-size:20px;line-height:1}
+.plan-note{display:flex;gap:12px;align-items:center;border:2px dashed var(--config);border-radius:12px;padding:10px 12px;background:var(--config-tint);font-size:14px;line-height:1.55}
+.plan-note .ico{width:46px;height:46px;flex:none}
+.plan-note b{color:var(--ink)}
+.token{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:700;padding:3px 10px 3px 7px;border-radius:999px;color:var(--on-accent);white-space:nowrap;animation:pop .35s ease}
+.token svg{width:14px;height:14px;color:var(--on-accent)}
+.t-req{background:var(--config)} .t-ok{background:var(--good)} .t-bad{background:var(--bad)}
+@keyframes pop{from{transform:scale(.55);opacity:.2}to{transform:none;opacity:1}}
+
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,21px);font-weight:500;line-height:1.5;min-width:0}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.script{list-style:none;margin:0;padding:0;columns:2 320px;column-gap:24px}
+.script li{break-inside:avoid;display:grid;grid-template-columns:26px minmax(0,1fr);gap:0 10px;padding:7px 9px;margin-bottom:4px;border-radius:10px;font-size:14px;line-height:1.45;border:2px solid transparent}
+.script .sn{grid-row:span 2;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-mono);font-size:12px;font-weight:600;background:var(--neutral-tint);font-variant-numeric:tabular-nums}
+.script code{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.script .ss{color:var(--muted)}
+.script li.future{opacity:.55}
+.script li.now{background:var(--rt);border-color:var(--rc)}
+.script li.now .sn{background:var(--rc);color:var(--on-accent)}
+.script li.skip{opacity:.55}
+.script li.skip code{text-decoration:line-through}
+.script li.skip .sn{background:transparent;color:var(--bad)}
+
+/* ---------- lifecycle ---------- */
+.life{display:grid;grid-template-columns:minmax(150px,200px) minmax(0,1fr) minmax(0,2.3fr) minmax(0,1fr);background:var(--card);border:1.5px solid var(--line);border-radius:18px;overflow:hidden}
+.lh{padding:14px 10px 10px;font-family:var(--font-display);font-size:21px;text-align:center;border-bottom:1.5px solid var(--line)}
+.lh small{display:block;font-family:var(--font-body);font-size:12.5px;color:var(--muted)}
+.abc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));font-family:var(--font-mono);font-size:11.5px;color:var(--muted);margin-top:6px}
+.lw{display:flex;align-items:center;gap:10px;padding:14px 10px 14px 16px;border-bottom:1px dashed var(--line);min-width:0}
+.lw .ico{width:42px;height:42px;flex:none}
+.lw b{display:block;font-size:15px;line-height:1.3}
+.lw code{display:block;font-size:12px;overflow-wrap:anywhere}
+.lw small{display:block;font-size:12px;color:var(--muted);line-height:1.4}
+.lc{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:16px 6px;border-bottom:1px dashed var(--line);min-width:0}
+.lc::before{content:"";position:absolute;left:0;right:0;top:50%;height:3px;margin-top:-1.5px;background:var(--rc);opacity:.4}
+.lc.idle::before{background:repeating-linear-gradient(90deg,var(--rc) 0 6px,transparent 6px 12px)}
+.lc.reqs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center}
+.g{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.ev{position:relative;z-index:1;background:var(--card);border:2px solid var(--rc);border-radius:999px;padding:1px 9px;font-family:var(--font-mono);font-size:12px;white-space:nowrap}
+.ev.solid{background:var(--rc);color:var(--on-accent)}
+.ev.ghost{border-style:dashed;color:var(--muted);font-family:var(--font-body)}
+.lc .note{position:relative;z-index:1;background:var(--card);padding:0 6px;font-size:12px;color:var(--muted)}
+.life > .last{border-bottom:0}
+.legend{font-size:13px;color:var(--muted)}
+.life-notes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.ln{display:flex;gap:16px;align-items:center;padding:16px;background:var(--card);border:1.5px solid var(--line);border-radius:16px;min-width:0}
+.ln-pic{display:flex;align-items:center;gap:6px;flex:none}
+.ln-pic .ico{width:56px;height:56px}
+.ln-pic .stack{display:flex;flex-direction:column;gap:4px}
+.ln-pic .token{animation:none}
+.ln h3{font-size:20px;margin-bottom:4px}
+.ln p{font-size:14px;color:var(--muted)}
+.ln p code{color:var(--ink)}
+
+/* ---------- table ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:14.5px;line-height:1.55}
+th,td{padding:12px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+thead th{font-family:var(--font-display);font-weight:400;font-size:22px;color:var(--rc);white-space:nowrap}
+thead th code{font-size:13px;color:var(--ink);margin-left:4px}
+tbody th{font-weight:500;color:var(--muted);font-size:13.5px;white-space:nowrap}
+tbody tr:last-child > *{border-bottom:0}
+td .dim,td.dim{color:var(--muted)}
+i.y,i.n{font-style:normal;font-weight:700;padding:0 7px;border-radius:6px}
+i.y{background:var(--good-tint);color:var(--ink)}
+i.n{background:var(--bad-tint);color:var(--ink)}
+
+/* ---------- jobs ---------- */
+.jobs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
+.job-col{display:flex;flex-direction:column;gap:10px;min-width:0}
+.job-h{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-size:23px;color:var(--rc);padding-bottom:6px;border-bottom:2.5px solid var(--rc)}
+.job-h .ico{width:38px;height:38px;flex:none}
+.job{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;flex:1}
+.job b{font-size:15px;font-weight:700}
+.job code{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+
+/* ---------- jdk ---------- */
+.ns-banner{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px}
+.plate-ns{font-family:var(--font-mono);font-size:clamp(17px,3vw,26px);font-weight:600;padding:8px 18px;border-radius:10px;border:2.5px solid var(--ink);background:var(--card)}
+.plate-ns.old{border-style:dashed;color:var(--muted);border-color:var(--line-strong)}
+.ns-arrow{font-size:28px;color:var(--muted)}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 12px;margin:0;font-size:14px;line-height:1.5}
+.era dt{color:var(--muted);white-space:nowrap}
+.era dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar .tab{font-size:13.5px;padding:5px 12px}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:13px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--config)} .kw{color:var(--inter)} .st{color:var(--filter)}
+.ns{background:var(--config-tint);border-radius:4px;padding:0 3px;font-weight:600}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink)}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:900px){
+  .jobs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras{grid-template-columns:1fr}
+}
+@media (max-width:880px){
+  .life{display:block}
+  .lh{display:none}
+  .lw{border-bottom:0;padding-top:18px;border-top:1.5px solid var(--line)}
+  .lw.first{border-top:0}
+  .lc,.lc.reqs{display:flex;flex-direction:row;flex-wrap:wrap;justify-content:flex-start;align-items:center;padding:8px 14px 8px 86px;border-bottom:0}
+  .lc::before{left:86px}
+  .lc::after{content:attr(data-ph);position:absolute;left:16px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--muted)}
+  .g{flex-direction:row}
+  .life > .last{padding-bottom:16px}
+  .life-notes{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:104px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:30px}
+  .pits{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  .stage{grid-template-columns:1fr}
+  .node{flex-direction:row;justify-content:flex-start;gap:10px;padding:8px 10px}
+  .node .ico{width:44px;height:44px}
+  .nlabel{text-align:left;flex:1}
+  .slot{margin-left:auto;min-height:0}
+  .building{padding:32px 8px 8px}
+  .band{grid-template-columns:1fr;padding:8px;gap:8px}
+  .company{padding:30px 8px 8px}
+  .co-row{grid-template-columns:1fr}
+  .arr{transform:rotate(90deg);height:16px}
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+}
+@media (max-width:520px){
+  .jobs{grid-template-columns:1fr}
+  .ln{flex-direction:column;align-items:flex-start}
+}
+@media (prefers-reduced-motion:reduce){
+  .token{animation:none}
+  .node,.band,.cap{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-guard" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M11 63c0-15 9.5-24 21-24s21 9 21 24z"/>
+    <path class="k-paper" d="M26.5 39.5 32 47l5.5-7.5z"/>
+    <path class="k-gold" d="M41 47h8v6.5l-4 3-4-3z"/>
+    <circle class="k-skin" cx="32" cy="28" r="10.5"/>
+    <circle class="k-eye" cx="28" cy="29.5" r="1.4"/>
+    <circle class="k-eye" cx="36" cy="29.5" r="1.4"/>
+    <path class="ks-eye" d="M29 34q3 2.2 6 0" stroke-width="1.6" stroke-linecap="round"/>
+    <path fill="currentColor" d="M19.5 22.5C20 11 44 11 44.5 22.5z"/>
+    <rect class="k-ink" x="17" y="21" width="30" height="4.2" rx="2.1"/>
+    <circle class="k-gold" cx="32" cy="16.5" r="2.4"/>
+  </symbol>
+  <symbol id="i-sec" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M11 63c0-15 9.5-24 21-24s21 9 21 24z"/>
+    <path class="k-paper" d="M26.5 39.5 32 46l5.5-6.5z"/>
+    <circle class="k-hair" cx="32" cy="12.5" r="5"/>
+    <circle class="k-skin" cx="32" cy="28" r="10.5"/>
+    <path class="k-hair" d="M21.3 27c-.6-9 4.6-14.5 10.7-14.5S43.3 18 42.7 27c-1.6-5.2-5.6-8.4-10.7-8.4S22.9 21.8 21.3 27z"/>
+    <circle class="k-eye" cx="28" cy="29.5" r="1.4"/>
+    <circle class="k-eye" cx="36" cy="29.5" r="1.4"/>
+    <path class="ks-eye" d="M29 34q3 2.2 6 0" stroke-width="1.6" stroke-linecap="round"/>
+    <rect class="k-paper" x="37" y="44" width="15" height="18" rx="2"/>
+    <rect class="k-ink" x="41" y="42" width="7" height="4" rx="1.5"/>
+    <rect class="k-line" x="40" y="50" width="9" height="1.8" rx=".9"/>
+    <rect class="k-line" x="40" y="54.5" width="6.5" height="1.8" rx=".9"/>
+  </symbol>
+  <symbol id="i-plan" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="9" width="46" height="46" rx="3"/>
+    <path class="ks-paper" stroke-width="1" opacity=".35" d="M12 20.5h46M12 32h46M12 43.5h46M23.5 9v46M35 9v46M46.5 9v46"/>
+    <path class="ks-paper" stroke-width="2.6" stroke-linejoin="round" d="M18 49V16h22v13h12v20z"/>
+    <path class="ks-paper" stroke-width="2.6" d="M30 49v-8M40 29v8"/>
+    <rect class="k-ink" x="6" y="7" width="9" height="50" rx="4.5"/>
+  </symbol>
+  <symbol id="i-sign" viewBox="0 0 64 64">
+    <rect class="k-ink" x="29" y="6" width="6" height="52" rx="2"/>
+    <rect class="k-ink" x="20" y="56" width="24" height="6" rx="2"/>
+    <path fill="currentColor" d="M35 11h17l7 6.5-7 6.5H35z"/>
+    <path fill="currentColor" opacity=".7" d="M29 26H12l-7 6.5 7 6.5h17z"/>
+    <path fill="currentColor" d="M35 41h13l6 5.5-6 5.5H35z"/>
+  </symbol>
+  <symbol id="i-worker" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M13 50c0-12 8.5-19 19-19s19 7 19 19z"/>
+    <circle class="k-skin" cx="32" cy="20" r="9.5"/>
+    <path class="k-hair" d="M22.6 19c0-6.5 4-10.5 9.4-10.5S41.4 12.5 41.4 19c-2-3.6-5.3-5.4-9.4-5.4S24.6 15.4 22.6 19z"/>
+    <circle class="k-eye" cx="28.4" cy="21" r="1.3"/>
+    <circle class="k-eye" cx="35.6" cy="21" r="1.3"/>
+    <rect class="k-line" x="20" y="35" width="24" height="14" rx="2"/>
+    <circle class="k-paper" cx="32" cy="42" r="2"/>
+    <rect class="k-ink" x="4" y="49" width="56" height="5" rx="2"/>
+    <rect class="k-ink" x="9" y="54" width="4" height="9"/>
+    <rect class="k-ink" x="51" y="54" width="4" height="9"/>
+  </symbol>
+  <symbol id="i-browser" viewBox="0 0 64 64">
+    <rect class="k-paper" x="5" y="11" width="54" height="42" rx="6"/>
+    <rect fill="none" stroke="currentColor" stroke-width="3" x="5" y="11" width="54" height="42" rx="6"/>
+    <path fill="currentColor" d="M5 17a6 6 0 0 1 6-6h42a6 6 0 0 1 6 6v4H5z"/>
+    <circle class="k-paper" cx="11.5" cy="16" r="1.6"/>
+    <circle class="k-paper" cx="17" cy="16" r="1.6"/>
+    <circle class="k-paper" cx="22.5" cy="16" r="1.6"/>
+    <rect fill="currentColor" opacity=".35" x="12" y="28" width="26" height="4" rx="2"/>
+    <rect fill="currentColor" opacity=".35" x="12" y="36" width="40" height="4" rx="2"/>
+    <rect fill="currentColor" opacity=".35" x="12" y="44" width="18" height="4" rx="2"/>
+  </symbol>
+  <symbol id="i-bldg" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="6" width="40" height="54" rx="2"/>
+    <rect class="k-paper" x="18" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="28.5" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="13" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="18" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="28.5" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="25" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="18" y="37" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="39" y="37" width="7" height="7" rx="1"/>
+    <rect class="k-paper" x="27" y="47" width="10" height="13" rx="1"/>
+  </symbol>
+  <symbol id="i-bag" viewBox="0 0 64 64">
+    <path class="ks-ink" stroke-width="4" d="M24 20v-6a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v6"/>
+    <rect fill="currentColor" x="8" y="20" width="48" height="36" rx="5"/>
+    <rect class="k-paper" x="8" y="34" width="48" height="4"/>
+    <rect class="k-gold" x="28" y="31" width="8" height="10" rx="1.5"/>
+  </symbol>
+  <symbol id="i-env" viewBox="0 0 16 16">
+    <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M2 4.5l6 4.5 6-4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  </symbol>
+</svg>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING · SPRING MVC · SPRING BOOT · JDK 8 / 17</p>
+  <h1>一个请求，要过几道关？</h1>
+  <p class="lead">把 Web 项目想成一栋办公楼。先认识三个角色，再跟着一个请求走一趟。</p>
+
+  <div class="cast">
+    <div class="who" data-role="filter">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">门卫<code>Filter</code></div>
+        <p>站在<b>大楼门口</b>。谁进楼都先过他。他还能给你换身衣服（包装 request）。</p>
+        <span class="belong">归 Servlet 规范 · Tomcat 调用</span>
+      </div>
+    </div>
+    <div class="who" data-role="ic">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sec"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">秘书<code>Interceptor</code></div>
+        <p>坐在<b>公司里面</b>。知道你要找哪位办事员。进门前、办完后、送走后，各看你一眼。</p>
+        <span class="belong">归 Spring MVC</span>
+      </div>
+    </div>
+    <div class="who" data-role="config">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">装修清单<code>WebMvcConfigurer</code></div>
+        <p><b>开张前</b>读一遍。决定秘书站哪个门、外人能不能来（跨域）、仓库在哪（静态资源）。</p>
+        <span class="belong">归 Spring MVC · 只在启动时用</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg><span><b>大楼</b> Tomcat，Servlet 容器</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sign"/></svg><span><b>前台</b> DispatcherServlet，Spring MVC 总入口</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg><span><b>办事员</b> Controller，真正干活</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bag"/></svg><span><b>拎包入住</b> Spring Boot，替你装好大楼、前台和常用门卫</span></span>
+  </div>
+</header>
+
+<!-- ================= JOURNEY ================= -->
+<section id="journey">
+  <div>
+    <h2>跟着请求走一趟</h2>
+    <p class="lead">选一个剧情，点「下一步」。看请求此刻在谁手里，谁被跳过。</p>
+  </div>
+
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-ok" data-scene="ok" aria-pressed="true">正常办事</button>
+    <button class="tab" id="sc-filter" data-scene="filter" aria-pressed="false">门卫拦下</button>
+    <button class="tab" id="sc-ic" data-scene="ic" aria-pressed="false">秘书拦下</button>
+    <button class="tab" id="sc-err" data-scene="err" aria-pressed="false">办事员出错</button>
+  </div>
+
+  <div class="stage">
+    <div class="node n-browser" data-node="browser">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-browser"/></svg>
+      <div class="nlabel">浏览器</div>
+      <div class="slot"></div>
+    </div>
+
+    <div class="building">
+      <div class="tag">TOMCAT 大楼（Servlet 容器）</div>
+      <div class="band" id="band">
+        <div class="node band-guard" data-node="filter">
+          <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg>
+          <div class="nlabel">门卫<code>Filter ×N</code></div>
+          <div class="slot"></div>
+        </div>
+        <div class="company">
+          <div class="tag">SPRING MVC 公司</div>
+          <div class="co-row">
+            <div class="node" data-node="ds">
+              <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sign"/></svg>
+              <div class="nlabel">前台<code>Dispatcher&shy;Servlet</code></div>
+              <div class="slot"></div>
+            </div>
+            <div class="arr" aria-hidden="true">→</div>
+            <div class="node" data-node="ic">
+              <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sec"/></svg>
+              <div class="nlabel">秘书<code>Interceptor</code></div>
+              <div class="slot"></div>
+            </div>
+            <div class="arr" aria-hidden="true">→</div>
+            <div class="node" data-node="ctrl">
+              <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg>
+              <div class="nlabel">办事员<code>Controller</code></div>
+              <div class="slot"></div>
+            </div>
+          </div>
+          <div class="plan-note" data-role="config">
+            <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg>
+            <p><b>装修清单 WebMvcConfigurer</b>：开张时读一次，把秘书安排在 <code>/api/**</code> 门口，放过 <code>/api/login</code>。请求来时它不出场。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cap" id="cap" data-role="browser" aria-live="polite">
+    <div class="cap-n" id="capN">1/10</div>
+    <div class="cap-who"><span id="capWho">浏览器</span> · <code id="capCall">GET /api/orders/42</code></div>
+    <div class="cap-say" id="capSay">我要查 42 号订单。</div>
+  </div>
+
+  <div class="ctrl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+
+  <ol class="script" id="script" aria-label="调用顺序"></ol>
+</section>
+
+<!-- ================= LIFECYCLE ================= -->
+<section id="life">
+  <div>
+    <h2>什么时候上班，什么时候下班</h2>
+    <p class="lead">开张（启动）、营业（处理请求）、打烊（关闭）。看谁在哪个时刻出场。</p>
+  </div>
+
+  <div class="life">
+    <div class="lh"><span class="sr">角色</span></div>
+    <div class="lh">开张<small>启动时</small></div>
+    <div class="lh">营业<small>每来一个请求</small><div class="abc"><span>请求 A</span><span>请求 B</span><span>请求 C</span></div></div>
+    <div class="lh">打烊<small>关闭时</small></div>
+
+    <div class="lw first" data-role="filter"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg><div><b>门卫</b><code>Filter</code><small>Tomcat 调用</small></div></div>
+    <div class="lc" data-role="filter" data-ph="开张"><span class="ev solid">init()</span><span class="note">只建 1 个对象</span></div>
+    <div class="lc reqs" data-role="filter" data-ph="每个请求"><span class="g"><span class="ev">doFilter()</span></span><span class="g"><span class="ev">doFilter()</span></span><span class="g"><span class="ev">doFilter()</span></span></div>
+    <div class="lc" data-role="filter" data-ph="打烊"><span class="ev solid">destroy()</span></div>
+
+    <div class="lw" data-role="ic"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sec"/></svg><div><b>秘书</b><code>Interceptor</code><small>Spring Bean</small></div></div>
+    <div class="lc" data-role="ic" data-ph="开张"><span class="ev solid">创建 Bean</span><span class="note">等清单登记</span></div>
+    <div class="lc reqs" data-role="ic" data-ph="每个请求"><span class="g"><span class="ev">pre</span><span class="ev">post</span><span class="ev">after</span></span><span class="g"><span class="ev">pre</span><span class="ev">post</span><span class="ev">after</span></span><span class="g"><span class="ev">pre</span><span class="ev">post</span><span class="ev">after</span></span></div>
+    <div class="lc" data-role="ic" data-ph="打烊"><span class="ev ghost">随容器销毁</span></div>
+
+    <div class="lw" data-role="config"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg><div><b>装修清单</b><code>WebMvcConfigurer</code><small>Spring 配置类</small></div></div>
+    <div class="lc" data-role="config" data-ph="开张"><span class="ev solid">addXxx()</span><span class="note">全部回调 1 次</span></div>
+    <div class="lc reqs idle" data-role="config" data-ph="每个请求"><span class="g"></span><span class="g"><span class="note">不出场</span></span><span class="g"></span></div>
+    <div class="lc idle" data-role="config" data-ph="打烊"><span class="note">—</span></div>
+
+    <div class="lw last" data-role="ds"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sign"/></svg><div><b>前台（配角）</b><code>DispatcherServlet</code><small>Tomcat 调用</small></div></div>
+    <div class="lc idle last" data-role="ds" data-ph="开张"><span class="ev ghost">还没上岗</span></div>
+    <div class="lc reqs last" data-role="ds" data-ph="每个请求"><span class="g"><span class="ev solid">init()</span><span class="ev">doDispatch()</span></span><span class="g"><span class="ev">doDispatch()</span></span><span class="g"><span class="ev">doDispatch()</span></span></div>
+    <div class="lc last" data-role="ds" data-ph="打烊"><span class="ev solid">destroy()</span></div>
+  </div>
+  <p class="legend">pre / post / after = <code>preHandle</code> / <code>postHandle</code> / <code>afterCompletion</code>。addXxx() = <code>addInterceptors</code>、<code>addCorsMappings</code>、<code>addResourceHandlers</code>……多个 WebMvcConfigurer 会全部被调用、合并生效。</p>
+
+  <div class="life-notes">
+    <div class="ln" data-role="filter">
+      <div class="ln-pic">
+        <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg>
+        <div class="stack">
+          <span class="token t-req"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-env"/></svg>线程 1</span>
+          <span class="token t-req"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-env"/></svg>线程 2</span>
+          <span class="token t-req"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-env"/></svg>线程 3</span>
+        </div>
+      </div>
+      <div>
+        <h3>一个门卫，同时接待所有人</h3>
+        <p>门卫、秘书、清单都是单例，所有请求线程共用同一个对象。别在字段里存“当前用户”。</p>
+      </div>
+    </div>
+    <div class="ln" data-role="ds">
+      <div class="ln-pic">
+        <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sign"/></svg>
+        <span class="token t-req"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-env"/></svg>第 1 个请求</span>
+      </div>
+      <div>
+        <h3>前台等第一个客人才上岗</h3>
+        <p>默认第一次请求才 <code>init()</code>，日志里会出现 <code>Initializing Servlet 'dispatcherServlet'</code>。想开张就上岗：<code>spring.mvc.servlet.load-on-startup=1</code>。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DIFF TABLE ================= -->
+<section id="diff">
+  <div>
+    <h2>一张表看区别</h2>
+    <p class="lead">前两位是关卡，第三位是配置入口。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col"><span class="sr">对比项</span></th>
+          <th scope="col" data-role="filter">门卫<code>Filter</code></th>
+          <th scope="col" data-role="ic">秘书<code>Interceptor</code></th>
+          <th scope="col" data-role="config">装修清单<code>WebMvcConfigurer</code></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">出身</th><td>Servlet 规范，Tomcat 调用</td><td>Spring MVC</td><td>Spring MVC</td></tr>
+        <tr><th scope="row">是不是关卡</th><td><i class="y">是</i></td><td><i class="y">是</i></td><td><i class="n">不是</i>，只是配置入口</td></tr>
+        <tr><th scope="row">站在哪</th><td>DispatcherServlet 外面</td><td>DispatcherServlet 里面</td><td class="dim">不站岗</td></tr>
+        <tr><th scope="row">管多宽</th><td>进 Tomcat 的所有请求，按 URL 挑</td><td>进了 DispatcherServlet 并找到处理者的请求（包括静态资源、<code>/error</code>），按路径挑</td><td class="dim">—</td></tr>
+        <tr><th scope="row">知道要调哪个方法</th><td><i class="n">不知道</i></td><td><i class="y">知道</i>，看 <code>handler</code> 参数</td><td class="dim">—</td></tr>
+        <tr><th scope="row">能把 request 换掉</th><td><i class="y">能</i>，往下传一个 Wrapper</td><td><i class="n">不能</i></td><td class="dim">—</td></tr>
+        <tr><th scope="row">怎么拦下</th><td>不调用 <code>chain.doFilter()</code></td><td><code>preHandle</code> 返回 <code>false</code></td><td class="dim">—</td></tr>
+        <tr><th scope="row">抛的异常进 @ControllerAdvice</th><td><i class="n">不会</i></td><td><i class="y">会</i><span class="dim">（afterCompletion 里抛的除外）</span></td><td class="dim">—</td></tr>
+        <tr><th scope="row">调用次数</th><td>init ×1，doFilter 每次，destroy ×1</td><td>每次请求 pre / post / after</td><td>启动时 ×1</td></tr>
+        <tr><th scope="row">多个时的顺序</th><td><code>@Order</code> 或 <code>setOrder()</code>，数字小的在外层</td><td>按注册顺序（或 <code>.order()</code>）；pre 正序，post、after 倒序</td><td>全部生效，合并</td></tr>
+        <tr><th scope="row">接口</th><td><code>jakarta.servlet.Filter</code><br><span class="dim">JDK 8 / Boot 2：javax.servlet.Filter</span></td><td><code>HandlerInterceptor</code></td><td><code>WebMvcConfigurer</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= JOBS ================= -->
+<section id="jobs">
+  <div>
+    <h2>项目里的活儿派给谁</h2>
+    <p class="lead">按“要不要知道目标方法”“要不要换 request”来分，基本不会派错。</p>
+  </div>
+  <div class="jobs">
+    <div class="job-col" data-role="filter">
+      <div class="job-h"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg>门卫</div>
+      <div class="job"><b>登录认证、鉴权</b><code>Spring Security 本身就是一串 Filter</code></div>
+      <div class="job"><b>全链路 traceId</b><code>MDC.put() → finally MDC.clear()</code></div>
+      <div class="job"><b>解密、防 XSS、body 重复读</b><code>HttpServletRequestWrapper</code></div>
+    </div>
+    <div class="job-col" data-role="ic">
+      <div class="job-h"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sec"/></svg>秘书</div>
+      <div class="job"><b>注解式权限 @RequireRole</b><code>HandlerMethod.hasMethodAnnotation()</code></div>
+      <div class="job"><b>接口耗时、操作日志</b><code>preHandle 记开始，afterCompletion 算耗时</code></div>
+      <div class="job"><b>当前用户上下文</b><code>preHandle 放 ThreadLocal，afterCompletion remove()</code></div>
+    </div>
+    <div class="job-col" data-role="config">
+      <div class="job-h"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg>装修清单</div>
+      <div class="job"><b>跨域 CORS</b><code>addCorsMappings()；用了 Security 再开 http.cors()</code></div>
+      <div class="job"><b>本地图片 /files/**</b><code>addResourceHandlers()</code></div>
+      <div class="job"><b>参数自动注入 @CurrentUser</b><code>addArgumentResolvers()</code></div>
+    </div>
+    <div class="job-col" data-role="other">
+      <div class="job-h"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg>其他帮手</div>
+      <div class="job"><b>统一异常返回</b><code>@RestControllerAdvice</code></div>
+      <div class="job"><b>统一包装响应体</b><code>ResponseBodyAdvice</code></div>
+      <div class="job"><b>Service 层日志、缓存</b><code>AOP @Aspect</code></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 还是 JDK 17：只换了门牌</h2>
+    <p class="lead">Java EE 交给 Eclipse 基金会后改名 Jakarta EE，包名跟着换。角色、顺序、生命周期一点没变。</p>
+  </div>
+  <div class="ns-banner">
+    <span class="plate-ns old">javax.servlet</span>
+    <span class="ns-arrow" aria-hidden="true">→</span>
+    <span class="plate-ns">jakarta.servlet</span>
+  </div>
+
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>SSM 老项目</h3><span class="jdk">JDK 8 常见</span></div>
+      <dl>
+        <dt>大楼</dt><dd>外置 Tomcat，靠 web.xml 登记</dd>
+        <dt>门卫</dt><dd>web.xml 的 <code>&lt;filter&gt;</code>；要用 Spring Bean 就配 <code>DelegatingFilterProxy</code></dd>
+        <dt>秘书</dt><dd><code>&lt;mvc:interceptors&gt;</code>，或 <code>@EnableWebMvc</code> + WebMvcConfigurer</dd>
+        <dt>包名</dt><dd><code>javax.servlet</code></dd>
+      </dl>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2.x</h3><span class="jdk">JDK 8+</span></div>
+      <dl>
+        <dt>大楼</dt><dd>内嵌 Tomcat 9，Spring 5</dd>
+        <dt>门卫</dt><dd><code>@Component</code>、<code>FilterRegistrationBean</code>，或 <code>@WebFilter</code> + <code>@ServletComponentScan</code></dd>
+        <dt>秘书</dt><dd>WebMvcConfigurer 的 <code>addInterceptors()</code></dd>
+        <dt>包名</dt><dd><code>javax.servlet</code></dd>
+      </dl>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3.x / 4.x</h3><span class="jdk">JDK 17+</span></div>
+      <dl>
+        <dt>大楼</dt><dd>内嵌 Tomcat 10.1 / 11，Spring 6 / 7</dd>
+        <dt>写法</dt><dd>和 Boot 2 一样</dd>
+        <dt>包名</dt><dd><code>jakarta.servlet</code></dd>
+        <dt>退休</dt><dd><code>WebMvcConfigurerAdapter</code>、<code>HandlerInterceptorAdapter</code> 已删除。JDK 8 起接口有 default 方法，直接实现接口即可</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="codebox">
+    <div class="code-bar">
+      <span>三段代码搭起一栋楼 · 包名：</span>
+      <button class="tab" data-ns="jakarta" aria-pressed="true">jakarta（JDK 17 / Boot 3+）</button>
+      <button class="tab" data-ns="javax" aria-pressed="false">javax（JDK 8 / Boot 2）</button>
+    </div>
+<pre><code><span class="kw">import</span> <span class="ns">jakarta</span>.servlet.*;          <span class="cm">// ← 只有包名随版本变</span>
+<span class="kw">import</span> <span class="ns">jakarta</span>.servlet.http.*;
+
+<span class="cm">// ① 门卫：每个进楼的请求都经过（OncePerRequestFilter 保证同一请求只过一次）</span>
+<span class="an">@Component</span>
+<span class="an">@Order</span>(1)
+<span class="kw">public class</span> TraceFilter <span class="kw">extends</span> OncePerRequestFilter {
+    <span class="an">@Override</span>
+    <span class="kw">protected void</span> doFilterInternal(HttpServletRequest req, HttpServletResponse res,
+                                    FilterChain chain) <span class="kw">throws</span> ServletException, IOException {
+        MDC.put(<span class="st">"traceId"</span>, UUID.randomUUID().toString());   <span class="cm">// 放行前</span>
+        <span class="kw">try</span> {
+            chain.doFilter(req, res);                       <span class="cm">// 放行：后面的所有人</span>
+        } <span class="kw">finally</span> {
+            MDC.clear();                                    <span class="cm">// 放行后</span>
+        }
+    }
+}
+
+<span class="cm">// ② 秘书：只管进了 DispatcherServlet 的请求</span>
+<span class="an">@Component</span>
+<span class="kw">public class</span> LoginInterceptor <span class="kw">implements</span> HandlerInterceptor {
+    <span class="an">@Override</span>
+    <span class="kw">public boolean</span> preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) {
+        <span class="kw">if</span> (req.getHeader(<span class="st">"Authorization"</span>) != <span class="kw">null</span>) <span class="kw">return true</span>;   <span class="cm">// 放行</span>
+        res.setStatus(401);
+        <span class="kw">return false</span>;                                                <span class="cm">// 拦下</span>
+    }
+}
+
+<span class="cm">// ③ 装修清单：启动时调用一次，把秘书安排到门口</span>
+<span class="an">@Configuration</span>
+<span class="kw">public class</span> WebConfig <span class="kw">implements</span> WebMvcConfigurer {
+    <span class="kw">private final</span> LoginInterceptor loginInterceptor;
+
+    <span class="kw">public</span> WebConfig(LoginInterceptor loginInterceptor) {   <span class="cm">// 注入 Bean，别 new</span>
+        <span class="kw">this</span>.loginInterceptor = loginInterceptor;
+    }
+
+    <span class="an">@Override</span>
+    <span class="kw">public void</span> addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(loginInterceptor)
+                .addPathPatterns(<span class="st">"/api/**"</span>)
+                .excludePathPatterns(<span class="st">"/api/login"</span>, <span class="st">"/error"</span>);
+    }
+}</code></pre>
+  </div>
+</section>
+
+<!-- ================= PITFALLS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">每条都是真实项目里反复出现的。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="filter">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg>
+      <b>门卫抛的异常，@RestControllerAdvice 接不住</b>
+      <p>门卫在公司外面。在 Filter 里自己写好错误响应。</p>
+    </div>
+    <div class="pit" data-role="ic">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sec"/></svg>
+      <b>postHandle 改不了 @ResponseBody 的结果</b>
+      <p>那时响应已经写出去了。改响应体、加响应头，用 <code>ResponseBodyAdvice</code>。</p>
+    </div>
+    <div class="pit" data-role="ic">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sec"/></svg>
+      <b>秘书也会拦到静态资源和 /error</b>
+      <p>Spring Boot 里它们都走 DispatcherServlet。用 <code>excludePathPatterns</code> 放过。</p>
+    </div>
+    <div class="pit" data-role="config">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-plan"/></svg>
+      <b>Boot 项目里别随手加 @EnableWebMvc</b>
+      <p>加了它，Boot 的 MVC 自动配置整体退场，静态资源映射、<code>spring.jackson.*</code> 设置都可能失效。实现 WebMvcConfigurer 就够了。</p>
+    </div>
+    <div class="pit" data-role="ic">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-sec"/></svg>
+      <b>new 出来的秘书，@Autowired 是 null</b>
+      <p><code>addInterceptor(new X())</code> 里的 X 不是 Bean。把它声明成 Bean 再注入。</p>
+    </div>
+    <div class="pit" data-role="filter">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg>
+      <b>@Component 门卫默认拦 /*</b>
+      <p>要指定 URL，用 <code>FilterRegistrationBean</code>；要指定先后，用 <code>@Order</code> 或 <code>setOrder()</code>。</p>
+    </div>
+    <div class="pit" data-role="filter">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-guard"/></svg>
+      <b>请求体只能读一次</b>
+      <p>门卫可以先用 <code>HttpServletRequestWrapper</code> 缓存下来再放行。秘书换不了 request，做不到。</p>
+    </div>
+    <div class="pit" data-role="other">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-bldg"/></svg>
+      <b>ThreadLocal 用完不清，串号</b>
+      <p>Tomcat 线程池会复用线程。在 <code>afterCompletion</code> 或 <code>finally</code> 里 <code>remove()</code>。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  适用于 Servlet 栈的 Spring MVC（Spring 5–7、Spring Boot 2–4）。WebFlux 没有 Servlet，用的是 <code>WebFilter</code>，不在这张图里。
+</footer>
+</main>
+
+<script>
+(function(){
+  var ROLE={browser:'浏览器',filter:'门卫 · Filter',ds:'前台 · DispatcherServlet',ic:'秘书 · Interceptor',ctrl:'办事员 · Controller'};
+  function S(node,call,say,kind,tok){return {node:node,call:call,say:say,kind:kind||'go',tok:tok||null};}
+  function K(node,call,say){return S(node,call,say,'skip',null);}
+  var REQ=['请求','req'], RESP=['响应','ok'];
+  var SC={
+    ok:[
+      S('browser','GET /api/orders/42','我要查 42 号订单。','go',REQ),
+      S('filter','doFilter() · 放行前','门卫：登记 traceId、设好编码、看一眼工牌，然后 chain.doFilter() 放行。','go',REQ),
+      S('ds','doDispatch()','前台：查路由表，你要找的是 OrderController.detail()。','go',REQ),
+      S('ic','preHandle() → true','秘书：这个方法标了 @RequireLogin，你登录过了，请进。','go',REQ),
+      S('ctrl','detail(42)','办事员：查数据库，把订单写成 JSON 返回。','go',RESP),
+      S('ic','postHandle()','秘书：事办完了，渲染视图前看一眼。@ResponseBody 的内容这时已经写出去了。','back',RESP),
+      S('ds','processDispatchResult()','前台：有视图就渲染，有异常就处理。这次都没有。','back',RESP),
+      S('ic','afterCompletion()','秘书：不管成败都会来。清理 ThreadLocal，记下耗时。','back',RESP),
+      S('filter','doFilter() · 放行后','门卫：chain.doFilter() 返回了。记一笔访问日志，清掉 traceId。','back',RESP),
+      S('browser','200 OK','拿到订单。','done',['200','ok'])
+    ],
+    filter:[
+      S('browser','GET /api/orders/42','我要查订单，但忘了带 token。','go',REQ),
+      S('filter','不调用 chain.doFilter()','门卫：没工牌不能进。直接写好 401，原路送回。','stop',['401','bad']),
+      K('ds','doDispatch()','前台根本见不到这个请求'),
+      K('ic','preHandle()','秘书也见不到'),
+      K('ctrl','detail(42)','办事员也见不到'),
+      K('ic','postHandle()','没进公司'),
+      K('ds','processDispatchResult()','没进公司'),
+      K('ic','afterCompletion()','没进公司'),
+      K('filter','doFilter() · 放行后','没放行，就没有“放行后”'),
+      S('browser','401 Unauthorized','Spring MVC 不知道有人来过，@RestControllerAdvice 也管不到。','done',['401','bad'])
+    ],
+    ic:[
+      S('browser','GET /api/admin/users','我要看用户列表。','go',REQ),
+      S('filter','doFilter() · 放行前','门卫：有工牌，放行。','go',REQ),
+      S('ds','doDispatch()','前台：你要找的是 AdminController.users()。','go',REQ),
+      S('ic','preHandle() → false','秘书：这个方法要管理员权限，你不是。我写好 403，返回 false。','stop',['403','bad']),
+      K('ctrl','users()','办事员见不到'),
+      K('ic','postHandle()','不调用'),
+      K('ds','processDispatchResult()','不调用'),
+      K('ic','afterCompletion()','返回 false 的这位不调用；排在它前面、已经放行的秘书会被调用'),
+      S('filter','doFilter() · 放行后','门卫：chain.doFilter() 照常返回，照常收尾。','back',['403','bad']),
+      S('browser','403 Forbidden','被秘书挡了回来。','done',['403','bad'])
+    ],
+    err:[
+      S('browser','GET /api/orders/42','我要查 42 号订单。','go',REQ),
+      S('filter','doFilter() · 放行前','门卫：放行。','go',REQ),
+      S('ds','doDispatch()','前台：你要找的是 OrderController.detail()。','go',REQ),
+      S('ic','preHandle() → true','秘书：请进。','go',REQ),
+      S('ctrl','detail(42) 抛出异常','办事员：数据库连不上了！throw。','err',['异常','bad']),
+      K('ic','postHandle()','出了异常就不调用'),
+      S('ds','processHandlerException()','前台：把异常交给 @RestControllerAdvice，包成 500 JSON。','back',['500','bad']),
+      S('ic','afterCompletion(ex = null)','秘书：照样来收尾。异常已经被处理掉，所以这里 ex 是 null。','back',['500','bad']),
+      S('filter','doFilter() · 放行后','门卫：正常返回，照常收尾。','back',['500','bad']),
+      S('browser','500 {"code":500}','收到一条整齐的错误信息。','done',['500','bad'])
+    ]
+  };
+
+  var scene='ok', pos=0, timer=null;
+  function $(id){return document.getElementById(id);}
+  var stage=document.querySelector('.stage'), band=$('band'), cap=$('cap'), list=$('script');
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  var token=document.createElement('span');
+
+  function vis(){return SC[scene].filter(function(s){return s.kind!=='skip';});}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  function render(){
+    var v=vis(), cur=v[pos];
+    stage.querySelectorAll('[data-node]').forEach(function(n){ n.classList.toggle('active', n.getAttribute('data-node')===cur.node); });
+    band.classList.toggle('on', cur.node==='filter');
+
+    var slot=stage.querySelector('[data-node="'+cur.node+'"] .slot');
+    token.className='token t-'+cur.tok[1];
+    token.innerHTML='<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-env"/></svg>'+esc(cur.tok[0]);
+    slot.appendChild(token);
+    token.style.animation='none'; void token.offsetWidth; token.style.animation='';
+
+    cap.setAttribute('data-role', cur.node);
+    $('capN').textContent=(pos+1)+'/'+v.length;
+    $('capWho').textContent=ROLE[cur.node];
+    $('capCall').textContent=cur.call;
+    $('capSay').textContent=cur.say;
+
+    var n=0;
+    list.innerHTML=SC[scene].map(function(s){
+      var skip=s.kind==='skip', idx=skip?-1:n++;
+      var st=skip?'skip':(idx<pos?'past':(idx===pos?'now':'future'));
+      return '<li class="'+st+'" data-role="'+s.node+'"><span class="sn">'+(skip?'✕':(idx+1))+'</span><code>'+esc(s.call)+'</code><span class="ss">'+(skip?'跳过：':'')+esc(s.say)+'</span></li>';
+    }).join('');
+
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===v.length-1;
+  }
+
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<vis().length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=vis().length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 1600);
+  });
+
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop();
+      scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+
+  $('journey').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+
+  document.querySelectorAll('[data-ns]').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('[data-ns]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      document.querySelectorAll('.ns').forEach(function(s){ s.textContent=b.getAttribute('data-ns'); });
+    });
+  });
+
+  render();
+})();
+</script>
+
+</body>
+</html>
