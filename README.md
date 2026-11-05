@@ -1,5 +1,8 @@
 # spring-study
 
-Spring Web 学习笔记。
+Spring 图解学习笔记，在线阅读：https://archeu.github.io/spring-study/
 
-- `spring-web-gates.html`：用大楼门卫、公司秘书、装修清单的比喻，图解 Filter、Interceptor、WebMvcConfigurer 的区别、生命周期和用途。下载后用浏览器直接打开即可（联网时加载 Google Fonts，离线时自动用系统字体）。
+| # | 页面 | 内容 |
+|---|------|------|
+| 01 | [Spring MVC 请求关卡](https://archeu.github.io/spring-study/spring-web-gates.html) | Filter、Interceptor、WebMvcConfigurer 的区别、生命周期和用途 |
+| 02 | [Spring AOP 与事务](https://archeu.github.io/spring-study/spring-aop-tx.html) | 代理、切面、通知，@Transactional 的提交回滚、传播、隔离和失效场景 |

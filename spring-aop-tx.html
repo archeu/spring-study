@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Spring AOP 与事务</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as "Spring MVC 请求关卡". Hero = the cast (agent / rulebook / draft paper); the call stepper with a live DB draft is the anchor. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --proxy:#6A3FC0; --proxy-tint:#ECE5FA;
+  --aspect:#B85F0C; --aspect-tint:#FBE9D5;
+  --tx:#3150C4; --tx-tint:#E2E7FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --skin:#F1C6A0; --hair:#3B2A21; --gold:#E2B33C; --eye:#2A2320;
+  --code-bg:#F7F8FB;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --proxy:#B9A0FF; --proxy-tint:#2A2148;
+    --aspect:#F4A651; --aspect-tint:#3A2812;
+    --tx:#90A4FF; --tx-tint:#1D2650;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+    --code-bg:#0F151C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --proxy:#B9A0FF; --proxy-tint:#2A2148;
+  --aspect:#F4A651; --aspect-tint:#3A2812;
+  --tx:#90A4FF; --tx-tint:#1D2650;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+  --code-bg:#0F151C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:44px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(38px,6.6vw,66px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--tx)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible{outline:3px solid var(--tx);outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+section{display:flex;flex-direction:column;gap:22px}
+.sub{font-family:var(--font-display);font-size:24px;margin-top:10px}
+
+/* role colors */
+[data-role="proxy"],[data-node="proxy"]{--rc:var(--proxy);--rt:var(--proxy-tint)}
+[data-role="aspect"],[data-role="log"],[data-node="log"]{--rc:var(--aspect);--rt:var(--aspect-tint)}
+[data-role="tx"],[data-node="tx"]{--rc:var(--tx);--rt:var(--tx-tint)}
+[data-role="caller"],[data-node="caller"],[data-role="target"],[data-node="target"],[data-role="db"],[data-node="db"],[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-hair{fill:var(--hair)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)}
+.k-gold{fill:var(--gold)} .k-eye{fill:var(--eye)} .k-line{fill:var(--line-strong)}
+.ks-paper{stroke:var(--card);fill:none} .ks-eye{stroke:var(--eye);fill:none} .ks-cur{stroke:currentColor;fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:156px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:36px;line-height:1.1;color:var(--rc)}
+.plate code{font-size:15px;color:var(--ink);margin-left:6px;vertical-align:middle}
+.who p{max-width:19em}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink)}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- words + advice ---------- */
+.aop-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:24px;align-items:start}
+.words{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.word{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.word .w{font-family:var(--font-display);font-size:24px;line-height:1.2;color:var(--rc)}
+.word .w code{font-size:13px;color:var(--ink);margin-left:6px}
+.word p{font-size:14px;color:var(--muted)}
+.word p code{color:var(--ink);overflow-wrap:anywhere}
+.adv-box{border:2.5px dashed var(--aspect);border-radius:18px;padding:14px;background:var(--card);display:flex;flex-direction:column;gap:6px}
+.adv-head{display:flex;flex-direction:column;gap:2px;margin-bottom:4px}
+.adv-head code{font-weight:600;color:var(--aspect);font-size:15px}
+.adv-head small{font-size:13px;color:var(--muted)}
+.adv{border-radius:12px;padding:8px 12px;background:var(--aspect-tint);display:flex;flex-direction:column;gap:1px;min-width:0}
+.adv code{font-weight:600;font-size:13.5px}
+.adv small{font-size:12.5px;color:var(--muted)}
+.adv.ok{background:var(--good-tint)} .adv.bad{background:var(--bad-tint)}
+.adv-m{display:flex;align-items:center;justify-content:center;gap:10px;border:2px solid var(--neutral);border-radius:12px;padding:8px 12px;background:var(--neutral-tint);font-weight:700}
+.adv-m .ico{width:40px;height:40px}
+.adv-split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.dn{text-align:center;color:var(--line-strong);line-height:1;font-size:18px}
+
+/* ---------- journey stage ---------- */
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.stage{display:grid;grid-template-columns:104px 16px minmax(0,1fr) 16px 124px 16px 156px;gap:6px;align-items:center}
+.sarr,.arr{color:var(--line-strong);text-align:center;font-size:20px;line-height:1}
+.node{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:14px;border:2px solid transparent;transition:background .25s,border-color .25s;min-width:0}
+.node .ico{width:56px;height:56px;flex:none}
+.nlabel{font-weight:700;font-size:15px;text-align:center;line-height:1.3;min-width:0}
+.nlabel code{display:block;font-weight:400;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.node.active{border-color:var(--rc);background:var(--rt)}
+.slot{min-height:30px;display:flex;align-items:center;justify-content:center}
+.solo{background:var(--card);border-color:var(--line)}
+.solo.active{border-color:var(--rc)}
+.pbox{border:2.5px dashed var(--proxy);border-radius:18px;padding:10px 12px 12px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0;transition:background .25s}
+.pbox.on{border-style:solid;background:var(--proxy-tint)}
+.pb-tag{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.pb-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;align-items:center}
+.pb-row > .node.active{background:var(--card)}
+.chain{display:grid;grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr);gap:4px;align-items:center;background:var(--paper);border:2px solid var(--line);border-radius:14px;padding:8px;min-width:0}
+.rows{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;width:100%}
+.rows li{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:2px 6px;padding:3px 7px;border-radius:7px;border:1.5px dashed var(--line-strong);font-size:12px;line-height:1.4}
+.rows li b{font-family:var(--font-mono);font-weight:600;font-size:11.5px}
+.rows li span{font-size:11px;color:var(--muted)}
+.r-done{border-style:solid!important;border-color:var(--good)!important;background:var(--good-tint)}
+.r-torn{border-style:solid!important;border-color:var(--bad)!important;background:var(--bad-tint)}
+.r-torn b{text-decoration:line-through}
+.r-auto{border-style:solid!important;background:var(--neutral-tint)}
+.r-oops{border-style:solid!important;border-color:var(--bad)!important;background:var(--bad-tint)}
+.r-empty{border-style:dotted!important;color:var(--muted);justify-content:center!important}
+.token{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:700;padding:3px 10px 3px 7px;border-radius:999px;color:var(--on-accent);white-space:nowrap;animation:pop .35s ease}
+.token svg{width:14px;height:14px;color:var(--on-accent)}
+.t-req{background:var(--tx)} .t-ok{background:var(--good)} .t-bad{background:var(--bad)}
+@keyframes pop{from{transform:scale(.55);opacity:.2}to{transform:none;opacity:1}}
+
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,21px);font-weight:500;line-height:1.5;min-width:0}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.script{list-style:none;margin:0;padding:0;columns:2 320px;column-gap:24px}
+.script li{break-inside:avoid;display:grid;grid-template-columns:26px minmax(0,1fr);gap:0 10px;padding:7px 9px;margin-bottom:4px;border-radius:10px;font-size:14px;line-height:1.45;border:2px solid transparent}
+.script .sn{grid-row:span 2;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-mono);font-size:12px;font-weight:600;background:var(--neutral-tint);font-variant-numeric:tabular-nums}
+.script code{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.script .ss{color:var(--muted)}
+.script li.future{opacity:.55}
+.script li.now{background:var(--rt);border-color:var(--rc)}
+.script li.now .sn{background:var(--rc);color:var(--on-accent)}
+.script li.skip{opacity:.55}
+.script li.skip code{text-decoration:line-through}
+.script li.skip .sn{background:transparent;color:var(--bad)}
+
+/* ---------- lifecycle ---------- */
+.conv{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.st{position:relative;background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+.st .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--neutral-tint);font-family:var(--font-mono);font-size:12px;font-weight:600;flex:none}
+.st b{font-size:16px;line-height:1.3}
+.st code{font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.st small{font-size:12px;color:var(--muted);line-height:1.4}
+.st.key{border:2.5px solid var(--proxy);background:var(--proxy-tint)}
+.st.key .n{background:var(--proxy);color:var(--on-accent)}
+.st .ico{width:46px;height:46px}
+.st-txt{display:flex;flex-direction:column;gap:3px;min-width:0}
+.notes2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.ln{display:flex;gap:16px;align-items:center;padding:16px;background:var(--card);border:1.5px solid var(--line);border-radius:16px;min-width:0}
+.ln > .ico{width:56px;height:56px;flex:none}
+.ln h3{font-size:20px;margin-bottom:4px}
+.ln p{font-size:14px;color:var(--muted)}
+.ln p code{color:var(--ink);overflow-wrap:anywhere}
+.txflow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:16px;background:var(--card);border:1.5px solid var(--line);border-radius:16px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:2px solid var(--tx);background:var(--tx-tint);font-size:14px;font-weight:500}
+.chip code{font-size:12.5px}
+.chip.ok{border-color:var(--good);background:var(--good-tint)}
+.chip.bad{border-color:var(--bad);background:var(--bad-tint)}
+.chip.or{border:0;background:transparent;padding:0 2px;color:var(--muted);font-weight:400}
+.txflow .arr{font-size:16px}
+.small-note{font-size:14px;color:var(--muted);max-width:52em}
+.small-note code{color:var(--ink)}
+
+/* ---------- propagation ---------- */
+.props{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.prop{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.prop.def{border:2.5px solid var(--tx)}
+.prop h3{font-family:var(--font-mono);font-weight:600;font-size:17px}
+.prop h3 small{font-family:var(--font-body);font-weight:400;font-size:13px;color:var(--muted);margin-left:6px}
+.prop svg{width:100%;height:auto;max-width:260px;align-self:center}
+.prop p{font-size:14px}
+.prop p.dim{color:var(--muted)}
+.prop code{overflow-wrap:anywhere}
+.pp-paper{fill:var(--card);stroke:var(--tx);stroke-width:2.5}
+.pp-paper-b{stroke:var(--aspect)}
+.pp-a{fill:var(--tx)} .pp-b{fill:var(--aspect)} .pp-mark{fill:var(--gold)} .pp-pause{fill:var(--muted)}
+.pp-dash{stroke:var(--muted);stroke-width:1.6;stroke-dasharray:4 3;fill:none}
+.pp-t{font-family:var(--font-mono);font-size:15px;font-weight:600;fill:var(--ink)}
+.pp-s{font-family:var(--font-body);font-size:12px;fill:var(--muted)}
+.mini-props{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px dashed var(--line-strong);border-radius:12px;padding:8px 12px;display:flex;flex-direction:column;min-width:0}
+.mp code{font-weight:600;font-size:13px;overflow-wrap:anywhere}
+.mp span{font-size:13px;color:var(--muted)}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14.5px;line-height:1.55}
+th,td{padding:11px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+thead th{font-family:var(--font-display);font-weight:400;font-size:21px;white-space:nowrap}
+thead th[data-role]{color:var(--rc)}
+tbody th{font-weight:500;color:var(--muted);font-size:13.5px;white-space:nowrap}
+tbody th code{color:var(--ink);font-size:13px;font-weight:600}
+tbody tr:last-child > *{border-bottom:0}
+td .dim,td.dim{color:var(--muted)}
+i.y,i.n{font-style:normal;font-weight:700;padding:0 7px;border-radius:6px;white-space:nowrap}
+i.y{background:var(--good-tint);color:var(--ink)}
+i.n{background:var(--bad-tint);color:var(--ink)}
+.iso-legend{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.iso-legend div{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px;font-size:14px;min-width:0}
+.iso-legend b{display:block;font-size:16px}
+.iso-legend span{color:var(--muted)}
+
+/* ---------- annotations ---------- */
+.annos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.anno{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.anno code{font-weight:600;font-size:14.5px;color:var(--proxy);overflow-wrap:anywhere}
+.anno p{font-size:14px;color:var(--muted)}
+.anno.except{border:2px dashed var(--line-strong);background:transparent}
+.anno.except code{color:var(--ink)}
+.punch{display:flex;align-items:center;gap:14px;padding:14px 18px;border-radius:14px;background:var(--bad-tint);font-size:16px;font-weight:500}
+.punch .ico{width:44px;height:44px;flex:none}
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:13px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--proxy)} .kw{color:var(--aspect)} .st-s{color:var(--tx)}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .conv{grid-template-columns:1fr}
+  .st{flex-direction:row;align-items:center;gap:12px}
+  .st .ico{width:40px;height:40px}
+}
+@media (max-width:900px){
+  .aop-grid{grid-template-columns:1fr}
+  .stage{grid-template-columns:1fr}
+  .sarr{transform:rotate(90deg);height:16px}
+  .solo{flex-direction:row;justify-content:flex-start;flex-wrap:wrap;gap:10px;padding:8px 10px}
+  .solo .ico{width:44px;height:44px}
+  .solo .nlabel{text-align:left;flex:1}
+  .solo .slot{margin-left:auto;min-height:0}
+  .solo .rows{order:5;flex-basis:100%}
+  .props{grid-template-columns:1fr}
+  .annos{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mini-props{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .notes2{grid-template-columns:1fr}
+  .eras{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:104px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:30px}
+  .pits{grid-template-columns:1fr}
+  .iso-legend{grid-template-columns:1fr}
+}
+@media (max-width:600px){
+  .pb-row{grid-template-columns:1fr}
+  .chain{grid-template-columns:1fr}
+  .chain .arr{transform:rotate(90deg);height:16px}
+  .pbox .node{flex-direction:row;justify-content:flex-start;gap:10px;padding:8px 10px}
+  .pbox .node .ico{width:44px;height:44px}
+  .pbox .nlabel{text-align:left;flex:1}
+  .pbox .slot{margin-left:auto;min-height:0}
+  .words{grid-template-columns:1fr}
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+}
+@media (max-width:520px){
+  .annos{grid-template-columns:1fr}
+  .mini-props{grid-template-columns:1fr}
+  .ln{flex-direction:column;align-items:flex-start}
+  .adv-split{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  .token{animation:none}
+  .node,.pbox,.cap{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-agent" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M11 63c0-15 9.5-24 21-24s21 9 21 24z"/>
+    <path class="k-paper" d="M25 39.5 32 53l7-13.5z"/>
+    <path class="k-eye" d="M30.4 42h3.2l1.2 9-2.8 4-2.8-4z"/>
+    <circle class="k-skin" cx="32" cy="27" r="10.5"/>
+    <path class="k-hair" d="M21.4 25.5c-.2-8 4.6-12.5 10.6-12.5s10.8 4.5 10.6 12.5c-2.6-4.6-6.2-6.4-10.6-6.4s-8 1.8-10.6 6.4z"/>
+    <rect class="k-eye" x="22.6" y="25.6" width="8.6" height="4.8" rx="2.2"/>
+    <rect class="k-eye" x="32.8" y="25.6" width="8.6" height="4.8" rx="2.2"/>
+    <rect class="k-eye" x="30" y="26.6" width="4" height="1.5"/>
+    <path class="ks-eye" d="M29.2 34q2.8 1.8 5.6 0" stroke-width="1.6" stroke-linecap="round"/>
+    <path class="ks-cur" d="M43 24.5c2.2 2.4 2.2 6.6 0 9" stroke-width="1.8" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-rules" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="12" y="6" width="42" height="52" rx="4"/>
+    <rect class="k-paper" x="18" y="11" width="31" height="42" rx="2"/>
+    <rect class="k-ink" x="8.5" y="13" width="7" height="3.4" rx="1.7"/>
+    <rect class="k-ink" x="8.5" y="24" width="7" height="3.4" rx="1.7"/>
+    <rect class="k-ink" x="8.5" y="35" width="7" height="3.4" rx="1.7"/>
+    <rect class="k-ink" x="8.5" y="46" width="7" height="3.4" rx="1.7"/>
+    <path class="ks-cur" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M22 20l2.6 2.6L29 18M22 30l2.6 2.6L29 28M22 40l2.6 2.6L29 38"/>
+    <rect class="k-line" x="32" y="19" width="13" height="2.6" rx="1.3"/>
+    <rect class="k-line" x="32" y="29" width="11" height="2.6" rx="1.3"/>
+    <rect class="k-line" x="32" y="39" width="13" height="2.6" rx="1.3"/>
+    <path class="k-gold" d="M41 6h7v15l-3.5-3-3.5 3z"/>
+  </symbol>
+  <symbol id="i-draft" viewBox="0 0 64 64">
+    <rect fill="currentColor" opacity=".35" x="15" y="5" width="36" height="47" rx="3" transform="rotate(-7 33 28)"/>
+    <rect class="k-paper" x="11" y="10" width="37" height="48" rx="3" stroke="currentColor" stroke-width="2.6"/>
+    <path class="ks-cur" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="4 3.4" d="M17.5 21h24M17.5 30h24M17.5 39h15"/>
+    <g transform="rotate(35 46 42)">
+      <rect class="k-gold" x="42.5" y="24" width="7" height="27" rx="1"/>
+      <path class="k-skin" d="M42.5 51h7l-3.5 7z"/>
+      <rect class="k-eye" x="42.5" y="21" width="7" height="4.5" rx="1"/>
+    </g>
+  </symbol>
+  <symbol id="i-worker" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M13 50c0-12 8.5-19 19-19s19 7 19 19z"/>
+    <circle class="k-skin" cx="32" cy="20" r="9.5"/>
+    <path class="k-hair" d="M22.6 19c0-6.5 4-10.5 9.4-10.5S41.4 12.5 41.4 19c-2-3.6-5.3-5.4-9.4-5.4S24.6 15.4 22.6 19z"/>
+    <circle class="k-eye" cx="28.4" cy="21" r="1.3"/>
+    <circle class="k-eye" cx="35.6" cy="21" r="1.3"/>
+    <rect class="k-line" x="20" y="35" width="24" height="14" rx="2"/>
+    <circle class="k-paper" cx="32" cy="42" r="2"/>
+    <rect class="k-ink" x="4" y="49" width="56" height="5" rx="2"/>
+    <rect class="k-ink" x="9" y="54" width="4" height="9"/>
+    <rect class="k-ink" x="51" y="54" width="4" height="9"/>
+  </symbol>
+  <symbol id="i-call" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M8 14a6 6 0 0 1 6-6h36a6 6 0 0 1 6 6v24a6 6 0 0 1-6 6H28l-11 10V44h-3a6 6 0 0 1-6-6z"/>
+    <circle class="k-paper" cx="21" cy="26" r="3.6"/>
+    <circle class="k-paper" cx="32" cy="26" r="3.6"/>
+    <circle class="k-paper" cx="43" cy="26" r="3.6"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M12 14c0-4.4 9-8 20-8s20 3.6 20 8v36c0 4.4-9 8-20 8s-20-3.6-20-8z"/>
+    <ellipse class="k-paper" cx="32" cy="14" rx="16" ry="5" opacity=".4"/>
+    <path class="ks-paper" stroke-width="2.6" d="M12 26c0 4.4 9 8 20 8s20-3.6 20-8M12 38c0 4.4 9 8 20 8s20-3.6 20-8"/>
+  </symbol>
+  <symbol id="i-env" viewBox="0 0 16 16">
+    <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M2 4.5l6 4.5 6-4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  </symbol>
+</svg>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">SPRING AOP · @TRANSACTIONAL · JDK 8 / 17</p>
+  <h1>你调用的，真是它本人吗？</h1>
+  <p class="lead">Spring 递给你的 Bean，很多时候是个替身。日志、权限、缓存、事务，都是这个替身顺手替你做的。</p>
+
+  <div class="cast">
+    <div class="who" data-role="proxy">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">经纪人<code>Proxy</code></div>
+        <p>站在<b>真身前面</b>。所有调用先到他这儿，他照着规矩加点料，再转给真身。</p>
+        <span class="belong">Spring 启动时生成 · CGLIB 或 JDK 代理</span>
+      </div>
+    </div>
+    <div class="who" data-role="aspect">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-rules"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">规矩本<code>Aspect</code></div>
+        <p>只写两件事：<b>管哪些方法</b>（切点），<b>什么时候做什么</b>（通知）。经纪人照着办。</p>
+        <span class="belong">一个 @Aspect 类就是一本</span>
+      </div>
+    </div>
+    <div class="who" data-role="tx">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">草稿本<code>@Transactional</code></div>
+        <p>方法里的改动先写在<b>同一张草稿</b>上。全部成功一起生效，出错整张撕掉。</p>
+        <span class="belong">Spring 自带的一条规矩</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg><span><b>真身</b> Target，你写的那个类</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><span><b>连接</b> Connection，草稿本其实是一个关掉自动提交的连接</span></span>
+    <span class="ex" data-role="other"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg><span><b>事务管理器</b> TransactionManager，管借连接、提交、回滚</span></span>
+  </div>
+</header>
+
+<!-- ================= WORDS ================= -->
+<section id="words">
+  <div>
+    <h2>AOP 的六个词</h2>
+    <p class="lead">听着玄。换成大白话：经纪人拿着规矩本，在合适的时刻插一手。</p>
+  </div>
+  <div class="aop-grid">
+    <div class="words">
+      <div class="word" data-role="aspect"><div class="w">切面<code>Aspect</code></div><p>规矩本。一个 <code>@Aspect</code> 类就是一本。</p></div>
+      <div class="word" data-role="aspect"><div class="w">切点<code>Pointcut</code></div><p>名单：管哪些方法。<code>execution(* com.shop.service..*.*(..))</code></p></div>
+      <div class="word" data-role="aspect"><div class="w">通知<code>Advice</code></div><p>什么时候做什么。一共五种，见右图。</p></div>
+      <div class="word" data-role="other"><div class="w">连接点<code>JoinPoint</code></div><p>能插手的时刻。Spring AOP 只认“方法被调用”这一种。</p></div>
+      <div class="word" data-role="proxy"><div class="w">代理<code>Proxy</code></div><p>经纪人。真正接电话的那个对象。</p></div>
+      <div class="word" data-role="proxy"><div class="w">织入<code>Weaving</code></div><p>把规矩缝到经纪人身上。Spring 在启动时做，AspectJ 在编译时做。</p></div>
+    </div>
+
+    <div class="adv-box" aria-label="五种通知的位置">
+      <div class="adv-head"><code>@Around</code><small>包住全程，还能决定要不要叫醒真身（不调 proceed() 就不调）</small></div>
+      <div class="adv"><code>@Before</code><small>进门前</small></div>
+      <div class="dn" aria-hidden="true">↓</div>
+      <div class="adv-m" data-role="target"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg>真身方法 placeOrder()</div>
+      <div class="dn" aria-hidden="true">↙ ↘</div>
+      <div class="adv-split">
+        <div class="adv ok"><code>@AfterReturning</code><small>正常返回后</small></div>
+        <div class="adv bad"><code>@AfterThrowing</code><small>抛异常后</small></div>
+      </div>
+      <div class="dn" aria-hidden="true">↘ ↙</div>
+      <div class="adv"><code>@After</code><small>不管成败都执行，像 finally</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= JOURNEY ================= -->
+<section id="journey">
+  <div>
+    <h2>跟着一次调用走一趟</h2>
+    <p class="lead">选一个剧情，点「下一步」。留意数据库里那几行：是草稿、已提交、已撕掉，还是不该留下却留下了。</p>
+  </div>
+
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-ok" data-scene="ok" aria-pressed="true">正常下单</button>
+    <button class="tab" id="sc-rt" data-scene="rt" aria-pressed="false">运行时异常</button>
+    <button class="tab" id="sc-ck" data-scene="ck" aria-pressed="false">受检异常</button>
+    <button class="tab" id="sc-self" data-scene="self" aria-pressed="false">自己调自己</button>
+  </div>
+
+  <div class="stage">
+    <div class="node solo" data-node="caller">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-call"/></svg>
+      <div class="nlabel">调用方<code>Controller</code></div>
+      <div class="slot"></div>
+    </div>
+    <div class="sarr" aria-hidden="true">→</div>
+
+    <div class="pbox" id="pbox">
+      <div class="pb-tag">代理对象 · OrderService$$SpringCGLIB$$0</div>
+      <div class="pb-row">
+        <div class="node" data-node="proxy">
+          <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg>
+          <div class="nlabel">经纪人<code>Proxy</code></div>
+          <div class="slot"></div>
+        </div>
+        <div class="chain">
+          <div class="node" data-node="log">
+            <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-rules"/></svg>
+            <div class="nlabel">日志切面<code>@Order(1) 外层</code></div>
+            <div class="slot"></div>
+          </div>
+          <div class="arr" aria-hidden="true">→</div>
+          <div class="node" data-node="tx">
+            <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg>
+            <div class="nlabel">事务<code>@Transactional</code></div>
+            <div class="slot"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="sarr" aria-hidden="true">→</div>
+
+    <div class="node solo" data-node="target">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-worker"/></svg>
+      <div class="nlabel">真身<code>OrderService</code></div>
+      <div class="slot"></div>
+    </div>
+    <div class="sarr" aria-hidden="true">→</div>
+
+    <div class="node solo" data-node="db">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg>
+      <div class="nlabel">数据库<code>同一个连接</code></div>
+      <ul class="rows" id="rows"><li class="r-empty">还没写入</li></ul>
+      <div class="slot"></div>
+    </div>
+  </div>
+
+  <div class="cap" id="cap" data-role="caller" aria-live="polite">
+    <div class="cap-n" id="capN">1/9</div>
+    <div class="cap-who"><span id="capWho">调用方 · Controller</span> · <code id="capCall">orderService.placeOrder(cmd)</code></div>
+    <div class="cap-say" id="capSay">Controller：下单！它手里的 orderService 其实是代理。</div>
+  </div>
+
+  <div class="ctrl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+
+  <ol class="script" id="script" aria-label="调用顺序"></ol>
+</section>
+
+<!-- ================= LIFECYCLE ================= -->
+<section id="life">
+  <div>
+    <h2>替身什么时候套上</h2>
+    <p class="lead">Bean 出生的流水线上，第 4 站给它穿上外套。之后谁来要这个 Bean，拿到的都是替身。</p>
+  </div>
+  <ol class="conv">
+    <li class="st"><span class="n">1</span><div class="st-txt"><b>实例化</b><code>new OrderService()</code></div></li>
+    <li class="st"><span class="n">2</span><div class="st-txt"><b>属性注入</b><code>@Autowired</code></div></li>
+    <li class="st"><span class="n">3</span><div class="st-txt"><b>初始化</b><code>@PostConstruct</code></div></li>
+    <li class="st key" data-role="proxy"><span class="n">4</span><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg><div class="st-txt"><b>套上替身</b><small>有规矩点名就生成代理</small><code>BeanPostProcessor</code></div></li>
+    <li class="st"><span class="n">5</span><div class="st-txt"><b>进容器</b><small>单例池里存的是替身</small></div></li>
+    <li class="st"><span class="n">6</span><div class="st-txt"><b>被注入</b><small>别人拿到的是替身</small></div></li>
+    <li class="st"><span class="n">7</span><div class="st-txt"><b>销毁</b><code>@PreDestroy</code></div></li>
+  </ol>
+  <div class="notes2">
+    <div class="ln" data-role="tx">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg>
+      <div>
+        <h3>@PostConstruct 里开不了事务</h3>
+        <p>第 3 站时还没穿外套，而且是 <code>this</code> 调用。启动后要做事，改用 <code>ApplicationRunner</code>，从另一个 Bean 里调。</p>
+      </div>
+    </div>
+    <div class="ln" data-role="proxy">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg>
+      <div>
+        <h3>怎么确认拿到的是替身</h3>
+        <p>打印 <code>orderService.getClass()</code>，看到 <code>OrderService$$SpringCGLIB$$0</code> 就是；或者用 <code>AopUtils.isAopProxy(orderService)</code>。</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="sub">一次 @Transactional 调用里，草稿本的一生</h3>
+  <div class="txflow" data-role="tx">
+    <span class="chip">从连接池借连接</span><span class="arr" aria-hidden="true">→</span>
+    <span class="chip"><code>setAutoCommit(false)</code></span><span class="arr" aria-hidden="true">→</span>
+    <span class="chip">绑到当前线程</span><span class="arr" aria-hidden="true">→</span>
+    <span class="chip">执行方法</span><span class="arr" aria-hidden="true">→</span>
+    <span class="chip ok"><code>commit()</code></span><span class="chip or">或</span><span class="chip bad"><code>rollback()</code></span><span class="arr" aria-hidden="true">→</span>
+    <span class="chip">解绑，还连接</span><span class="arr" aria-hidden="true">→</span>
+    <span class="chip">提交后回调</span>
+  </div>
+  <p class="small-note">连接绑在线程上（ThreadLocal）。同一线程里的 Mapper、Repository 自动拿到同一个连接；换个线程就不是了。想在提交成功后再发消息，用 <code>@TransactionalEventListener</code>，它默认在提交后才触发。</p>
+</section>
+
+<!-- ================= KNOBS ================= -->
+<section id="knobs">
+  <div>
+    <h2>事务的两个旋钮</h2>
+    <p class="lead">第一个旋钮管“草稿本怎么共用”，第二个管“能看到别人多少草稿”。</p>
+  </div>
+
+  <h3 class="sub">传播行为 propagation：A 开着事务，去调另一个 Bean 的 B</h3>
+  <div class="props">
+    <div class="prop def">
+      <h3>REQUIRED<small>默认</small></h3>
+      <svg viewBox="0 0 240 140" aria-hidden="true">
+        <rect class="pp-paper" x="70" y="10" width="100" height="118" rx="6"/>
+        <text class="pp-t" x="58" y="42" text-anchor="end">A</text>
+        <rect class="pp-a" x="82" y="32" width="76" height="7" rx="3.5"/>
+        <rect class="pp-a" x="82" y="48" width="58" height="7" rx="3.5"/>
+        <text class="pp-t" x="58" y="82" text-anchor="end">B</text>
+        <rect class="pp-b" x="82" y="72" width="76" height="7" rx="3.5"/>
+        <rect class="pp-b" x="82" y="88" width="48" height="7" rx="3.5"/>
+        <text class="pp-s" x="120" y="118" text-anchor="middle">同一张纸</text>
+      </svg>
+      <p>B 写在 A 的纸上。B 出错，整张撕掉。</p>
+      <p class="dim">A 就算 catch 住 B 的异常，提交时也会收到 <code>UnexpectedRollbackException</code>。</p>
+    </div>
+    <div class="prop">
+      <h3>REQUIRES_NEW</h3>
+      <svg viewBox="0 0 240 140" aria-hidden="true">
+        <g opacity=".45">
+          <rect class="pp-paper" x="14" y="22" width="96" height="106" rx="6"/>
+          <rect class="pp-a" x="26" y="42" width="70" height="7" rx="3.5"/>
+          <rect class="pp-a" x="26" y="58" width="52" height="7" rx="3.5"/>
+        </g>
+        <rect class="pp-pause" x="52" y="80" width="6" height="18" rx="2"/>
+        <rect class="pp-pause" x="64" y="80" width="6" height="18" rx="2"/>
+        <text class="pp-s" x="62" y="118" text-anchor="middle">A 先收起来</text>
+        <rect class="pp-paper pp-paper-b" x="128" y="10" width="96" height="106" rx="6"/>
+        <rect class="pp-b" x="140" y="30" width="70" height="7" rx="3.5"/>
+        <rect class="pp-b" x="140" y="46" width="52" height="7" rx="3.5"/>
+        <text class="pp-s" x="176" y="100" text-anchor="middle">B 用新纸</text>
+      </svg>
+      <p>B 拿一张新纸，自己提交或回滚，再把 A 的纸拿回来。</p>
+      <p class="dim">适合“失败也要留下”的记录。会多占一个连接。</p>
+    </div>
+    <div class="prop">
+      <h3>NESTED</h3>
+      <svg viewBox="0 0 240 140" aria-hidden="true">
+        <rect class="pp-paper" x="70" y="10" width="100" height="118" rx="6"/>
+        <text class="pp-t" x="58" y="42" text-anchor="end">A</text>
+        <rect class="pp-a" x="82" y="32" width="76" height="7" rx="3.5"/>
+        <rect class="pp-a" x="82" y="48" width="58" height="7" rx="3.5"/>
+        <path class="pp-dash" d="M76 64h88"/>
+        <path class="pp-mark" d="M166 57h34l-7 7 7 7h-34z"/>
+        <text class="pp-s" x="58" y="68" text-anchor="end">书签</text>
+        <text class="pp-t" x="58" y="94" text-anchor="end">B</text>
+        <rect class="pp-b" x="82" y="84" width="76" height="7" rx="3.5"/>
+        <rect class="pp-b" x="82" y="100" width="48" height="7" rx="3.5"/>
+      </svg>
+      <p>同一张纸，先夹一枚书签（savepoint）。B 出错只撕到书签处。</p>
+      <p class="dim">JDBC、MyBatis 支持；JPA（Hibernate）不支持。</p>
+    </div>
+  </div>
+  <div class="mini-props">
+    <div class="mp"><code>SUPPORTS</code><span>有纸就一起写，没有就不用纸</span></div>
+    <div class="mp"><code>NOT_SUPPORTED</code><span>把纸收起来，不用事务</span></div>
+    <div class="mp"><code>MANDATORY</code><span>必须已经有纸，否则报错</span></div>
+    <div class="mp"><code>NEVER</code><span>有纸就报错</span></div>
+  </div>
+
+  <h3 class="sub">隔离级别 isolation：能看到别人多少草稿</h3>
+  <div class="iso-legend">
+    <div><b>脏读</b><span>看到别人还没提交的草稿</span></div>
+    <div><b>不可重复读</b><span>同一行读两次，值变了</span></div>
+    <div><b>幻读</b><span>同样的条件查两次，多出几行</span></div>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th scope="col">级别</th><th scope="col">脏读</th><th scope="col">不可重复读</th><th scope="col">幻读</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>READ_UNCOMMITTED</code></th><td><i class="n">会</i></td><td><i class="n">会</i></td><td><i class="n">会</i></td></tr>
+        <tr><th scope="row"><code>READ_COMMITTED</code></th><td><i class="y">防住</i></td><td><i class="n">会</i></td><td><i class="n">会</i></td></tr>
+        <tr><th scope="row"><code>REPEATABLE_READ</code></th><td><i class="y">防住</i></td><td><i class="y">防住</i></td><td><i class="n">会</i><span class="dim">（InnoDB 靠 MVCC 和间隙锁挡住了大部分）</span></td></tr>
+        <tr><th scope="row"><code>SERIALIZABLE</code></th><td><i class="y">防住</i></td><td><i class="y">防住</i></td><td><i class="y">防住</i></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="small-note">默认 <code>Isolation.DEFAULT</code> 就是用数据库自己的：MySQL InnoDB 是 REPEATABLE_READ，PostgreSQL 和 Oracle 是 READ_COMMITTED。其他小旋钮：<code>readOnly = true</code>、<code>timeout = 5</code>（秒）、<code>rollbackFor</code> / <code>noRollbackFor</code>。</p>
+</section>
+
+<!-- ================= PROXY TYPES ================= -->
+<section id="kinds">
+  <div>
+    <h2>三种替身做法</h2>
+    <p class="lead">Spring AOP 只会前两种。AspectJ 不找替身，直接改你的类。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col"><span class="sr">对比项</span></th>
+          <th scope="col" data-role="proxy">JDK 动态代理</th>
+          <th scope="col" data-role="proxy">CGLIB 代理</th>
+          <th scope="col" data-role="other">AspectJ 织入</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">怎么做</th><td>造一个实现同样接口的替身</td><td>造一个子类当替身</td><td>直接改你类的字节码</td></tr>
+        <tr><th scope="row">前提</th><td>必须有接口</td><td>类和方法不能是 final</td><td>用 ajc 编译，或加 <code>-javaagent</code></td></tr>
+        <tr><th scope="row">什么时候做</th><td>启动时</td><td>启动时</td><td>编译期或类加载期</td></tr>
+        <tr><th scope="row">谁默认用它</th><td>纯 Spring，且类有接口时</td><td>Spring Boot 2.0 起默认；类没有接口时</td><td>要手动开启</td></tr>
+        <tr><th scope="row">自己调自己</th><td><i class="n">拦不到</i></td><td><i class="n">拦不到</i></td><td><i class="y">拦得到</i></td></tr>
+        <tr><th scope="row">private、final、static</th><td><i class="n">拦不到</i></td><td><i class="n">拦不到</i></td><td><i class="y">拦得到</i></td></tr>
+        <tr><th scope="row">按实现类注入</th><td><i class="n">不行</i>，只能按接口</td><td><i class="y">可以</i></td><td><i class="y">可以</i></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= ANNOTATIONS ================= -->
+<section id="daily">
+  <div>
+    <h2>你天天在用的替身</h2>
+    <p class="lead">这些注解自己什么也不做，干活的都是替身。</p>
+  </div>
+  <div class="annos">
+    <div class="anno"><code>@Transactional</code><p>开事务，提交或回滚</p></div>
+    <div class="anno"><code>@Cacheable</code><p>先查缓存，命中就不叫醒真身</p></div>
+    <div class="anno"><code>@Async</code><p>丢进线程池，马上返回</p></div>
+    <div class="anno"><code>@PreAuthorize</code><p>调用前查权限（Spring Security）</p></div>
+    <div class="anno"><code>@Validated</code><p>放在类上，检查方法参数</p></div>
+    <div class="anno"><code>@Retryable</code><p>失败自动重试（Spring Retry）</p></div>
+    <div class="anno"><code>你的 @Aspect</code><p>操作日志、限流、分布式锁、数据权限</p></div>
+    <div class="anno except"><code>@Configuration（例外）</code><p>它本身就是 CGLIB 子类，背后没有另一个真身，所以 @Bean 方法互相调用也拦得到。</p></div>
+  </div>
+  <div class="punch" data-role="proxy">
+    <svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg>
+    <span>前 7 个有同一个弱点：自己调自己，全部失效。</span>
+  </div>
+
+  <div class="codebox">
+    <div class="code-bar"><span>自己写一条规矩，再看事务长什么样。<code>@Aspect</code> 需要 aspectjweaver（Boot 里加 AOP starter），<code>@Transactional</code> 不需要。</span></div>
+<pre><code><span class="cm">// ① 规矩本：给 service 包里的方法计时</span>
+<span class="an">@Slf4j</span>
+<span class="an">@Aspect</span>
+<span class="an">@Component</span>
+<span class="an">@Order</span>(1)                                                  <span class="cm">// 数字小 → 在外层</span>
+<span class="kw">public class</span> TimingAspect {
+
+    <span class="an">@Pointcut</span>(<span class="st-s">"execution(* com.shop.service..*.*(..))"</span>)     <span class="cm">// 切点：管哪些方法</span>
+    <span class="kw">void</span> serviceMethods() {}
+
+    <span class="an">@Around</span>(<span class="st-s">"serviceMethods()"</span>)                             <span class="cm">// 通知：怎么管</span>
+    <span class="kw">public</span> Object time(ProceedingJoinPoint pjp) <span class="kw">throws</span> Throwable {
+        <span class="kw">long</span> start = System.currentTimeMillis();
+        <span class="kw">try</span> {
+            <span class="kw">return</span> pjp.proceed();                           <span class="cm">// 交给下一层，最终到真身</span>
+        } <span class="kw">finally</span> {
+            log.info(<span class="st-s">"{} 耗时 {}ms"</span>, pjp.getSignature().toShortString(),
+                     System.currentTimeMillis() - start);
+        }
+    }
+}
+
+<span class="cm">// ② 草稿本：事务也是替身身上的一条规矩</span>
+<span class="an">@Service</span>
+<span class="kw">public class</span> OrderService {
+    <span class="kw">private final</span> OrderMapper orderMapper;
+    <span class="kw">private final</span> StockMapper stockMapper;
+    <span class="cm">// 构造器注入省略</span>
+
+    <span class="an">@Transactional</span>(rollbackFor = Exception.<span class="kw">class</span>)           <span class="cm">// 受检异常也回滚</span>
+    <span class="kw">public</span> Long placeOrder(OrderCmd cmd) {
+        orderMapper.insert(cmd.toOrder());                  <span class="cm">// 同一个连接</span>
+        stockMapper.deduct(cmd.getSkuId(), cmd.getCount()); <span class="cm">// 同一个连接</span>
+        <span class="kw">return</span> cmd.getOrderId();
+    }
+}</code></pre>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：原理不变，细节变了</h2>
+    <p class="lead">JDK 8 对应 Spring 5 / Boot 2，JDK 17 对应 Spring 6+ / Boot 3+。替身还是那个替身。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li><code>@Transactional</code> 只认 public 方法，加在其他方法上静默失效</li>
+        <li>代理类名长这样：<code>OrderService$$EnhancerBySpringCGLIB$$9f8e7d6c</code></li>
+        <li><code>@PostConstruct</code> 在 <code>javax.annotation</code> 包。JDK 11 起它被移出 JDK，Boot 2 已帮你带上依赖</li>
+        <li>5.2.7 起，同一个切面里的 <code>@After</code> 改到 <code>@AfterReturning</code> / <code>@AfterThrowing</code> 之后执行</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring 6+ · Boot 3+</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>protected、包可见的方法也能加 <code>@Transactional</code>（CGLIB 代理时）；private 依然不行</li>
+        <li>代理类名变短：<code>OrderService$$SpringCGLIB$$0</code></li>
+        <li>包名换成 <code>jakarta.annotation.PostConstruct</code>；JTA 的事务注解变成 <code>jakarta.transaction.Transactional</code>，日常仍推荐 Spring 自己的 <code>@Transactional</code></li>
+        <li>打 GraalVM 原生镜像时，代理类在构建期提前生成（AOT）</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>Boot 默认 CGLIB</span><span>只拦方法调用</span><span>自己调自己失效</span><span>默认只对 RuntimeException 回滚</span><span>传播行为和隔离级别</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>@Transactional 失效的 10 种情况</h2>
+    <p class="lead">大部分都能归到一句话：调用没经过替身，或者替身不知道出了错。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="proxy"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg><b>自己调自己</b><p><code>this.placeOrder()</code> 不经过替身。把方法挪到另一个 Bean，或注入自己（加 <code>@Lazy</code>）再通过它调用。</p></div>
+    <div class="pit" data-role="proxy"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg><b>private、final、static 方法</b><p>替身拦不到。Spring 5 里非 public 的方法也不行。</p></div>
+    <div class="pit" data-role="proxy"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-agent"/></svg><b>不是 Spring Bean</b><p>自己 <code>new</code> 出来的对象没有替身。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg><b>异常被 catch 吞了</b><p>替身以为一切正常，照样提交。要么继续往外抛，要么调用 <code>TransactionAspectSupport.currentTransactionStatus().setRollbackOnly()</code>。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg><b>抛的是受检异常</b><p>默认照样提交。写上 <code>rollbackFor = Exception.class</code>。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg><b>内层失败，外层 catch</b><p>两层都是 REQUIRED 时，草稿已被标成“只能撕”，外层提交时抛 <code>UnexpectedRollbackException</code>。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg><b>换了线程</b><p><code>@Async</code>、<code>new Thread</code>、<code>parallelStream</code> 里写库，拿到的不是同一个连接，也就不在同一个事务里。</p></div>
+    <div class="pit" data-role="aspect"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-rules"/></svg><b>锁放在事务里面</b><p>解锁早于提交，别人会读到旧数据。给锁切面加更小的 <code>@Order</code>，让它包在事务外面。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-draft"/></svg><b>事务里调远程接口、发消息</b><p>连接被长时间占着；消息发出去了，事务却回滚了。用 <code>@TransactionalEventListener</code> 等提交后再发。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>数据库不支持事务</b><p>MySQL 的 MyISAM 表没有事务，换成 InnoDB。</p></div>
+  </div>
+</section>
+
+<footer>
+  适用于 Spring Framework 5–7、Spring Boot 2–4 的代理式 Spring AOP。上一篇：<a href="spring-web-gates.html">Spring MVC 请求关卡</a>（Filter、Interceptor、WebMvcConfigurer）。
+</footer>
+</main>
+
+<script>
+(function(){
+  var ROLE={caller:'调用方 · Controller',proxy:'经纪人 · Proxy',log:'日志切面 · @Around',tx:'事务 · @Transactional',target:'真身 · OrderService',db:'数据库 · 同一个连接'};
+  var STATE={draft:'草稿',done:'已提交',torn:'已撕掉',auto:'已直接生效',oops:'不该留下'};
+  function S(node,call,say,kind,tok,rows){return {node:node,call:call,say:say,kind:kind||'go',tok:tok||null,rows:rows||null};}
+  function K(node,call,say){return S(node,call,say,'skip',null,null);}
+  var CALL=['调用','req'], RET=['返回','ok'], ERR=['异常','bad'];
+  var SC={
+    ok:[
+      S('caller','orderService.placeOrder(cmd)','Controller：下单！它手里的 orderService 其实是代理。','go',CALL),
+      S('proxy','代理接住调用','经纪人：placeOrder() 被两条规矩点了名：日志、事务。从外往里依次执行。','go',CALL),
+      S('log','@Around · proceed() 之前','日志切面：记下开始时间，然后 proceed() 往里交。','go',CALL),
+      S('tx','开启事务','事务：借一个连接，setAutoCommit(false)，绑到当前线程。','go',CALL),
+      S('target','placeOrder() 执行','真身：插入订单，扣减库存。','go',CALL),
+      S('db','INSERT 订单 · UPDATE 库存','两条 SQL 用同一个连接，先写在草稿上，别的事务看不见。','go',CALL,[['INSERT 订单','draft'],['UPDATE 库存','draft']]),
+      S('tx','commit()','事务：方法正常返回 → 提交。草稿一起生效，归还连接。','back',RET,[['INSERT 订单','done'],['UPDATE 库存','done']]),
+      S('log','@Around · proceed() 之后','日志切面：耗时 38ms，记一笔。','back',RET),
+      S('caller','拿到 orderId','Controller 拿到结果，完全不知道中间发生过什么。','done',RET)
+    ],
+    rt:[
+      S('caller','orderService.placeOrder(cmd)','Controller：下单！','go',CALL),
+      S('proxy','代理接住调用','经纪人：日志、事务，从外往里。','go',CALL),
+      S('log','@Around · proceed() 之前','日志切面：记下开始时间。','go',CALL),
+      S('tx','开启事务','事务：借连接，关掉自动提交，绑到当前线程。','go',CALL),
+      S('target','placeOrder() 执行','真身：先插入订单。','go',CALL),
+      S('db','INSERT 订单','草稿上写了一行。','go',CALL,[['INSERT 订单','draft']]),
+      S('target','throw IllegalStateException','真身：扣库存时发现库存不够，抛出运行时异常！','err',ERR),
+      S('tx','rollback()','事务：RuntimeException → 回滚。整张草稿撕掉。','back',ERR,[['INSERT 订单','torn']]),
+      S('log','@Around · finally','日志切面：记下异常和耗时，异常继续往外抛。','back',ERR),
+      S('caller','收到异常','交给 @RestControllerAdvice 处理。数据库里干干净净。','done',ERR)
+    ],
+    ck:[
+      S('caller','orderService.placeOrder(cmd)','Controller：下单！','go',CALL),
+      S('proxy','代理接住调用','经纪人：日志、事务，从外往里。','go',CALL),
+      S('log','@Around · proceed() 之前','日志切面：记下开始时间。','go',CALL),
+      S('tx','开启事务','事务：借连接，关掉自动提交。注解上没写 rollbackFor。','go',CALL),
+      S('target','placeOrder() 执行','真身：先插入订单。','go',CALL),
+      S('db','INSERT 订单','草稿上写了一行。','go',CALL,[['INSERT 订单','draft']]),
+      S('target','throw new IOException()','真身：上传发票失败，抛出受检异常。','err',ERR),
+      S('tx','commit()','事务：默认只对 RuntimeException 和 Error 回滚。受检异常 → 照样提交！','stop',ERR,[['INSERT 订单','oops']]),
+      S('log','@Around · finally','日志切面：记下异常，继续往外抛。','back',ERR),
+      S('caller','收到异常','调用方以为下单失败，订单却留在库里。改成 @Transactional(rollbackFor = Exception.class)。','done',ERR)
+    ],
+    self:[
+      S('caller','orderService.importAll(list)','Controller：批量导入。importAll() 上没有 @Transactional。','go',CALL),
+      S('proxy','代理接住调用','经纪人：importAll() 只被日志规矩点名，没有事务。','go',CALL),
+      S('log','@Around · proceed() 之前','日志切面：记下开始时间。','go',CALL),
+      S('target','this.placeOrder(cmd)','真身：在自己内部调用 placeOrder()。this 是真身本人，不是替身！','go',CALL),
+      K('tx','开启事务','经纪人没看到这次内部调用，placeOrder() 上的 @Transactional 形同虚设'),
+      S('db','INSERT 订单','没有事务，每条 SQL 写完立刻生效。','go',CALL,[['INSERT 订单','auto']]),
+      S('target','throw IllegalStateException','真身：扣库存时库存不够，抛异常！','err',ERR),
+      K('tx','rollback()','没有事务，无从回滚'),
+      S('log','@Around · finally','日志切面：记下异常。','back',ERR,[['INSERT 订单','oops']]),
+      S('caller','收到异常','订单留在库里，库存却没扣。把 placeOrder() 挪到另一个 Bean 里，从外面调。','done',ERR)
+    ]
+  };
+
+  var scene='ok', pos=0, timer=null;
+  function $(id){return document.getElementById(id);}
+  var stage=document.querySelector('.stage'), pbox=$('pbox'), cap=$('cap'), list=$('script'), rowsEl=$('rows');
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  var token=document.createElement('span');
+
+  function vis(){return SC[scene].filter(function(s){return s.kind!=='skip';});}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  function render(){
+    var v=vis(), cur=v[pos];
+    stage.querySelectorAll('[data-node]').forEach(function(n){ n.classList.toggle('active', n.getAttribute('data-node')===cur.node); });
+    pbox.classList.toggle('on', cur.node==='proxy');
+
+    var slot=stage.querySelector('[data-node="'+cur.node+'"] .slot');
+    token.className='token t-'+cur.tok[1];
+    token.innerHTML='<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-env"/></svg>'+esc(cur.tok[0]);
+    slot.appendChild(token);
+    token.style.animation='none'; void token.offsetWidth; token.style.animation='';
+
+    var rows=null;
+    for(var i=0;i<=pos;i++){ if(v[i].rows){ rows=v[i].rows; } }
+    rowsEl.innerHTML = rows ? rows.map(function(r){
+      return '<li class="r-'+r[1]+'"><b>'+esc(r[0])+'</b><span>'+STATE[r[1]]+'</span></li>';
+    }).join('') : '<li class="r-empty">还没写入</li>';
+
+    cap.setAttribute('data-role', cur.node);
+    $('capN').textContent=(pos+1)+'/'+v.length;
+    $('capWho').textContent=ROLE[cur.node];
+    $('capCall').textContent=cur.call;
+    $('capSay').textContent=cur.say;
+
+    var n=0;
+    list.innerHTML=SC[scene].map(function(s){
+      var skip=s.kind==='skip', idx=skip?-1:n++;
+      var st=skip?'skip':(idx<pos?'past':(idx===pos?'now':'future'));
+      return '<li class="'+st+'" data-role="'+s.node+'"><span class="sn">'+(skip?'✕':(idx+1))+'</span><code>'+esc(s.call)+'</code><span class="ss">'+(skip?'跳过：':'')+esc(s.say)+'</span></li>';
+    }).join('');
+
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===v.length-1;
+  }
+
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<vis().length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=vis().length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 1600);
+  });
+
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop();
+      scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+
+  $('journey').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+
+  render();
+})();
+</script>
+
+</body>
+</html>
