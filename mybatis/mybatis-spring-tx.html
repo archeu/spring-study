@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>MyBatis 与 Spring 事务</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Two sides (Spring teal, MyBatis blue) meet at the thread's locker (orange); the connection is purple, the database brown. Anchor = the @Transactional walk-through with live locker, DB and log. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --sp:#0D7A69; --sp-tint:#DCF0EB;
+  --mb:#3150C4; --mb-tint:#E2E7FA;
+  --lk:#B85F0C; --lk-tint:#FBE9D5;
+  --cn:#6A3FC0; --cn-tint:#ECE5FA;
+  --db:#8A5A2B; --db-tint:#F3E6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --skin:#F1C6A0; --hair:#3B2A21; --gold:#E2B33C; --eye:#2A2320;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hl:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --sp:#40C6B0; --sp-tint:#12352F;
+    --mb:#90A4FF; --mb-tint:#1D2650;
+    --lk:#F4A651; --lk-tint:#3A2812;
+    --cn:#B9A0FF; --cn-tint:#2A2148;
+    --db:#D9A26B; --db-tint:#3A2A1A;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hl:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --sp:#40C6B0; --sp-tint:#12352F;
+  --mb:#90A4FF; --mb-tint:#1D2650;
+  --lk:#F4A651; --lk-tint:#3A2812;
+  --cn:#B9A0FF; --cn-tint:#2A2148;
+  --db:#D9A26B; --db-tint:#3A2A1A;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --skin:#E2B188; --hair:#2A1C15; --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hl:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--mb)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible{outline:3px solid var(--mb);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="sp"]{--rc:var(--sp);--rt:var(--sp-tint)}
+[data-role="mb"]{--rc:var(--mb);--rt:var(--mb-tint)}
+[data-role="lk"]{--rc:var(--lk);--rt:var(--lk-tint)}
+[data-role="cn"]{--rc:var(--cn);--rt:var(--cn-tint)}
+[data-role="db"]{--rc:var(--db);--rt:var(--db-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-skin{fill:var(--skin)} .k-hair{fill:var(--hair)} .k-ink{fill:var(--ink)} .k-paper{fill:var(--card)}
+.k-gold{fill:var(--gold)} .k-eye{fill:var(--eye)}
+.ks-ink{stroke:var(--ink);fill:none} .ks-paper{stroke:var(--card);fill:none} .ks-eye{stroke:var(--eye);fill:none}
+.ks-cur{stroke:currentColor;fill:none} .ks-gold{stroke:var(--gold);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.thesis{margin-top:24px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.05fr) auto minmax(0,1fr);gap:12px;align-items:center}
+.th-side{border-radius:18px;padding:14px;background:var(--rt);border:2px solid var(--rc);display:flex;flex-direction:column;gap:8px;min-width:0}
+.th-side h3{font-size:21px;color:var(--rc)}
+.th-chip{font-family:var(--font-mono);font-size:12.5px;padding:6px 10px;border-radius:10px;background:var(--card);border:1.5px solid var(--line);overflow-wrap:anywhere}
+.th-chip small{display:block;font-family:var(--font-body);color:var(--muted);font-size:12px}
+.dn{color:var(--line-strong);text-align:center;line-height:1;font-size:16px}
+.th-side p{font-size:13.5px}
+.th-arr{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12.5px;color:var(--muted);text-align:center}
+.th-arr b{font-size:24px;color:var(--line-strong);line-height:1;font-weight:400}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:116px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+.extras{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;margin-top:30px;padding-top:18px;border-top:1.5px dashed var(--line-strong);font-size:14px;color:var(--muted)}
+.extras > b{color:var(--ink);font-weight:500}
+.ex{display:inline-flex;align-items:center;gap:8px}
+.ex svg{width:30px;height:30px;flex:none;color:var(--rc)}
+.ex b{color:var(--ink);font-weight:700}
+
+/* ---------- locker component ---------- */
+.lk{border:2px solid var(--lk);border-radius:16px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.lk-h{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--lk)}
+.lk-h svg{width:22px;height:22px;color:var(--lk);flex:none}
+.slot{display:grid;grid-template-columns:5.6em minmax(0,1fr);gap:8px;align-items:center;padding:5px 8px;border-radius:9px;background:var(--lk-tint);font-size:13px;min-height:34px}
+.slot small{font-size:12px;color:var(--muted)}
+.slot em{font-style:normal;color:var(--muted);font-size:12.5px}
+.slot .vals{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+.cnc{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:1px 8px;border-radius:6px;background:var(--cn);color:var(--on-accent);animation:pop .3s ease}
+.ssc{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:1px 8px;border-radius:6px;background:var(--mb);color:var(--on-accent);animation:pop .3s ease}
+.syc{font-family:var(--font-mono);font-size:11.5px;padding:1px 8px;border-radius:6px;border:1.5px solid var(--lk);background:var(--card);animation:pop .3s ease}
+.stash{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;padding:5px 8px;border-radius:9px;border:1.5px dashed var(--line-strong);color:var(--muted)}
+.loose{font-size:12.5px;padding:5px 8px;border-radius:9px;background:var(--warn-tint);color:var(--ink)}
+@keyframes pop{from{transform:scale(.8);opacity:.2}to{transform:none;opacity:1}}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--sp)} .kw{color:var(--lk)} .st-s{color:var(--mb)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--lk-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:22px;line-height:1;text-align:center;align-self:center}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tabs{display:flex;flex-wrap:wrap;gap:8px}
+.tab{font-size:15px;padding:8px 16px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- wire ---------- */
+.wire{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,.9fr) auto minmax(0,1fr);gap:12px;align-items:center}
+.wn{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:4px;min-width:0}
+.wn b{font-size:16px}
+.wn code{font-size:12.5px;color:var(--rc);font-weight:600;overflow-wrap:anywhere}
+.wn small{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.wn.hub{align-items:center;text-align:center;background:var(--rt)}
+.wn.hub svg{width:54px;height:54px;color:var(--rc)}
+.wcode{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:start}
+.facts{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.facts code{overflow-wrap:anywhere}
+
+/* ---------- locker section ---------- */
+.slots3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.sc3{border:2px solid var(--rc);border-radius:16px;padding:14px;background:var(--card);display:flex;flex-direction:column;gap:10px;min-width:0}
+.sc3-h{display:flex;align-items:center;gap:10px}
+.sc3-h svg{width:40px;height:40px;color:var(--rc);flex:none}
+.sc3-h h3{color:var(--rc)}
+.sc3 dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 10px;font-size:13.5px}
+.sc3 dt{color:var(--muted);white-space:nowrap}
+.sc3 dd{margin:0;overflow-wrap:anywhere}
+
+/* ---------- walk-through ---------- */
+.sim{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:16px;align-items:start}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.box{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:background .25s,border-color .25s}
+.box.hl{border-color:var(--rc);background:var(--rt)}
+.box h3{font-family:var(--font-body);font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.src{list-style:none;margin:0;padding:8px 0;border-radius:10px;background:var(--code-bg);border:1px solid var(--line);font-family:var(--font-mono);font-size:12.5px;line-height:1.6;overflow-x:auto}
+.src li{padding:1px 12px 1px 10px;border-left:4px solid transparent;white-space:pre;transition:background .2s}
+.src li.cur{background:var(--mb-tint);border-left-color:var(--mb);font-weight:600}
+.lockers{display:grid;gap:10px}
+.lockers.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.empty{font-size:13.5px;color:var(--muted)}
+.ops{display:flex;flex-direction:column;gap:6px}
+.op{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 10px;border-radius:10px;border:1.5px solid var(--line);font-size:13px;transition:background .25s,border-color .25s}
+.op code{font-weight:600;overflow-wrap:anywhere}
+.op code small{display:block;font-family:var(--font-body);font-weight:400;font-size:12px;color:var(--muted)}
+.ost{font-size:12px;font-weight:700;padding:1px 9px;border-radius:999px;white-space:nowrap}
+.op.pend{border-style:dashed;border-color:var(--warn);background:var(--warn-tint)}
+.op.pend .ost{background:var(--warn);color:var(--on-accent)}
+.op.ok{border-color:var(--good);background:var(--good-tint)}
+.op.ok .ost{background:var(--good);color:var(--on-accent)}
+.op.undo{border-color:var(--bad);background:var(--bad-tint)}
+.op.undo code{text-decoration:line-through}
+.op.undo .ost{background:var(--bad);color:var(--on-accent)}
+.console{background:var(--console-bg);color:var(--console-fg);border-radius:16px;padding:12px 14px;font-family:var(--font-mono);font-size:11.5px;line-height:1.6;min-width:0}
+.console-h{display:flex;justify-content:space-between;gap:10px;color:var(--console-dim);font-size:12px;margin-bottom:6px;font-family:var(--font-body)}
+.logs{max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:1px}
+.logs div{overflow-wrap:anywhere;color:var(--console-dim)}
+.logs div.new{color:var(--console-hl)}
+.cap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;align-items:center;padding:16px 20px;border-radius:16px;background:var(--card);border:2px solid var(--rc);transition:border-color .25s}
+.cap-n{grid-row:span 2;font-family:var(--font-display);font-size:34px;color:var(--rc);min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+.cap-who{font-size:13.5px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.cap-who code{color:var(--ink);font-weight:600}
+.cap-say{font-size:clamp(17px,2.3vw,20px);font-weight:500;line-height:1.5;min-width:0;overflow-wrap:anywhere}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font-size:15px;padding:9px 16px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:default}
+
+/* ---------- source / logs ---------- */
+.srcs{display:flex;flex-direction:column;gap:14px}
+.srcs .codebox .code-bar b{color:var(--ink);font-weight:700}
+.loglook{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.ll{border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;background:var(--console-bg);border:2px solid var(--rc)}
+.ll h3{font-family:var(--font-body);font-size:14px;font-weight:700;color:var(--rc)}
+.ll div{font-family:var(--font-mono);font-size:12px;color:var(--console-fg);overflow-wrap:anywhere;padding-left:10px;border-left:3px solid var(--rc)}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .thesis,.wire{grid-template-columns:1fr}
+  .th-arr b,.wire .fa{display:inline-block;transform:rotate(90deg)}
+  .wcode,.slots3,.sim,.loglook,.eras{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:90px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits,.minis{grid-template-columns:1fr}
+}
+@media (max-width:600px){
+  .cap{padding:14px}
+  .cap-n{font-size:26px}
+  .lockers.two{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  .cnc,.ssc,.syc{animation:none}
+  .box,.cap,.op,.src li{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-boss" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 63c0-15 9.8-24 22-24s22 9 22 24z"/>
+    <path class="k-paper" d="M25.5 39.5h13L32 50z"/>
+    <path class="k-gold" d="M30.2 41.5h3.6l1.3 3-1.8 13.5h-2.6l-1.8-13.5z"/>
+    <circle class="k-skin" cx="32" cy="27" r="10.5"/>
+    <path class="k-hair" d="M21.5 25.5c0-7.5 4.5-11.5 10.5-11.5s10.5 4 10.5 11.5c-2-4.5-6-6-10.5-6s-8.5 1.5-10.5 6z"/>
+    <circle class="k-eye" cx="28" cy="28.5" r="1.4"/>
+    <circle class="k-eye" cx="36" cy="28.5" r="1.4"/>
+    <path class="ks-eye" stroke-width="1.6" stroke-linecap="round" d="M28.5 33q3.5 2.4 7 0"/>
+  </symbol>
+  <symbol id="i-locker" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="9" y="3" width="46" height="58" rx="3"/>
+    <rect class="k-paper" opacity=".25" x="13" y="7" width="38" height="15" rx="1.5"/>
+    <rect class="k-paper" opacity=".25" x="13" y="24.5" width="38" height="15" rx="1.5"/>
+    <rect class="k-paper" opacity=".25" x="13" y="42" width="38" height="15" rx="1.5"/>
+    <rect class="k-paper" opacity=".6" x="17" y="12.5" width="14" height="2" rx="1"/>
+    <rect class="k-paper" opacity=".6" x="17" y="30" width="14" height="2" rx="1"/>
+    <rect class="k-paper" opacity=".6" x="17" y="47.5" width="14" height="2" rx="1"/>
+    <rect class="k-gold" x="43" y="12" width="4" height="5" rx="1"/>
+    <rect class="k-gold" x="43" y="29.5" width="4" height="5" rx="1"/>
+    <rect class="k-gold" x="43" y="47" width="4" height="5" rx="1"/>
+  </symbol>
+  <symbol id="i-chat" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M8 10h48a4 4 0 0 1 4 4v28a4 4 0 0 1-4 4H26L14 56V46H8a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4z"/>
+    <circle class="k-paper" cx="20" cy="28" r="3.5"/>
+    <circle class="k-paper" cx="32" cy="28" r="3.5"/>
+    <circle class="k-paper" cx="44" cy="28" r="3.5"/>
+  </symbol>
+  <symbol id="i-link" viewBox="0 0 64 64">
+    <rect class="ks-cur" x="5" y="21" width="32" height="22" rx="11" stroke-width="7"/>
+    <rect class="ks-gold" x="27" y="21" width="32" height="22" rx="11" stroke-width="7"/>
+  </symbol>
+  <symbol id="i-conn" viewBox="0 0 64 64">
+    <rect class="k-ink" x="23" y="5" width="5" height="14" rx="1.5"/>
+    <rect class="k-ink" x="36" y="5" width="5" height="14" rx="1.5"/>
+    <rect fill="currentColor" x="16" y="17" width="32" height="24" rx="5"/>
+    <path class="ks-cur" stroke-width="6" stroke-linecap="round" d="M32 41v7c0 6 4 10 11 10h14"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 14v36c0 5 9.8 9 22 9s22-4 22-9V14z"/>
+    <ellipse fill="currentColor" cx="32" cy="14" rx="22" ry="9"/>
+    <ellipse class="k-paper" opacity=".3" cx="32" cy="14" rx="22" ry="9"/>
+    <path class="ks-paper" opacity=".6" stroke-width="2" d="M10 27c0 5 9.8 9 22 9s22-4 22-9M10 39c0 5 9.8 9 22 9s22-4 22-9"/>
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 64 64">
+    <rect fill="currentColor" x="10" y="8" width="44" height="54" rx="4"/>
+    <rect class="k-ink" x="22" y="4" width="20" height="9" rx="2.5"/>
+    <path class="ks-paper" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="M16 25l2.5 2.5 4-4.5M16 37l2.5 2.5 4-4.5M16 49l2.5 2.5 4-4.5"/>
+    <rect class="k-paper" x="27" y="24" width="20" height="3.4" rx="1.7"/>
+    <rect class="k-paper" x="27" y="36" width="16" height="3.4" rx="1.7"/>
+    <rect class="k-paper" x="27" y="48" width="18" height="3.4" rx="1.7"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>MyBatis</span><span aria-hidden="true">/</span><span class="tb-here">MyBatis 与 Spring 事务</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">MYBATIS-SPRING · SQLSESSIONTEMPLATE · TRANSACTIONSYNCHRONIZATIONMANAGER</p>
+  <h1>Spring 开的事务，MyBatis 的 SQL 怎么进去的</h1>
+  <p class="lead">@Transactional 归 Spring 管，SQL 却是 MyBatis 发的。两边能对上，靠的是同一个线程上的一个“储物柜”：Spring 把数据库连接放进去，MyBatis 从里面拿。</p>
+
+  <div class="thesis">
+    <div class="th-side" data-role="sp">
+      <h3>Spring 这边</h3>
+      <div class="th-chip">@Transactional<small>AOP 代理在方法前后插手</small></div>
+      <span class="dn" aria-hidden="true">↓</span>
+      <div class="th-chip">DataSourceTransactionManager<small>事务经理</small></div>
+      <p>开事务：拿一个连接，关掉自动提交，放进柜子。结束时由它提交或回滚。</p>
+    </div>
+    <div class="th-arr" aria-hidden="true"><b>→</b>放进去</div>
+    <div class="lk">
+      <div class="lk-h"><svg viewBox="0 0 64 64"><use href="#i-locker"/></svg>当前线程的储物柜</div>
+      <div class="slot"><small>连接</small><div class="vals"><span class="cnc">#A · 手动提交</span></div></div>
+      <div class="slot"><small>MyBatis 会话</small><div class="vals"><span class="ssc">S1</span></div></div>
+      <div class="slot"><small>收尾清单</small><div class="vals"><span class="syc">事务结束时通知 S1</span></div></div>
+    </div>
+    <div class="th-arr" aria-hidden="true"><b>←</b>取出来</div>
+    <div class="th-side" data-role="mb">
+      <h3>MyBatis 这边</h3>
+      <div class="th-chip">orderMapper.insert(o)</div>
+      <span class="dn" aria-hidden="true">↓</span>
+      <div class="th-chip">SqlSessionTemplate<small>柜子里有会话就复用</small></div>
+      <span class="dn" aria-hidden="true">↓</span>
+      <div class="th-chip">SpringManagedTransaction<small>要连接时去柜子里拿 #A</small></div>
+    </div>
+  </div>
+
+  <div class="cast">
+    <div class="who" data-role="sp">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-boss"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">事务经理<code>DataSourceTransactionManager</code></div>
+        <p>开事务时拿连接、放进柜子；<b>真正的提交和回滚都是它做</b>。</p>
+        <span class="belong">Spring</span>
+      </div>
+    </div>
+    <div class="who" data-role="lk">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-locker"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">储物柜<code>TransactionSynchronizationManager</code></div>
+        <p>几个 ThreadLocal。<b>一个线程一个柜子</b>，按 key 存东西。</p>
+        <span class="belong">Spring</span>
+      </div>
+    </div>
+    <div class="who" data-role="mb">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-chat"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">会话管家<code>SqlSessionTemplate</code></div>
+        <p>每次 Mapper 调用都经过它。<b>柜子里有会话就复用</b>，没有就新开并登记。</p>
+        <span class="belong">mybatis-spring</span>
+      </div>
+    </div>
+    <div class="who" data-role="mb">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-link"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">对接员<code>SpringManagedTransaction</code></div>
+        <p>MyBatis 要连接，它去柜子里拿 Spring 的；MyBatis 要提交，它说<b>交给 Spring</b>。</p>
+        <span class="belong">mybatis-spring</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="extras">
+    <b>配角</b>
+    <span class="ex" data-role="cn"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-conn"/></svg><span><b>连接 #A</b> 整个事务从头用到尾的那一个</span></span>
+    <span class="ex" data-role="lk"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg><span><b>收尾清单</b> SqlSessionSynchronization，提交前叫会话清缓存，结束前关掉它</span></span>
+    <span class="ex" data-role="db"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><span><b>DataSourceUtils</b> 取连接的统一入口，JdbcTemplate 也走它</span></span>
+  </div>
+</header>
+
+<!-- ================= WIRE ================= -->
+<section id="wire">
+  <div>
+    <h2>启动时：两边接到同一个 DataSource 上</h2>
+    <p class="lead">柜子里的连接是按 DataSource 这个 key 存的。事务经理和 MyBatis 用的必须是同一个 DataSource 对象，才能存取到同一格。</p>
+  </div>
+  <div class="wire">
+    <div class="wn" data-role="sp"><b>事务经理</b><code>DataSourceTransactionManager</code><small>Boot 自动配置好（也可能是它的子类 JdbcTransactionManager）</small></div>
+    <span class="fa" aria-hidden="true">→</span>
+    <div class="wn hub" data-role="cn"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>同一个 DataSource</b><small>比如 HikariDataSource</small></div>
+    <span class="fa" aria-hidden="true">←</span>
+    <div class="wn" data-role="mb"><b>SqlSessionFactory</b><code>SqlSessionFactoryBean</code><small>没指定 transactionFactory 时，默认用 SpringManagedTransactionFactory</small></div>
+  </div>
+  <div class="wcode">
+    <div class="codebox">
+      <div class="code-bar"><span>不用 Boot 时自己写，就是这两个 Bean</span></div>
+<pre><code><span class="an">@Bean</span>
+SqlSessionFactory sqlSessionFactory(DataSource ds) <span class="kw">throws</span> Exception {
+    SqlSessionFactoryBean f = <span class="kw">new</span> SqlSessionFactoryBean();
+    f.setDataSource(ds);                  <span class="cm">// 和事务经理用同一个</span>
+    <span class="cm">// 不设 transactionFactory，默认就是 SpringManagedTransactionFactory</span>
+    <span class="kw">return</span> f.getObject();
+}
+
+<span class="an">@Bean</span>
+PlatformTransactionManager txManager(DataSource ds) {
+    <span class="kw">return new</span> DataSourceTransactionManager(ds);   <span class="cm">// 同一个 DataSource</span>
+}
+
+<span class="an">@Bean</span>
+SqlSessionTemplate sqlSessionTemplate(SqlSessionFactory f) {
+    <span class="kw">return new</span> SqlSessionTemplate(f);         <span class="cm">// 你的 Mapper 都通过它干活</span>
+}</code></pre>
+    </div>
+    <ul class="facts">
+      <li>用 Spring Boot 时，这三个 Bean 都由自动配置给你造好（<a href="../spring/spring-boot-autoconfig.html">Spring 第 03 篇</a>）：MyBatis 的 starter 造前一个和最后一个，Spring 的 JDBC 自动配置造事务经理。</li>
+      <li><code>@MapperScan</code> 登记的每个 Mapper，底下用的都是这个 SqlSessionTemplate。</li>
+      <li>JdbcTemplate 取连接也走 DataSourceUtils，所以和 MyBatis 混用时，同一个事务里拿到的是同一个连接。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= LOCKER ================= -->
+<section id="locker">
+  <div>
+    <h2>柜子里放了什么</h2>
+    <p class="lead">储物柜就是 TransactionSynchronizationManager 里的几个 ThreadLocal。事务里最要紧的是这三格。</p>
+  </div>
+  <div class="slots3">
+    <div class="sc3" data-role="cn">
+      <div class="sc3-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-conn"/></svg><h3>连接</h3></div>
+      <dl>
+        <dt>key</dt><dd><code>DataSource</code></dd>
+        <dt>放的是</dt><dd><code>ConnectionHolder</code>，里面是连接 #A</dd>
+        <dt>谁放的</dt><dd>事务经理，开事务时</dd>
+        <dt>谁来拿</dt><dd>MyBatis、JdbcTemplate，都经过 DataSourceUtils</dd>
+        <dt>何时清走</dt><dd>事务提交或回滚之后</dd>
+      </dl>
+    </div>
+    <div class="sc3" data-role="mb">
+      <div class="sc3-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-chat"/></svg><h3>MyBatis 会话</h3></div>
+      <dl>
+        <dt>key</dt><dd><code>SqlSessionFactory</code></dd>
+        <dt>放的是</dt><dd><code>SqlSessionHolder</code>，里面是会话 S1</dd>
+        <dt>谁放的</dt><dd>SqlSessionTemplate，事务里第一次调 Mapper 时</dd>
+        <dt>谁来拿</dt><dd>同一事务里，后面每一次 Mapper 调用</dd>
+        <dt>何时清走</dt><dd>提交或回滚之前</dd>
+      </dl>
+    </div>
+    <div class="sc3" data-role="lk">
+      <div class="sc3-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-list"/></svg><h3>收尾清单</h3></div>
+      <dl>
+        <dt>形式</dt><dd>一个列表，不按 key 存</dd>
+        <dt>放的是</dt><dd><code>SqlSessionSynchronization</code></dd>
+        <dt>提交前</dt><dd>叫 S1 commit：清一级缓存、刷出攒着的批量语句</dd>
+        <dt>结束前</dt><dd>把 S1 从柜子里拿走并关掉</dd>
+        <dt>挂起时</dt><dd>把 S1 挪出柜子，恢复时再放回来</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="note-box"><b>记住</b><span>一个线程一个柜子。换了线程，柜子是空的，事务就跟不过去。</span></div>
+</section>
+
+<!-- ================= WALK ================= -->
+<section id="walk">
+  <div>
+    <h2>跟着一个下单方法走一遍</h2>
+    <p class="lead">选一个剧情，一步一步看：代码走到哪一行，柜子里有什么，数据库里哪些改动已经生效，日志打出了什么。</p>
+  </div>
+
+  <div class="tabs" role="group" aria-label="剧情">
+    <button class="tab" id="sc-ok" data-scene="ok" aria-pressed="true">正常提交</button>
+    <button class="tab" id="sc-rb" data-scene="rb" aria-pressed="false">抛异常回滚</button>
+    <button class="tab" id="sc-none" data-scene="none" aria-pressed="false">忘了加 @Transactional</button>
+    <button class="tab" id="sc-thread" data-scene="thread" aria-pressed="false">另开线程</button>
+    <button class="tab" id="sc-new" data-scene="rnew" aria-pressed="false">REQUIRES_NEW</button>
+  </div>
+
+  <div class="sim">
+    <div class="col">
+      <div class="box" id="box-code" data-role="mb"><h3>代码</h3><ol class="src" id="src"></ol></div>
+      <div class="console" aria-label="DEBUG 日志">
+        <div class="console-h"><span>DEBUG 日志（连接写成 #A，会话写成 S1）</span><span>黄色是这一步新打的</span></div>
+        <div class="logs" id="logs"></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="box" id="box-lock" data-role="lk"><h3>储物柜</h3><div class="lockers" id="lockers"></div></div>
+      <div class="box" id="box-db" data-role="db"><h3>数据库里的改动</h3><div class="ops" id="ops"></div></div>
+    </div>
+  </div>
+
+  <div class="cap" id="cap" data-role="sp" aria-live="polite">
+    <div class="cap-n" id="capN">1/9</div>
+    <div class="cap-who"><code id="capCall">doBegin</code></div>
+    <div class="cap-say" id="capSay"></div>
+  </div>
+  <div class="ctrl">
+    <button class="btn" id="bPrev">← 上一步</button>
+    <button class="btn primary" id="bNext">下一步 →</button>
+    <button class="btn" id="bPlay">自动播放</button>
+    <button class="btn" id="bReset">从头来</button>
+  </div>
+</section>
+
+<!-- ================= SOURCE ================= -->
+<section id="source">
+  <div>
+    <h2>三段关键源码</h2>
+    <p class="lead">都是简化版，去掉了日志和边角判断，留下决定行为的那几行。</p>
+  </div>
+  <div class="srcs">
+    <div class="codebox">
+      <div class="code-bar"><b>① SqlSessionTemplate</b><span>每次 Mapper 调用都会走进这个拦截器</span></div>
+<pre><code><span class="kw">public</span> Object invoke(Object proxy, Method method, Object[] args) <span class="kw">throws</span> Throwable {
+    SqlSession session = getSqlSession(factory, executorType, translator);  <span class="cm">// 拿会话，见 ②</span>
+    <span class="kw">try</span> {
+        Object result = method.invoke(session, args);                       <span class="cm">// 真正执行 SQL</span>
+        <span class="kw">if</span> (!isSqlSessionTransactional(session, factory)) {
+            session.commit(<span class="kw">true</span>);                                          <span class="cm">// 不在事务里：自己提交</span>
+        }
+        <span class="kw">return</span> result;
+    } <span class="kw">catch</span> (Throwable t) {
+        <span class="kw">throw</span> translate(t);   <span class="cm">// MyBatis 异常 → Spring 的 DataAccessException</span>
+    } <span class="kw">finally</span> {
+        closeSqlSession(session, factory);   <span class="cm">// 在事务里：只是还回柜子；不在：真的关掉</span>
+    }
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>② SqlSessionUtils.getSqlSession</b><span>先翻柜子，没有再新开</span></div>
+<pre><code>SqlSessionHolder holder = (SqlSessionHolder) TransactionSynchronizationManager.getResource(factory);
+<span class="kw">if</span> (holder != <span class="kw">null</span> &amp;&amp; holder.isSynchronizedWithTransaction()) {
+    <span class="kw">return</span> holder.getSqlSession();                       <span class="cm">// 柜子里有：复用</span>
+}
+SqlSession session = factory.openSession(executorType);   <span class="cm">// 没有：新开一个</span>
+<span class="kw">if</span> (TransactionSynchronizationManager.isSynchronizationActive()) {   <span class="cm">// 正在 Spring 事务里</span>
+    holder = <span class="kw">new</span> SqlSessionHolder(session, executorType, translator);
+    TransactionSynchronizationManager.bindResource(factory, holder);              <span class="cm">// 放进柜子</span>
+    TransactionSynchronizationManager.registerSynchronization(
+            <span class="kw">new</span> SqlSessionSynchronization(holder, factory));                           <span class="cm">// 登记收尾</span>
+}
+<span class="kw">return</span> session;</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>③ SpringManagedTransaction</b><span>MyBatis 眼里的“事务”，其实处处让着 Spring</span></div>
+<pre><code><span class="kw">public</span> Connection getConnection() <span class="kw">throws</span> SQLException {
+    <span class="kw">if</span> (connection == <span class="kw">null</span>) {
+        connection = DataSourceUtils.getConnection(dataSource);    <span class="cm">// 柜子里有 Spring 的连接，就拿它</span>
+        autoCommit = connection.getAutoCommit();
+        isConnectionTransactional = DataSourceUtils.isConnectionTransactional(connection, dataSource);
+    }
+    <span class="kw">return</span> connection;
+}
+
+<span class="kw">public void</span> commit() <span class="kw">throws</span> SQLException {
+    <span class="kw">if</span> (connection != <span class="kw">null</span> &amp;&amp; !isConnectionTransactional &amp;&amp; !autoCommit) {
+        connection.commit();     <span class="cm">// 只有连接不归 Spring 管时，才自己提交</span>
+    }
+}</code></pre>
+    </div>
+  </div>
+  <div class="minis">
+    <div class="mini"><b>和 JdbcTemplate 混用</b><p>它也走 DataSourceUtils，拿到的是同一个 #A，所以在同一个事务里。</p></div>
+    <div class="mini"><b>一级缓存在事务里才有用</b><p>事务里会话复用，第二次查才能命中。<a href="mybatis-flow.html">MyBatis 第 01 篇</a>的剧情演示过。</p></div>
+    <div class="mini"><b>异常会被翻译</b><p>比如唯一键冲突变成 <code>DuplicateKeyException</code>。都是 RuntimeException，默认会触发回滚。</p></div>
+  </div>
+</section>
+
+<!-- ================= LOGS ================= -->
+<section id="logs-look">
+  <div>
+    <h2>看日志就知道有没有进事务</h2>
+    <p class="lead">配上 <code>logging.level.org.mybatis.spring=debug</code> 和 <code>logging.level.org.springframework.jdbc=debug</code>，每次 Mapper 调用都会说明自己的处境。</p>
+  </div>
+  <div class="loglook">
+    <div class="ll" data-role="done">
+      <h3>在事务里</h3>
+      <div>Registering transaction synchronization for SqlSession [S1]</div>
+      <div>JDBC Connection [#A] will be managed by Spring</div>
+      <div>Releasing transactional SqlSession [S1]</div>
+      <div>Fetched SqlSession [S1] from current transaction</div>
+      <div>Transaction synchronization committing SqlSession [S1]</div>
+    </div>
+    <div class="ll" data-role="bad">
+      <h3>不在事务里</h3>
+      <div>SqlSession [S1] was not registered for synchronization because synchronization is not active</div>
+      <div>JDBC Connection [#A] will not be managed by Spring</div>
+      <div>Closing non transactional SqlSession [S1]</div>
+    </div>
+  </div>
+  <p class="tip">以为加了事务却看到右边这几行，说明这次调用根本没进事务。常见原因是自调用、方法不是 public、另开了线程，见下面的坑。</p>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17：机制一样，包名和版本不同</h2>
+    <p class="lead">柜子、会话复用、谁来提交，这一套在两个版本里完全相同。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring 5 · Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>mybatis-spring 2.x（starter 2.3.x）</li>
+        <li>除了 Spring 自己的 <code>@Transactional</code>，也认 <code>javax.transaction.Transactional</code></li>
+        <li>CGLIB 代理下，<code>@Transactional</code> 只对 public 方法生效</li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring 6 · Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>mybatis-spring 3.x（starter 3.0.x），要求 Spring 6</li>
+        <li>JTA 注解换成 <code>jakarta.transaction.Transactional</code>；还写 javax 版的，不报错，也不开事务</li>
+        <li>6.0 起，CGLIB 代理下 protected 和包可见的方法上的 <code>@Transactional</code> 也生效</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>同一个 DataSource 是纽带</span><span>线程储物柜</span><span>SqlSessionTemplate 复用会话</span><span>Spring 提交连接，MyBatis 只清缓存</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">先看日志里那几句，再对照柜子想：这次调用时，柜子里有没有东西。</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="sp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-boss"/></svg><b>加了 @Transactional，出错了还是没回滚</b><p>事务压根没开：同一个类里自己调自己、方法不是 public、异常被 catch 吞了、抛的是受检异常。原因都在 <a href="../spring/spring-aop-tx.html">Spring 第 02 篇</a>。</p></div>
+    <div class="pit" data-role="lk"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-locker"/></svg><b>线程池、@Async、parallelStream 里的 SQL 不归这个事务</b><p>那个线程的柜子是空的，用的是另一个自动提交的连接。要么放回当前线程做，要么让它自己开事务，并接受两边不一致的可能。</p></div>
+    <div class="pit" data-role="cn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>多数据源：一个库回滚了，另一个库没回滚</b><p>事务经理按它自己那个 DataSource 存连接，另一个库的 Mapper 拿到的是别的连接。用 <code>@Transactional("reportTxManager")</code> 指定事务经理；真要跨库一起成败，得上分布式事务。</p></div>
+    <div class="pit" data-role="cn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-conn"/></svg><b>Connection is not available, request timed out after 30000ms</b><p>连接从开事务一直占到提交。事务里调远程接口、发消息、做大计算，连接池很快被占满。把慢操作挪到事务外面。</p></div>
+    <div class="pit" data-role="mb"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-chat"/></svg><b>BATCH 执行器下，insert 返回 -2147482646</b><p>批量模式先攒着，到提交前（收尾清单通知会话时）才真正发出去，所以拿不到影响行数。要结果就在事务里手动调用 <code>flushStatements()</code>。</p></div>
+    <div class="pit" data-role="mb"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-chat"/></svg><b>Cannot change the ExecutorType when there is an existing transaction</b><p>同一个事务里，先用普通的 SqlSessionTemplate，又用了 BATCH 的。柜子里那个会话类型已经定了，不能换。把批量操作放进单独的事务。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>同一个事务里，读不到别人刚提交的数据</b><p>两个原因叠在一起：会话复用，一级缓存命中了；MySQL 默认的可重复读隔离级别，本来就看不到。</p></div>
+    <div class="pit" data-role="sp"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-boss"/></svg><b>升级 Boot 3 后，javax.transaction.Transactional 不生效</b><p>Spring 6 只认 jakarta 版。换成 <code>jakarta.transaction.Transactional</code>，或者直接用 Spring 自己的 <code>@Transactional</code>。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 mybatis-spring 2.x / 3.x、Spring 5 / 6 为例。相关：<a href="mybatis-flow.html">MyBatis 执行流程</a> · <a href="../spring/spring-aop-tx.html">Spring AOP 与事务</a>
+</footer>
+</main>
+
+<script>
+(function(){
+  function $(id){return document.getElementById(id);}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  /* ---------- data ---------- */
+  function L(t,conn,sess,sync,extra){ var o={t:t,conn:conn,sess:sess,sync:sync||[]}; if(extra){ for(var k in extra) o[k]=extra[k]; } return o; }
+  function M(conn,sess,sync,extra){ return [L('main 线程',conn,sess,sync,extra)]; }
+  var EMPTY=M(null,null,[]);
+  function op(c,sql,st,note){ return {c:c,sql:sql,st:st,note:note||''}; }
+
+  var BEGIN=['Creating new transaction with name [OrderService.placeOrder]: PROPAGATION_REQUIRED,ISOLATION_DEFAULT','Acquired Connection [#A] for JDBC transaction','Switching JDBC Connection [#A] to manual commit'];
+  var INS_LOG=['==>  Preparing: INSERT INTO t_order (order_no, amount) VALUES (?, ?)','<==    Updates: 1'];
+  var COMMIT_S1=['Transaction synchronization committing SqlSession [S1]'];
+  var CLOSE_S1=['Transaction synchronization deregistering SqlSession [S1]','Transaction synchronization closing SqlSession [S1]'];
+  var ROLLBACK_A=['Initiating transaction rollback','Rolling back JDBC transaction on Connection [#A]','Releasing JDBC Connection [#A] after transaction'];
+
+  var CODE_OK=['@Transactional','public void placeOrder(Order o) {','    orderMapper.insert(o);','    stockMapper.decrease(o.getSku());','}'];
+  var CODE_RB=['@Transactional','public void placeOrder(Order o) {','    orderMapper.insert(o);','    int n = stockMapper.decrease(o.getSku());','    if (n == 0) throw new StockNotEnoughException();','}'];
+  var CODE_NONE=['// 忘了加 @Transactional','public void placeOrder(Order o) {','    orderMapper.insert(o);','    int n = stockMapper.decrease(o.getSku());','    if (n == 0) throw new StockNotEnoughException();','}'];
+  var CODE_TH=['@Transactional','public void placeOrder(Order o) {','    orderMapper.insert(o);','    pool.submit(() -> stockMapper.decrease(o.getSku()));','    riskCheck(o);   // 风控没过，抛异常','}'];
+  var CODE_NEW=['@Transactional','public void placeOrder(Order o) {','    orderMapper.insert(o);','    logService.save("下单 " + o.getNo());','    riskCheck(o);   // 风控没过，抛异常','}','','// LogService','@Transactional(propagation = REQUIRES_NEW)','public void save(String msg) { logMapper.insert(msg); }'];
+
+  var P_ORDER=op('#A','INSERT t_order','pend');
+  var P_STOCK=op('#A','UPDATE t_stock','pend');
+
+  var SC={
+    ok:{code:CODE_OK, steps:[
+      {line:1, hl:'lock', lockers:M('#A',null,[]), log:BEGIN, call:'TransactionInterceptor → DataSourceTransactionManager.doBegin()', say:'进方法前，AOP 代理先开事务：事务经理从连接池拿出连接 #A，关掉自动提交，以 DataSource 为 key 放进当前线程的柜子。'},
+      {line:2, hl:'lock', lockers:M('#A','S1',['S1']), log:['Creating a new SqlSession','Registering transaction synchronization for SqlSession [S1]'], call:'SqlSessionUtils.getSqlSession()', say:'orderMapper.insert 走到 SqlSessionTemplate。它先翻柜子：没有 MyBatis 会话，就新开一个 S1 放进去，再在收尾清单上登记一条“事务结束时叫我”。'},
+      {line:2, hl:'db', ops:[P_ORDER], log:['JDBC Connection [#A] will be managed by Spring'].concat(INS_LOG), call:'SpringManagedTransaction.getConnection()', say:'S1 要发 SQL，先要连接。对接员去柜子里一看，有 Spring 放的 #A，就用它。INSERT 执行了，但还没提交。'},
+      {line:2, log:['Releasing transactional SqlSession [S1]'], call:'SqlSessionTemplate · finally', say:'insert 结束。会话在事务里，SqlSessionTemplate 不提交也不关，只是“还回”柜子。'},
+      {line:3, hl:'db', ops:[P_ORDER,P_STOCK], log:['Fetched SqlSession [S1] from current transaction','==>  Preparing: UPDATE t_stock SET qty = qty - 1 WHERE sku = ? AND qty > 0','<==    Updates: 1','Releasing transactional SqlSession [S1]'], call:'SqlSessionUtils.getSqlSession()', say:'stockMapper.decrease 再来翻柜子：S1 还在，直接复用。同一个会话、同一个连接 #A，UPDATE 也还没提交。'},
+      {line:4, hl:'lock', log:COMMIT_S1, call:'SqlSessionSynchronization.beforeCommit()', say:'方法正常返回，事务经理准备提交，先按收尾清单通知 S1。S1.commit() 只清一级缓存、刷出攒着的批量语句；对接员看到连接归 Spring 管，自己不提交。'},
+      {line:4, hl:'lock', lockers:M('#A',null,[]), log:CLOSE_S1, call:'SqlSessionSynchronization.beforeCompletion()', say:'接着把 S1 从柜子里拿走，关掉。'},
+      {line:4, hl:'db', ops:[op('#A','INSERT t_order','ok'),op('#A','UPDATE t_stock','ok')], log:['Initiating transaction commit','Committing JDBC transaction on Connection [#A]'], call:'DataSourceTransactionManager.doCommit()', say:'真正的提交在这里：事务经理调用 #A.commit()，INSERT 和 UPDATE 一起生效。'},
+      {line:4, hl:'lock', kind:'done', lockers:EMPTY, log:['Releasing JDBC Connection [#A] after transaction'], call:'doCleanupAfterCompletion()', say:'把 #A 的自动提交改回来，从柜子里拿走，还给连接池。柜子空了。'}
+    ]},
+    rb:{code:CODE_RB, steps:[
+      {line:1, hl:'lock', lockers:M('#A',null,[]), log:BEGIN, call:'DataSourceTransactionManager.doBegin()', say:'开事务：连接 #A 关掉自动提交，放进柜子。'},
+      {line:2, hl:'db', lockers:M('#A','S1',['S1']), ops:[P_ORDER], log:['Creating a new SqlSession','Registering transaction synchronization for SqlSession [S1]','JDBC Connection [#A] will be managed by Spring'].concat(INS_LOG,['Releasing transactional SqlSession [S1]']), call:'orderMapper.insert(o)', say:'和上一个剧情一样：新开 S1 放进柜子、登记收尾，用柜子里的 #A 执行 INSERT，没提交。'},
+      {line:3, hl:'db', ops:[P_ORDER,op('#A','UPDATE t_stock','pend','影响 0 行')], log:['Fetched SqlSession [S1] from current transaction','==>  Preparing: UPDATE t_stock SET qty = qty - 1 WHERE sku = ? AND qty > 0','<==    Updates: 0','Releasing transactional SqlSession [S1]'], call:'stockMapper.decrease()', say:'复用 S1 和 #A。库存不够，UPDATE 影响 0 行。'},
+      {line:4, kind:'fail', call:'throw new StockNotEnoughException()', say:'n == 0，抛出 StockNotEnoughException。它是 RuntimeException，事务默认要回滚。'},
+      {line:4, hl:'lock', lockers:M('#A',null,[]), log:CLOSE_S1, call:'SqlSessionSynchronization.beforeCompletion()', say:'回滚这条路上，不会叫 S1 提交，只把它从柜子里拿走、关掉。'},
+      {line:4, hl:'db', kind:'done', lockers:EMPTY, ops:[op('#A','INSERT t_order','undo'),op('#A','UPDATE t_stock','undo','影响 0 行')], log:ROLLBACK_A, call:'DataSourceTransactionManager.doRollback()', say:'事务经理调用 #A.rollback()，刚才的 INSERT 被撤销，数据库里什么都没留下。然后还连接，异常继续抛给调用方。'}
+    ]},
+    none:{code:CODE_NONE, steps:[
+      {line:2, hl:'lock', lockers:M(null,null,[],{loose:'S1 在柜子外面，用完就扔'}), log:['Creating a new SqlSession','SqlSession [S1] was not registered for synchronization because synchronization is not active'], call:'SqlSessionUtils.getSqlSession()', say:'没有 @Transactional，就没人开事务。柜子是空的，收尾清单也没启用。SqlSessionTemplate 新开一个 S1，却没地方登记。'},
+      {line:2, hl:'db', lockers:M(null,null,[],{loose:'S1 用着连接 #A，自动提交开着'}), ops:[op('#A','INSERT t_order','ok','自动提交')], log:['JDBC Connection [#A] will not be managed by Spring'].concat(INS_LOG), call:'SpringManagedTransaction.getConnection()', say:'柜子里没有连接，对接员只好从连接池新拿一个 #A。它的自动提交开着，INSERT 一执行就生效了。'},
+      {line:2, hl:'lock', lockers:EMPTY, log:['Closing non transactional SqlSession [S1]'], call:'SqlSessionTemplate · finally', say:'不在事务里，SqlSessionTemplate 调一下 commit，再把 S1 真的关掉，#A 还给连接池。'},
+      {line:3, hl:'db', ops:[op('#A','INSERT t_order','ok','自动提交'),op('#B','UPDATE t_stock','ok','影响 0 行')], log:['Creating a new SqlSession','SqlSession [S2] was not registered for synchronization because synchronization is not active','JDBC Connection [#B] will not be managed by Spring','==>  Preparing: UPDATE t_stock SET qty = qty - 1 WHERE sku = ? AND qty > 0','<==    Updates: 0','Closing non transactional SqlSession [S2]'], call:'stockMapper.decrease()', say:'decrease 又是一个新会话 S2，连接写成 #B（连接池也可能给回同一个物理连接）。库存不够，影响 0 行。'},
+      {line:4, hl:'db', kind:'fail', ops:[op('#A','INSERT t_order','ok','留在库里了'),op('#B','UPDATE t_stock','ok','影响 0 行')], call:'throw new StockNotEnoughException()', say:'抛异常了，可是没有事务可以回滚：订单已经插进去，库存却没扣。'}
+    ]},
+    thread:{code:CODE_TH, steps:[
+      {line:1, hl:'lock', lockers:[L('main 线程','#A',null,[]),L('pool-1 线程',null,null,[])], log:BEGIN, call:'DataSourceTransactionManager.doBegin()', say:'开事务：#A 放进 main 线程的柜子。线程池里那个线程也有自己的柜子，是空的。'},
+      {line:2, hl:'db', lockers:[L('main 线程','#A','S1',['S1']),L('pool-1 线程',null,null,[])], ops:[P_ORDER], log:['Creating a new SqlSession','Registering transaction synchronization for SqlSession [S1]','JDBC Connection [#A] will be managed by Spring'].concat(INS_LOG,['Releasing transactional SqlSession [S1]']), call:'orderMapper.insert(o)', say:'main 线程上：S1 进柜子，用 #A 执行 INSERT，没提交。'},
+      {line:3, hl:'lock', lockers:[L('main 线程','#A','S1',['S1']),L('pool-1 线程',null,null,[],{loose:'S2 用着连接 #B，自动提交'})], ops:[P_ORDER,op('#B','UPDATE t_stock','ok','自动提交')], log:['[pool-1] Creating a new SqlSession','[pool-1] SqlSession [S2] was not registered for synchronization because synchronization is not active','[pool-1] JDBC Connection [#B] will not be managed by Spring','[pool-1] <==    Updates: 1','[pool-1] Closing non transactional SqlSession [S2]'], call:'pool.submit(…)', say:'decrease 跑在 pool-1 线程上。那个线程的柜子是空的，于是新开 S2、新拿连接 #B，自动提交，立刻生效。'},
+      {line:4, kind:'fail', call:'riskCheck(o)', say:'风控没过，抛异常，main 线程的事务要回滚。'},
+      {line:4, hl:'db', kind:'fail', lockers:[L('main 线程',null,null,[]),L('pool-1 线程',null,null,[])], ops:[op('#A','INSERT t_order','undo'),op('#B','UPDATE t_stock','ok','回滚不到')], log:CLOSE_S1.concat(ROLLBACK_A), call:'doRollback()', say:'回滚只管 #A：订单撤销了。库存是在 #B 上扣的，早就提交了，回滚不到。'}
+    ]},
+    rnew:{code:CODE_NEW, steps:[
+      {line:1, hl:'lock', lockers:M('#A',null,[]), log:BEGIN, call:'DataSourceTransactionManager.doBegin()', say:'外层事务开始：#A 放进柜子。'},
+      {line:2, hl:'db', lockers:M('#A','S1',['S1']), ops:[P_ORDER], log:['Creating a new SqlSession','Registering transaction synchronization for SqlSession [S1]','JDBC Connection [#A] will be managed by Spring'].concat(INS_LOG,['Releasing transactional SqlSession [S1]']), call:'orderMapper.insert(o)', say:'S1 进柜子，用 #A 执行 INSERT，没提交。'},
+      {line:8, hl:'lock', lockers:M('#B',null,[],{stash:'#A · S1'}), log:['Suspending current transaction, creating new transaction with name [LogService.save]','Acquired Connection [#B] for JDBC transaction','Switching JDBC Connection [#B] to manual commit'], call:'suspend() → doBegin()', say:'save 要一个全新的事务。事务经理先把 #A 和 S1 挪到挂起区，再拿新连接 #B，放进柜子。'},
+      {line:9, hl:'db', lockers:M('#B','S2',['S2'],{stash:'#A · S1'}), ops:[P_ORDER,op('#B','INSERT t_log','pend')], log:['Creating a new SqlSession','Registering transaction synchronization for SqlSession [S2]','JDBC Connection [#B] will be managed by Spring','==>  Preparing: INSERT INTO t_log (msg) VALUES (?)','<==    Updates: 1','Releasing transactional SqlSession [S2]'], call:'logMapper.insert(msg)', say:'logMapper 翻柜子：没有会话（S1 在挂起区），新开 S2，用 #B 执行 INSERT。'},
+      {line:9, hl:'db', lockers:M(null,null,[],{stash:'#A · S1'}), ops:[P_ORDER,op('#B','INSERT t_log','ok')], log:['Transaction synchronization committing SqlSession [S2]','Transaction synchronization deregistering SqlSession [S2]','Transaction synchronization closing SqlSession [S2]','Initiating transaction commit','Committing JDBC transaction on Connection [#B]','Releasing JDBC Connection [#B] after transaction'], call:'内层事务提交', say:'save 正常返回：通知 S2、关掉 S2，#B.commit()，日志真正落库，#B 还回连接池。'},
+      {line:3, hl:'lock', lockers:M('#A','S1',['S1']), log:['Resuming suspended transaction after completion of inner transaction'], call:'resume()', say:'把挂起区的 #A 和 S1 放回柜子，外层事务接着走。'},
+      {line:4, hl:'db', kind:'done', lockers:EMPTY, ops:[op('#A','INSERT t_order','undo'),op('#B','INSERT t_log','ok','留下了')], log:CLOSE_S1.concat(ROLLBACK_A), call:'riskCheck 抛异常 → 外层回滚', say:'风控没过，外层回滚 #A，订单撤销。日志在另一个已经提交的事务里，留了下来。这正是 REQUIRES_NEW 想要的效果。'}
+    ]}
+  };
+
+  /* ---------- render ---------- */
+  function stateAt(sc,pos){
+    var st={lockers:EMPTY, ops:[], logs:[], fresh:0};
+    for(var i=0;i<=pos;i++){
+      var s=sc.steps[i];
+      if(s.lockers) st.lockers=s.lockers;
+      if(s.ops) st.ops=s.ops;
+      if(s.log){ st.logs=st.logs.concat(s.log); }
+      if(i===pos) st.fresh = s.log ? s.log.length : 0;
+    }
+    return st;
+  }
+  var ST_TXT={pend:'未提交',ok:'已提交',undo:'已撤销'};
+  function lockerHtml(l){
+    var h='<div class="lk"><div class="lk-h"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-locker"/></svg>'+esc(l.t)+'</div>';
+    h+='<div class="slot"><small>连接</small><div class="vals">'+(l.conn?'<span class="cnc">'+esc(l.conn)+' · 手动提交</span>':'<em>空</em>')+'</div></div>';
+    h+='<div class="slot"><small>MyBatis 会话</small><div class="vals">'+(l.sess?'<span class="ssc">'+esc(l.sess)+'</span>':'<em>空</em>')+'</div></div>';
+    h+='<div class="slot"><small>收尾清单</small><div class="vals">'+(l.sync.length?l.sync.map(function(s){return '<span class="syc">通知 '+esc(s)+'</span>';}).join(''):'<em>空</em>')+'</div></div>';
+    if(l.stash) h+='<div class="stash">挂起区：<span class="cnc">'+esc(l.stash)+'</span></div>';
+    if(l.loose) h+='<div class="loose">柜子外：'+esc(l.loose)+'</div>';
+    return h+'</div>';
+  }
+  function opsHtml(ops){
+    if(!ops.length) return '<p class="empty">还没有改动</p>';
+    return ops.map(function(o){
+      return '<div class="op '+o.st+'"><span class="cnc">'+esc(o.c)+'</span><code>'+esc(o.sql)+(o.note?'<small>'+esc(o.note)+'</small>':'')+'</code><span class="ost">'+ST_TXT[o.st]+'</span></div>';
+    }).join('');
+  }
+
+  var scene='ok', pos=0, timer=null;
+  var bPrev=$('bPrev'), bNext=$('bNext'), bPlay=$('bPlay'), bReset=$('bReset');
+  function render(){
+    var sc=SC[scene], s=sc.steps[pos], st=stateAt(sc,pos);
+    $('src').innerHTML=sc.code.map(function(c,i){ return '<li'+(i===s.line?' class="cur"':'')+'>'+esc(c||' ')+'</li>'; }).join('');
+    var lk=$('lockers');
+    lk.className='lockers'+(st.lockers.length>1?' two':'');
+    lk.innerHTML=st.lockers.map(lockerHtml).join('');
+    $('ops').innerHTML=opsHtml(st.ops);
+    var logs=$('logs'), n=st.logs.length;
+    logs.innerHTML = n ? st.logs.map(function(l,i){ return '<div'+(i>=n-st.fresh?' class="new"':'')+'>'+esc(l)+'</div>'; }).join('') : '<div>（这一步没有新日志）</div>';
+    logs.scrollTop=logs.scrollHeight;
+    $('box-lock').classList.toggle('hl', s.hl==='lock');
+    $('box-db').classList.toggle('hl', s.hl==='db');
+    $('cap').setAttribute('data-role', s.kind==='fail' ? 'bad' : (s.kind==='done' ? 'done' : 'sp'));
+    $('capN').textContent=(pos+1)+'/'+sc.steps.length;
+    $('capCall').textContent=s.call;
+    $('capSay').textContent=s.say;
+    bPrev.disabled = pos===0;
+    bNext.disabled = pos===sc.steps.length-1;
+  }
+  function stop(){ if(timer){clearInterval(timer); timer=null;} bPlay.textContent='自动播放'; }
+  function next(){ if(pos<SC[scene].steps.length-1){pos++; render();} else stop(); }
+  function prev(){ if(pos>0){pos--; render();} }
+  bNext.addEventListener('click', function(){ stop(); next(); });
+  bPrev.addEventListener('click', function(){ stop(); prev(); });
+  bReset.addEventListener('click', function(){ stop(); pos=0; render(); });
+  bPlay.addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    if(pos>=SC[scene].steps.length-1){ pos=0; render(); }
+    bPlay.textContent='暂停';
+    timer=setInterval(next, 2400);
+  });
+  document.querySelectorAll('[data-scene]').forEach(function(b){
+    b.addEventListener('click', function(){
+      stop(); scene=b.getAttribute('data-scene'); pos=0;
+      document.querySelectorAll('[data-scene]').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+      render();
+    });
+  });
+  $('walk').addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ stop(); next(); e.preventDefault(); }
+    else if(e.key==='ArrowLeft'){ stop(); prev(); e.preventDefault(); }
+  });
+  render();
+})();
+</script>
+
+</body>
+</html>
