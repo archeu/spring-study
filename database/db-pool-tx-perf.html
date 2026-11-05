@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>连接池与事务性能</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes. Metaphor: a pool is a row of phones already dialed in. Connections teal, waiting orange-red, transactions purple, the database brown, the app's own work blue. Anchor = the pool simulator. */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --cn:#0D7A69; --cn-tint:#DCF0EB;
+  --wt:#C2410C; --wt-tint:#FDE6D8;
+  --tx:#6A3FC0; --tx-tint:#ECE5FA;
+  --db:#8A5A2B; --db-tint:#F3E6D8;
+  --ap:#3150C4; --ap-tint:#E2E7FA;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --warn:#9A6B00; --warn-tint:#FBF0CF;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --cn:#40C6B0; --cn-tint:#12352F;
+    --wt:#FB923C; --wt-tint:#3A2214;
+    --tx:#B9A0FF; --tx-tint:#2A2148;
+    --db:#D9A26B; --db-tint:#3A2A1A;
+    --ap:#90A4FF; --ap-tint:#1D2650;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --warn:#F2C94C; --warn-tint:#3A3212;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --cn:#40C6B0; --cn-tint:#12352F;
+  --wt:#FB923C; --wt-tint:#3A2214;
+  --tx:#B9A0FF; --tx-tint:#2A2148;
+  --db:#D9A26B; --db-tint:#3A2A1A;
+  --ap:#90A4FF; --ap-tint:#1D2650;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --warn:#F2C94C; --warn-tint:#3A3212;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,6.2vw,62px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:22px}
+p{margin:0}
+a{color:var(--ap)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:42em;margin-top:8px}
+button,select{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,select:focus-visible{outline:3px solid var(--ap);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:22px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="cn"]{--rc:var(--cn);--rt:var(--cn-tint)}
+[data-role="wt"]{--rc:var(--wt);--rt:var(--wt-tint)}
+[data-role="tx"]{--rc:var(--tx);--rt:var(--tx-tint)}
+[data-role="db"]{--rc:var(--db);--rt:var(--db-tint)}
+[data-role="ap"]{--rc:var(--ap);--rt:var(--ap-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+.ico{color:var(--rc)}
+
+/* icon parts */
+.k-ink{fill:var(--ink)} .k-paper{fill:var(--card)} .k-gold{fill:var(--gold)}
+.ks-cur{stroke:currentColor;fill:none} .ks-paper{stroke:var(--card);fill:none} .ks-ink{stroke:var(--ink);fill:none}
+
+/* ---------- hero ---------- */
+.hero{display:flex;flex-direction:column;gap:10px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:18px}
+.phones{margin-top:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.ph{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.ph h3{color:var(--rc);font-size:21px}
+.ph h3 small{display:block;font-family:var(--font-body);font-size:13px;color:var(--muted)}
+.tl{display:flex;flex-direction:column;gap:6px}
+.tlr{display:grid;grid-template-columns:7em minmax(0,1fr);gap:8px;align-items:center;font-size:12.5px}
+.tlr > span{color:var(--muted)}
+.trk{position:relative;height:24px;border-radius:6px;background:var(--neutral-tint);overflow:hidden}
+.sg{position:absolute;top:0;bottom:0;display:flex;align-items:center;padding:0 6px;font-size:11px;font-weight:600;color:var(--on-accent);white-space:nowrap;overflow:hidden}
+.sg.c{background:var(--wt)} .sg.s{background:var(--db)} .sg.m{background:var(--tx)} .sg.b{background:var(--cn)}
+.ph .tot{font-size:14px;font-weight:600}
+.scale-note{font-size:12.5px;color:var(--muted)}
+.cast{margin-top:30px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.who{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;min-width:0}
+.fig{position:relative;isolation:isolate;width:108px;max-width:100%;aspect-ratio:1}
+.fig svg{width:100%;height:100%;display:block;color:var(--rc)}
+.fig::after{content:"";position:absolute;left:12%;right:12%;bottom:-2px;height:14px;border-radius:50%;background:var(--rt);z-index:-1}
+.who-txt{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.plate{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--rc)}
+.plate code{display:block;margin-top:6px;font-size:12.5px;color:var(--ink);overflow-wrap:anywhere}
+.who p{max-width:19em;font-size:15px}
+.belong{font-size:12.5px;padding:3px 11px;border-radius:999px;background:var(--rt);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- shared ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)} .an{color:var(--tx)} .kw{color:var(--wt)} .st-s{color:var(--cn)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--warn-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.minis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.mini b{font-size:15.5px}
+.mini p{font-size:14px;color:var(--muted)}
+.mini code{color:var(--ink);overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:680px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t tbody th{font-weight:500;white-space:nowrap;color:var(--muted)}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.fa{color:var(--line-strong);font-size:22px;line-height:1;text-align:center;align-self:center}
+
+/* ---------- why ---------- */
+.steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.st5{border:2px solid var(--rc);border-radius:12px;padding:8px 10px;background:var(--rt);display:flex;flex-direction:column;gap:2px;min-width:0}
+.st5 small{font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--rc)}
+.st5 b{font-size:14px}
+.st5 span{font-size:12.5px;color:var(--muted)}
+.models{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.md{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
+.md h3{color:var(--rc);font-size:20px}
+.md .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.md .chip{font-family:var(--font-mono);font-size:11.5px;padding:2px 8px;border-radius:6px;background:var(--rt);border:1px solid var(--rc)}
+.md p{font-size:14px}
+
+/* ---------- size ---------- */
+.law{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:stretch}
+.lawc{border:2px solid var(--rc);border-radius:16px;padding:14px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
+.lawc h3{color:var(--rc);font-size:20px}
+.eq{font-family:var(--font-mono);font-size:15px;font-weight:600;padding:8px 12px;border-radius:10px;background:var(--rt);overflow-wrap:anywhere}
+.ex{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;font-size:13.5px;align-items:baseline}
+.ex b{font-family:var(--font-mono);font-size:13px}
+.ex .big{font-family:var(--font-display);font-size:24px;color:var(--rc);font-weight:400}
+.ex .bad{color:var(--bad)}
+.why3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+
+/* ---------- sim ---------- */
+.sim{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.presets .lbl,.params .lbl{font-size:13px;color:var(--muted)}
+.pbtn{font-size:13px;padding:5px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.pbtn[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.params{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.params label{display:inline-flex;align-items:center;gap:6px;font-size:13.5px}
+.params select{padding:4px 8px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card);font-size:13.5px}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:14.5px;padding:8px 14px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.clock{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.clock b{color:var(--ink)}
+.theory{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc);transition:background .25s,border-color .25s}
+.theory b{font-family:var(--font-mono)}
+.sboard{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:start}
+.sbox{display:flex;flex-direction:column;gap:10px;min-width:0}
+.lh{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.lh b{color:var(--ink)}
+.pool{display:flex;flex-wrap:wrap;gap:4px}
+.cslot{width:22px;height:22px;border-radius:5px;border:1.5px solid var(--cn);background:var(--card)}
+.cslot.busy{background:var(--cn)}
+.tomcat{display:flex;height:26px;border-radius:7px;overflow:hidden;border:1.5px solid var(--line-strong);background:var(--card)}
+.tomcat div{height:100%;transition:width .15s}
+.tc-c{background:var(--cn)} .tc-w{background:var(--wt)} .tc-e{background:var(--ap)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:12px;border-radius:3px}
+.spark{width:100%;height:auto;display:block;border:1.5px solid var(--line);border-radius:10px;background:var(--code-bg)}
+.spark .ax{font-family:var(--font-mono);font-size:9px;fill:var(--muted)}
+.spark .gl{stroke:var(--line);stroke-width:1}
+.spark .ln{fill:none;stroke:var(--wt);stroke-width:2}
+.spark .ar{fill:var(--wt-tint)}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;color:var(--rc);line-height:1.15;font-variant-numeric:tabular-nums}
+
+/* ---------- tx ---------- */
+.txc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.txb{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:10px;min-width:0}
+.txb h3{color:var(--rc);font-size:20px}
+.held{font-size:14px;font-weight:600}
+.held b{font-family:var(--font-mono)}
+
+/* ---------- db ---------- */
+.commits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.cm2{border:2px solid var(--rc);border-radius:16px;padding:12px 14px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
+.cm2 h3{color:var(--rc);font-size:19px}
+.ticks{height:34px;border-radius:8px;border:1.5px solid var(--line);background:repeating-linear-gradient(90deg,var(--db) 0 1px,transparent 1px 3px)}
+.ticks.one{background:linear-gradient(90deg,transparent calc(100% - 4px),var(--db) calc(100% - 4px))}
+.cm2 p{font-size:13.5px}
+.mvcc{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.vers{display:flex;flex-direction:column;gap:6px}
+.vrow{display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:8px;align-items:center;font-size:13px}
+.vrow > span{color:var(--muted)}
+.vchips{display:flex;flex-wrap:wrap;gap:4px}
+.vchips i{font-style:normal;font-family:var(--font-mono);font-size:11px;padding:1px 6px;border-radius:5px;background:var(--neutral-tint);border:1px dashed var(--line-strong);color:var(--muted)}
+.vchips i.cur{background:var(--cn);border:1px solid var(--cn);color:var(--on-accent)}
+.longtx{height:22px;border-radius:6px;background:var(--tx-tint);border:2px solid var(--tx);position:relative}
+.longtx span{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:11.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+
+/* ---------- jdk ---------- */
+.eras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12.5px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.same{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.same b{color:var(--ink)}
+.same span{padding:3px 10px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+
+/* ---------- pits ---------- */
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:grid;grid-template-columns:44px minmax(0,1fr);gap:3px 14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-radius:14px;min-width:0}
+.pit .ico{width:44px;height:44px;grid-row:span 2}
+.pit b{font-size:15.5px;line-height:1.45;overflow-wrap:anywhere}
+.pit p{font-size:14px;color:var(--muted)}
+.pit p code{color:var(--ink);overflow-wrap:anywhere}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .cast{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .steps{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .phones,.models,.law,.sboard,.txc,.commits,.mvcc,.eras{grid-template-columns:1fr}
+  .why3,.minis{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .cast{grid-template-columns:1fr;gap:22px}
+  .who{flex-direction:row;align-items:center;text-align:left;gap:16px}
+  .fig{width:86px;flex:none}
+  .who-txt{align-items:flex-start}
+  .plate{font-size:27px}
+  .pits{grid-template-columns:1fr}
+  .steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .steps{grid-template-columns:1fr}
+  .tlr{grid-template-columns:5.5em minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){
+  .tomcat div,.theory{transition:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-phone" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M14 6h10l5 13-7 5c3 7 9 13 16 16l5-7 13 5v10c0 4-3 6-7 6C26 54 10 38 8 13c0-4 2-7 6-7z"/>
+  </symbol>
+  <symbol id="i-strip" viewBox="0 0 64 64">
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M6 33c-4 0-4 10 2 14"/>
+    <rect fill="currentColor" x="6" y="22" width="54" height="22" rx="5"/>
+    <rect class="k-paper" x="12" y="28" width="9" height="10" rx="2"/>
+    <rect class="k-paper" x="25" y="28" width="9" height="10" rx="2"/>
+    <rect class="k-paper" x="38" y="28" width="9" height="10" rx="2"/>
+    <rect class="k-gold" x="51" y="28" width="5" height="10" rx="1.5"/>
+  </symbol>
+  <symbol id="i-lock" viewBox="0 0 64 64">
+    <path class="ks-ink" stroke-width="5" d="M20 29v-8a12 12 0 0 1 24 0v8"/>
+    <rect fill="currentColor" x="10" y="27" width="44" height="33" rx="5"/>
+    <circle class="k-gold" cx="32" cy="42" r="5"/>
+    <rect class="k-gold" x="30" y="44" width="4" height="9" rx="1.5"/>
+  </symbol>
+  <symbol id="i-db" viewBox="0 0 64 64">
+    <path fill="currentColor" d="M10 14v36c0 5 9.8 9 22 9s22-4 22-9V14z"/>
+    <ellipse fill="currentColor" cx="32" cy="14" rx="22" ry="9"/>
+    <ellipse class="k-paper" opacity=".3" cx="32" cy="14" rx="22" ry="9"/>
+    <path class="ks-paper" opacity=".6" stroke-width="2" d="M10 27c0 5 9.8 9 22 9s22-4 22-9M10 39c0 5 9.8 9 22 9s22-4 22-9"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 64 64">
+    <circle fill="currentColor" cx="32" cy="34" r="25"/>
+    <circle class="k-paper" cx="32" cy="34" r="19"/>
+    <rect fill="currentColor" x="27" y="3" width="10" height="7" rx="2"/>
+    <path class="ks-cur" stroke-width="4" stroke-linecap="round" d="M32 34V22M32 34l8 5"/>
+  </symbol>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>数据库</span><span aria-hidden="true">/</span><span class="tb-here">连接池与事务性能</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">HIKARICP · SPRING TRANSACTION · MYBATIS · MYSQL · POSTGRESQL</p>
+  <h1>一排拨通的电话，谁打完谁挂</h1>
+  <p class="lead">程序和数据库说话，要先打通一部“电话”（连接）。打通很慢，所以提前拨好一排，谁要就借一部，说完还回来：这就是连接池。事务呢，就是借着电话、一直不挂的那段时间。性能问题，大多出在“电话不够用”或者“占着电话不挂”。</p>
+
+  <div class="phones">
+    <div class="ph" data-role="bad">
+      <h3>每次现拨<small>没有连接池</small></h3>
+      <div class="tl">
+        <div class="tlr"><span>一次请求</span><div class="trk"><div class="sg c" style="left:0;width:86.96%">新建连接 ≈ 20 ms</div><div class="sg s" style="left:86.96%;width:8.7%">SQL</div><div class="sg m" style="left:95.65%;width:4.35%"></div></div></div>
+      </div>
+      <p class="tot">一共约 23 ms，大部分花在拨号上</p>
+    </div>
+    <div class="ph" data-role="done">
+      <h3>从池子里借<small>HikariCP</small></h3>
+      <div class="tl">
+        <div class="tlr"><span>一次请求</span><div class="trk"><div class="sg s" style="left:0;width:8.7%">SQL</div><div class="sg m" style="left:8.7%;width:4.35%"></div></div></div>
+      </div>
+      <p class="tot">一共约 3 ms：借连接只要几微秒，看不见</p>
+    </div>
+  </div>
+  <p class="scale-note">两条按同一比例画：橙色是建连接，棕色是执行 SQL（≈ 2 ms），紫色是提交（≈ 1 ms）。数字是量级示意，实际看网络、TLS 和硬件。</p>
+
+  <div class="cast">
+    <div class="who" data-role="cn">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-strip"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">连接池<code>HikariCP</code></div>
+        <p>提前拨好的一排电话。Spring Boot 默认用它，<b>默认 10 部</b>。</p>
+        <span class="belong">借不到就排队，最多等 30 秒</span>
+      </div>
+    </div>
+    <div class="who" data-role="ap">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-phone"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">连接<code>Connection</code></div>
+        <p>一条通往数据库的线路。<b>同一时刻只能给一个线程用</b>。</p>
+        <span class="belong">数据库那头对应一个线程或进程</span>
+      </div>
+    </div>
+    <div class="who" data-role="tx">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">事务<code>@Transactional</code></div>
+        <p>从开始到提交，<b>连接一直被占着</b>，改过的行也一直锁着。</p>
+        <span class="belong">越长越贵</span>
+      </div>
+    </div>
+    <div class="who" data-role="db">
+      <div class="fig"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg></div>
+      <div class="who-txt">
+        <div class="plate">数据库<code>MySQL / PostgreSQL</code></div>
+        <p>同时能认真干活的，差不多就是<b>它的 CPU 核数</b>那么多。</p>
+        <span class="belong">连接多了反而互相拖累</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= WHY ================= -->
+<section id="why">
+  <div>
+    <h2>为什么新建一个连接这么贵</h2>
+    <p class="lead">打通一条连接，两边要来回好几趟，数据库那头还得专门安排一个线程或进程来伺候它。</p>
+  </div>
+  <div class="steps">
+    <div class="st5" data-role="ap"><small>1</small><b>TCP 握手</b><span>来回一趟网络</span></div>
+    <div class="st5" data-role="ap"><small>2</small><b>TLS 握手</b><span>开了加密就再来一两趟</span></div>
+    <div class="st5" data-role="tx"><small>3</small><b>认证</b><span>交换密码摘要，再来回几趟</span></div>
+    <div class="st5" data-role="db"><small>4</small><b>数据库开工</b><span>MySQL 分一个线程，PostgreSQL fork 一个进程</span></div>
+    <div class="st5" data-role="cn"><small>5</small><b>设置会话</b><span>字符集、时区、自动提交……</span></div>
+  </div>
+  <div class="models">
+    <div class="md" data-role="db">
+      <h3>MySQL：一个连接一个线程</h3>
+      <div class="row"><span class="chip">连接 1 → 线程</span><span class="chip">连接 2 → 线程</span><span class="chip">连接 3 → 线程</span><span class="chip">…</span></div>
+      <p>线程比进程轻，但每个也要占内存和调度。默认 <code>max_connections = 151</code>。</p>
+    </div>
+    <div class="md" data-role="tx">
+      <h3>PostgreSQL：一个连接一个进程</h3>
+      <div class="row"><span class="chip">连接 1 → 进程</span><span class="chip">连接 2 → 进程</span><span class="chip">连接 3 → 进程</span><span class="chip">…</span></div>
+      <p>每个后端进程都要占几 MB 内存，建得更慢。默认 <code>max_connections = 100</code>，连接多的场景常在前面再加一层 PgBouncer。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SIZE ================= -->
+<section id="size">
+  <div>
+    <h2>池子开多大：不是越大越好</h2>
+    <p class="lead">先算清楚“要多少”，再想清楚“数据库扛多少”。两个数里取小的。</p>
+  </div>
+  <div class="law">
+    <div class="lawc" data-role="cn">
+      <h3>要多少：利特尔法则</h3>
+      <div class="eq">同时占用的连接数 = 每秒请求数 × 每次占用多久</div>
+      <div class="ex">
+        <b>1000 次/秒 × 5 ms</b><span>平均只占 <span class="big">5</span> 个连接，池子 10 个绰绰有余</span>
+        <b>1000 次/秒 × 205 ms</b><span class="bad">要占 <span class="big">205</span> 个，因为事务里多了一个 200 ms 的外部调用</span>
+      </div>
+      <p class="tip">反过来算上限：10 个连接、每次占 205 ms，每秒最多只能服务 10 ÷ 0.205 ≈ 49 次。</p>
+    </div>
+    <div class="lawc" data-role="db">
+      <h3>扛多少：数据库的核数</h3>
+      <div class="eq">连接数 ≈ CPU 核数 × 2 + 有效磁盘数</div>
+      <p style="font-size:14px">这是 HikariCP 文档引用的、来自 PostgreSQL 社区的经验公式。8 核 + SSD 的库，起步十几到二十个就够了。</p>
+      <p class="tip">这是整个数据库的总数。10 台应用实例各开 20 个，数据库那头就是 200 个。</p>
+    </div>
+  </div>
+  <div class="why3">
+    <div class="mini"><b>CPU 就那么几个核</b><p>8 核同一时刻最多真正跑 8 个查询，多出来的连接只是在排队，还要来回切换。</p></div>
+    <div class="mini"><b>锁和缓冲区更挤</b><p>同时改的人越多，抢同一把锁、同一块内存页的冲突越多，每个人都变慢。</p></div>
+    <div class="mini"><b>内存被吃掉</b><p>PostgreSQL 每个连接一个进程，排序、哈希还各自要 work_mem，几百个连接能把内存吃光。</p></div>
+  </div>
+</section>
+
+<!-- ================= SIM ================= -->
+<section id="sim-sec">
+  <div>
+    <h2>连接池模拟器</h2>
+    <p class="lead">请求按随机节奏到来，每个先借连接，用完归还。借不到就排队，排满 1 秒（为了演示，把默认的 30 秒缩短了）还没借到就算失败。Tomcat 一共 200 个线程，等连接的、在用连接的、在调外部接口的，都占着线程。</p>
+  </div>
+  <div class="sim" id="sim">
+    <div class="presets" role="group" aria-label="预设"><span class="lbl">预设：</span>
+      <button class="pbtn" id="pr-ok" data-preset="ok" aria-pressed="true">健康</button>
+      <button class="pbtn" id="pr-tx" data-preset="tx" aria-pressed="false">事务里调了外部接口</button>
+      <button class="pbtn" id="pr-small" data-preset="small" aria-pressed="false">池子太小</button>
+      <button class="pbtn" id="pr-edge" data-preset="edge" aria-pressed="false">刚好到边上</button>
+    </div>
+    <div class="params">
+      <label for="p-qps">每秒请求 <select id="p-qps"></select></label>
+      <label for="p-sql">SQL 总耗时 <select id="p-sql"></select></label>
+      <label for="p-ext">200 ms 外部接口 <select id="p-ext">
+        <option value="none">没有</option>
+        <option value="out">在事务外调</option>
+        <option value="in">在事务里调</option>
+      </select></label>
+      <label for="p-pool">连接池大小 <select id="p-pool"></select></label>
+    </div>
+    <div class="ctrl">
+      <button class="btn primary" id="bRun">▶ 运行</button>
+      <button class="btn" id="bReset">从头来</button>
+      <span class="clock">模拟时间 <b id="clock">0.0</b> 秒</span>
+    </div>
+    <p class="theory" id="theory" data-role="done"></p>
+    <div class="sboard">
+      <div class="sbox">
+        <div class="lh"><span><b>连接池</b>（实心 = 正在用）</span><span id="poolTxt"></span></div>
+        <div class="pool" id="pool"></div>
+        <div class="lh"><span><b>Tomcat 的 200 个线程</b>都在干什么</span><span id="tcTxt"></span></div>
+        <div class="tomcat" id="tomcat"><div class="tc-c"></div><div class="tc-w"></div><div class="tc-e"></div></div>
+        <div class="legend"><span><i style="background:var(--cn)"></i>拿着连接</span><span><i style="background:var(--wt)"></i>在等连接</span><span><i style="background:var(--ap)"></i>在调外部接口（不占连接）</span></div>
+        <div class="lh"><span><b>等连接的线程数</b>，最近 2 秒</span></div>
+        <svg class="spark" id="spark" viewBox="0 0 400 90" role="img" aria-label="等连接的线程数随时间变化"></svg>
+      </div>
+      <div class="sbox">
+        <div class="tiles" id="tiles"></div>
+      </div>
+    </div>
+    <p class="tip">模拟器里，数据库永远按时执行完 SQL。真实世界里连接一多，数据库自己也会变慢（上一节说的），所以把池子调到 100 在这里看着很美，现实中不一定。</p>
+  </div>
+</section>
+
+<!-- ================= TX ================= -->
+<section id="tx">
+  <div>
+    <h2>事务怎么吃掉连接</h2>
+    <p class="lead">Spring 在进入 @Transactional 方法时就借走连接，直到提交才还（<a href="../mybatis/mybatis-spring-tx.html">MyBatis 第 02 篇</a>）。方法里干的所有事，哪怕跟数据库无关，都算在占用时间里。</p>
+  </div>
+  <div class="txc">
+    <div class="txb" data-role="bad">
+      <h3>整个方法包在事务里</h3>
+      <div class="tl">
+        <div class="tlr"><span>方法</span><div class="trk"><div class="sg s" style="left:0;width:1.46%"></div><div class="sg c" style="left:1.46%;width:97.08%">调支付接口 200 ms</div><div class="sg s" style="left:98.54%;width:1.46%"></div></div></div>
+        <div class="tlr"><span>占着连接</span><div class="trk"><div class="sg m" style="left:0;width:100%">206 ms：从头占到尾</div></div></div>
+      </div>
+      <p class="held">每次占 <b>206 ms</b>，期间改过的行也一直锁着</p>
+    </div>
+    <div class="txb" data-role="done">
+      <h3>只把写库那两步包进事务</h3>
+      <div class="tl">
+        <div class="tlr"><span>方法</span><div class="trk"><div class="sg s" style="left:0;width:1.46%"></div><div class="sg c" style="left:1.46%;width:97.08%">调支付接口 200 ms（事务外）</div><div class="sg s" style="left:98.54%;width:1.46%"></div></div></div>
+        <div class="tlr"><span>占着连接</span><div class="trk"><div class="sg m" style="left:0;width:1.46%"></div><div class="sg m" style="left:98.54%;width:1.46%"></div></div></div>
+      </div>
+      <p class="held">每次只占 <b>6 ms</b>，同一个池子能多扛三十多倍</p>
+    </div>
+  </div>
+  <div class="minis">
+    <div class="mini"><b>事务里别做慢事</b><p>调 HTTP 接口、发消息、上传文件、复杂计算，都挪到事务外面。事务里只留读写数据库的几步。</p></div>
+    <div class="mini"><b>单条查询不用包事务</b><p>不加 @Transactional，MyBatis 每条 SQL 借一下就还。加了事务，还要多一次开始和提交的来回。</p></div>
+    <div class="mini"><b>readOnly 不是白给的</b><p><code>readOnly = true</code> 让数据库少做点事，比如 InnoDB 不用分配事务 ID；但驱动可能多发一条设置语句。多条查询要看到一致的数据时再用。</p></div>
+  </div>
+</section>
+
+<!-- ================= DB ================= -->
+<section id="db">
+  <div>
+    <h2>数据库那一头：提交、版本和锁</h2>
+    <p class="lead">一个事务在数据库里的成本，主要是三样：提交时等日志落盘、改过的数据留着旧版本、改过的行一直锁着。</p>
+  </div>
+  <div class="commits">
+    <div class="cm2" data-role="bad">
+      <h3>插 1000 行，每行自己一个事务</h3>
+      <div class="ticks" aria-label="1000 次提交"></div>
+      <p>1000 次提交 = 1000 次等日志写到磁盘。MySQL 默认 <code>innodb_flush_log_at_trx_commit=1</code>，PostgreSQL 默认 <code>synchronous_commit=on</code>，都是每次提交都要落盘。</p>
+    </div>
+    <div class="cm2" data-role="done">
+      <h3>1000 行放进一个事务，批量发</h3>
+      <div class="ticks one" aria-label="1 次提交"></div>
+      <p>只落盘 1 次。再配上批量改写（MySQL 的 <code>rewriteBatchedStatements=true</code>，PostgreSQL 驱动的 <code>reWriteBatchedInserts=true</code>），网络来回也少了。</p>
+    </div>
+  </div>
+  <p class="tip">上面两条按提交次数画：左边是 1000 条细线，右边只有最右边一条。不过事务也别大到上百万行，见下面的长事务。</p>
+
+  <div class="mvcc">
+    <div class="vers">
+      <h3>长事务：旧版本清不掉</h3>
+      <div class="vrow"><span>一个没提交的事务</span><div class="longtx"><span>10:00 开始，到 10:30 还开着</span></div></div>
+      <div class="vrow"><span>这期间某一行</span><div class="vchips"><i>v1</i><i>v2</i><i>v3</i><i>v4</i><i>v5</i><i>v6</i><i>v7</i><i class="cur">v8 最新</i></div></div>
+      <p class="tip">别人每改一次，就多一个版本。那个老事务可能还要看旧版本，所以这些版本一个都不能清。</p>
+    </div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th scope="col"></th><th scope="col">MySQL（InnoDB）</th><th scope="col">PostgreSQL</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">旧版本放在</th><td>undo 日志</td><td>表里，旧行变成死元组</td></tr>
+          <tr><th scope="row">长事务的后果</th><td>undo 清不掉，history list 越来越长，查询越来越慢</td><td>VACUUM 清不掉，表和索引不断膨胀</td></tr>
+          <tr><th scope="row">默认隔离级别</th><td>可重复读</td><td>读已提交</td></tr>
+          <tr><th scope="row">提交时落盘</th><td>redo 日志（开了 binlog 还有 binlog）</td><td>WAL</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="note-box"><b>还有锁</b><span>update、delete 改到的行，一直锁到提交。事务越长，别人等这把锁的时间越长，等的那个请求又占着自己的连接，连锁反应就是整个池子被耗光。MySQL 默认的可重复读下还有间隙锁，锁住的范围更大。</span></div>
+</section>
+
+<!-- ================= DRIVER ================= -->
+<section id="driver">
+  <div>
+    <h2>MyBatis 和驱动这一层</h2>
+    <p class="lead">同样一条 SQL，驱动参数不同，网络来回次数和内存占用可能差很多。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th scope="col">要做的事</th><th scope="col">MySQL Connector/J</th><th scope="col">PostgreSQL JDBC</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">批量插入变成一条</th><td><code>rewriteBatchedStatements=true</code></td><td><code>reWriteBatchedInserts=true</code></td></tr>
+        <tr><th scope="row">预编译语句</th><td>默认在客户端拼好再发；HikariCP 建议开 <code>useServerPrepStmts=true</code> 和 <code>cachePrepStmts=true</code></td><td>同一条语句执行 5 次后，自动在服务端预编译（<code>prepareThreshold=5</code>）</td></tr>
+        <tr><th scope="row">大结果集别一次读进内存</th><td>默认整个结果集拉进来；要流式读，开 <code>useCursorFetch=true</code> 再设 fetchSize</td><td>要在事务里（自动提交关掉）并设了 fetchSize，才按批取</td></tr>
+        <tr><th scope="row">MyBatis 这边</th><td colspan="2">批量用 <code>ExecutorType.BATCH</code>（<a href="../mybatis/mybatis-plus.html">MyBatis 第 05 篇</a> 的 saveBatch）；一对多别写成 N+1；大查询在 select 上设 <code>fetchSize</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>一份起步配置</b><span>先用这个，再按监控调</span></div>
+<pre><code>spring:
+  datasource:
+    <span class="cm"># MySQL</span>
+    url: jdbc:mysql://db:3306/shop?rewriteBatchedStatements=true&amp;cachePrepStmts=true&amp;useServerPrepStmts=true
+    <span class="cm"># PostgreSQL：jdbc:postgresql://db:5432/shop?reWriteBatchedInserts=true</span>
+    hikari:
+      maximum-pool-size: <span class="kw">20</span>        <span class="cm"># 默认 10；所有实例加起来别超过数据库的上限</span>
+      minimum-idle: <span class="kw">20</span>             <span class="cm"># 默认和上面一样：固定大小，不用临时建连接</span>
+      connection-timeout: <span class="kw">3000</span>     <span class="cm"># 默认 30000 ms；借不到快点失败，比卡 30 秒好</span>
+      max-lifetime: <span class="kw">1800000</span>        <span class="cm"># 默认 30 分钟；要比数据库和中间网络设备的超时短</span>
+      leak-detection-threshold: <span class="kw">60000</span>   <span class="cm"># 借出去 60 秒没还就打日志，排查泄漏</span></code></pre>
+  </div>
+</section>
+
+<!-- ================= JDK ================= -->
+<section id="jdk">
+  <div>
+    <h2>JDK 8 和 JDK 17</h2>
+    <p class="lead">连接池和事务的原理两边完全一样。变的是 HikariCP 的版本，以及虚拟线程带来的一个误会。</p>
+  </div>
+  <div class="eras">
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 2</h3><span class="jdk">JDK 8+</span></div>
+      <ul>
+        <li>默认连接池就是 HikariCP，Boot 2.7 用的是 4.0.3，也是支持 JDK 8 的最后一个版本</li>
+        <li>配置写在 <code>spring.datasource.hikari.*</code></li>
+      </ul>
+    </div>
+    <div class="era">
+      <div class="era-top"><h3>Spring Boot 3</h3><span class="jdk">JDK 17+</span></div>
+      <ul>
+        <li>HikariCP 5.x 起要求 JDK 11+，Boot 3 用的是 5.x 及以后的版本，配置项不变</li>
+        <li>JDK 21 的虚拟线程能让 Tomcat 同时挂起成千上万个请求，但数据库连接还是那几个。开了虚拟线程，池子照样是瓶颈：等连接的从几十个线程变成几千个虚拟线程</li>
+      </ul>
+    </div>
+  </div>
+  <div class="same"><b>没变的：</b><span>连接贵，所以要池</span><span>池子不是越大越好</span><span>事务从头占到尾</span><span>提交要落盘</span><span>长事务拖累整个库</span></div>
+</section>
+
+<!-- ================= PITS ================= -->
+<section id="pits">
+  <div>
+    <h2>常踩的坑</h2>
+    <p class="lead">看到慢或者报错，先问两件事：连接够不够用？每个连接被占了多久？</p>
+  </div>
+  <div class="pits">
+    <div class="pit" data-role="wt"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-clock"/></svg><b>Connection is not available, request timed out after 30000ms</b><p>池子被借光了，30 秒没等到。查慢 SQL、长事务、连接泄漏，最后才考虑加大池子。</p></div>
+    <div class="pit" data-role="wt"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-strip"/></svg><b>Connection leak detection triggered for … on thread …</b><p>有人借了连接没还，多半是自己 <code>dataSource.getConnection()</code> 后没放进 try-with-resources。日志后面跟着借走时的调用栈。</p></div>
+    <div class="pit" data-role="cn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-strip"/></svg><b>池子从 20 加到 200，反而更慢了</b><p>数据库的核数没变，多出来的连接只是在抢 CPU 和锁。先把每次占用的时间降下来。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>平时好好的，一到高峰全部超时</b><p>事务里调了外部接口，对方一慢，连接全被占着。把外部调用挪出事务。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>Too many connections / FATAL: sorry, too many clients already</b><p>实例数 × 每个实例的池子大小，超过了数据库的上限（MySQL 默认 151，PostgreSQL 默认 100）。扩容时别忘了这笔账。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>Possibly consider using a shorter maxLifetime value.</b><p>连接在池子里放太久，被数据库（MySQL 默认 wait_timeout 8 小时）或中间的防火墙悄悄断了。<code>max-lifetime</code> 要比它们都短。</p></div>
+    <div class="pit" data-role="cn"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-phone"/></svg><b>导入 10 万行要好几分钟</b><p>每行一个事务、每行一次网络来回。放进一个事务分批提交，打开批量改写参数。</p></div>
+    <div class="pit" data-role="ap"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-phone"/></svg><b>导出报表时 OutOfMemoryError</b><p>驱动默认把整个结果集读进内存。用流式读取（fetchSize），或者按主键分批查。</p></div>
+    <div class="pit" data-role="tx"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-lock"/></svg><b>库越来越慢，查不出是哪条 SQL</b><p>看看有没有开了很久没提交的事务：MySQL 查 <code>information_schema.innodb_trx</code>，PostgreSQL 查 <code>pg_stat_activity</code> 里的 <code>idle in transaction</code>。</p></div>
+    <div class="pit" data-role="db"><svg class="ico" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-db"/></svg><b>接了 PgBouncer 后报 prepared statement "S_1" does not exist</b><p>事务池模式下，同一个会话的语句可能落到不同的后端连接上。升级到支持预编译语句的 PgBouncer（1.21+）并配好，或在 JDBC 里设 <code>prepareThreshold=0</code>。</p></div>
+  </div>
+</section>
+
+<footer>
+  以 HikariCP 4 / 5、MySQL 8、PostgreSQL 15 前后版本为例。相关：<a href="../mybatis/mybatis-spring-tx.html">MyBatis 与 Spring 事务</a> · <a href="../spring/spring-aop-tx.html">Spring AOP 与事务</a> · <a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+var STEP=5, TIMEOUT=1000, TOMCAT=200, EXT=200;
+function rng(seed){ var s=seed>>>0; return function(){ s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; }; }
+function holdOf(c){ return c.sql + (c.ext==='in'?EXT:0); }
+function newSim(cfg){
+  var s={cfg:cfg, r:rng(42), t:0, next:0, busy:[], wait:[], outside:[], done:0, fail:0, overflow:0, arrived:0, waits:[], hist:[], doneTimes:[]};
+  s.next = -Math.log(1-s.r())*1000/cfg.qps;
+  return s;
+}
+function stepSim(s){
+  var c=s.cfg, h=holdOf(c); s.t+=STEP;
+  var b2=[]; s.busy.forEach(function(b){
+    if(b.end<=s.t){ if(c.ext==='out'){ s.outside.push({end:b.end+EXT}); } else { s.done++; s.doneTimes.push(s.t); } }
+    else b2.push(b);
+  }); s.busy=b2;
+  var o2=[]; s.outside.forEach(function(o){ if(o.end<=s.t){ s.done++; s.doneTimes.push(s.t); } else o2.push(o); }); s.outside=o2;
+  var w2=[]; s.wait.forEach(function(w){ if(s.t-w.at>=TIMEOUT){ s.fail++; s.waits.push(TIMEOUT); } else w2.push(w); }); s.wait=w2;
+  while(s.busy.length<c.pool && s.wait.length){ var w=s.wait.shift(); s.waits.push(s.t-w.at); s.busy.push({end:s.t+h}); }
+  while(s.next<=s.t){
+    s.arrived++;
+    if(s.wait.length+s.busy.length+s.outside.length>=TOMCAT) s.overflow++;
+    else if(!s.wait.length && s.busy.length<c.pool){ s.waits.push(0); s.busy.push({end:s.next+h}); }
+    else s.wait.push({at:s.next});
+    s.next += -Math.log(1-s.r())*1000/c.qps;
+  }
+  if(s.waits.length>3000) s.waits.splice(0,s.waits.length-3000);
+  while(s.doneTimes.length && s.doneTimes[0]<s.t-1000) s.doneTimes.shift();
+  s.hist.push(s.wait.length); if(s.hist.length>400) s.hist.shift();
+}
+function stats(s){
+  var ws=s.waits.slice(-1000).sort(function(a,b){return a-b;});
+  var avg = ws.length ? ws.reduce(function(a,b){return a+b;},0)/ws.length : 0;
+  var p95 = ws.length ? ws[Math.min(ws.length-1, Math.floor(ws.length*0.95))] : 0;
+  var c=s.cfg, h=holdOf(c);
+  return {avg:avg, p95:p95, tput:s.doneTimes.length, rho:c.qps*h/1000/c.pool, cap:c.pool*1000/h, resp:avg+h+(c.ext==='out'?EXT:0)};
+}
+/*SIM-END*/
+
+(function(){
+  function $(id){return document.getElementById(id);}
+  var PRESETS={
+    ok:{qps:200,sql:10,ext:'out',pool:10},
+    tx:{qps:200,sql:10,ext:'in',pool:10},
+    small:{qps:400,sql:20,ext:'none',pool:5},
+    edge:{qps:400,sql:20,ext:'none',pool:10}
+  };
+  function fill(id,vals,suffix){ $(id).innerHTML=vals.map(function(v){return '<option value="'+v+'">'+v+suffix+'</option>';}).join(''); }
+  fill('p-qps',[50,100,200,400,800],' 次');
+  fill('p-sql',[2,5,10,20,50],' ms');
+  fill('p-pool',[2,5,10,20,50,100],' 个');
+  var sim=null, timer=null;
+  function cfgUI(c){ $('p-qps').value=c.qps; $('p-sql').value=c.sql; $('p-ext').value=c.ext; $('p-pool').value=c.pool; }
+  function readUI(){ return {qps:+$('p-qps').value, sql:+$('p-sql').value, ext:$('p-ext').value, pool:+$('p-pool').value}; }
+  function f0(x){ return Math.round(x).toLocaleString('en-US'); }
+  function render(){
+    var s=sim, c=s.cfg, S=stats(s), h=holdOf(c);
+    $('clock').textContent=(s.t/1000).toFixed(1);
+    var th=$('theory');
+    var verdict = S.rho<0.7 ? ['done','轻松：大多数请求一来就有连接。'] : (S.rho<1 ? ['warn','接近上限：开始有人排队，等待时间忽高忽低。'] : ['bad','撑不住：来的比能服务的多，排队越来越长，开始等超时；Tomcat 的线程大量卡在等连接上。']);
+    th.setAttribute('data-role', verdict[0]);
+    th.innerHTML='每个请求占用连接 <b>'+h+' ms</b>，'+c.pool+' 个连接每秒最多服务 <b>'+f0(S.cap)+'</b> 次；现在每秒来 <b>'+c.qps+'</b> 次，利用率 <b>'+Math.round(S.rho*100)+'%</b>。'+verdict[1];
+    var ph=''; for(var i=0;i<c.pool;i++) ph+='<span class="cslot'+(i<s.busy.length?' busy':'')+'"></span>';
+    $('pool').innerHTML=ph;
+    $('poolTxt').textContent='在用 '+s.busy.length+' / '+c.pool;
+    var tc=$('tomcat').children;
+    tc[0].style.width=(s.busy.length/TOMCAT*100)+'%';
+    tc[1].style.width=(s.wait.length/TOMCAT*100)+'%';
+    tc[2].style.width=(s.outside.length/TOMCAT*100)+'%';
+    var used=s.busy.length+s.wait.length+s.outside.length;
+    $('tcTxt').textContent='占用 '+used+' / '+TOMCAT;
+    // sparkline
+    var hs=s.hist, mx=Math.max(10, Math.max.apply(null, hs.concat([0]))); mx=Math.ceil(mx/10)*10;
+    var W=400, H=90, L=30, R=6, T=8, B=16, iw=W-L-R, ih=H-T-B;
+    var pts=hs.map(function(v,i){ return (L+(hs.length<=1?0:i/(400-1)*iw)).toFixed(1)+','+(T+ih-(v/mx)*ih).toFixed(1); });
+    var area = pts.length ? 'M'+L+','+(T+ih)+' L'+pts.join(' L')+' L'+(L+((hs.length-1)/(400-1))*iw).toFixed(1)+','+(T+ih)+' Z' : '';
+    $('spark').innerHTML='<line class="gl" x1="'+L+'" y1="'+T+'" x2="'+(W-R)+'" y2="'+T+'"/><line class="gl" x1="'+L+'" y1="'+(T+ih)+'" x2="'+(W-R)+'" y2="'+(T+ih)+'"/>'+
+      '<text class="ax" x="'+(L-4)+'" y="'+(T+3)+'" text-anchor="end">'+mx+'</text><text class="ax" x="'+(L-4)+'" y="'+(T+ih+3)+'" text-anchor="end">0</text>'+
+      '<text class="ax" x="'+L+'" y="'+(H-3)+'">2 秒前</text><text class="ax" x="'+(W-R)+'" y="'+(H-3)+'" text-anchor="end">现在</text>'+
+      (area?'<path class="ar" d="'+area+'"/><polyline class="ln" points="'+pts.join(' ')+'"/>':'');
+    var T6=[
+      ['done','每秒完成', f0(S.tput)+' 次'],
+      ['wt','等连接平均', f0(S.avg)+' ms'],
+      ['wt','等连接 P95', f0(S.p95)+' ms'],
+      ['ap','用户平均等', f0(S.resp)+' ms'],
+      ['bad','等超时失败', f0(s.fail)+' 个'],
+      ['bad','线程满了进不来', f0(s.overflow)+' 个']
+    ];
+    $('tiles').innerHTML=T6.map(function(t){ return '<div class="tile" data-role="'+t[0]+'"><small>'+t[1]+'</small><b>'+t[2]+'</b></div>'; }).join('');
+  }
+  function stop(){ if(timer){ clearInterval(timer); timer=null; } $('bRun').textContent='▶ 运行'; }
+  function reset(c, warm){ stop(); sim=newSim(c); for(var i=0;i<(warm||0);i++) stepSim(sim); render(); }
+  function loadPreset(k){
+    document.querySelectorAll('[data-preset]').forEach(function(b){ b.setAttribute('aria-pressed', String(b.getAttribute('data-preset')===k)); });
+    var p=PRESETS[k]; cfgUI(p); reset({qps:p.qps,sql:p.sql,ext:p.ext,pool:p.pool}, 600);
+  }
+  document.querySelectorAll('[data-preset]').forEach(function(b){ b.addEventListener('click', function(){ loadPreset(b.getAttribute('data-preset')); }); });
+  ['p-qps','p-sql','p-ext','p-pool'].forEach(function(id){ $(id).addEventListener('change', function(){
+    document.querySelectorAll('[data-preset]').forEach(function(b){ b.setAttribute('aria-pressed','false'); });
+    reset(readUI(), 600);
+  }); });
+  $('bReset').addEventListener('click', function(){ reset(sim.cfg, 0); });
+  $('bRun').addEventListener('click', function(){
+    if(timer){ stop(); return; }
+    $('bRun').textContent='❚❚ 暂停';
+    timer=setInterval(function(){ for(var i=0;i<10;i++) stepSim(sim); render(); }, 50);
+  });
+  loadPreset('ok');
+})();
+</script>
+
+</body>
+</html>
