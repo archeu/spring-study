@@ -1,0 +1,1723 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Kafka 存储与零拷贝</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method (route bar under the title, ①–⑥ and ↺ badges). Metaphor: a ledger bound into volumes (segments) with a sparse table of contents (index), kept on the OS's desk (page cache) and handed out by the librarian directly (sendfile). Colors: producer/write path blue, log segments teal (the chosen design), index/offset amber, page cache (kernel memory) purple, consumer/NIC brown, CPU copies orange, wrong red, right green, old ways grey. Interactives: offset lookup stepper (④), zero-copy path stepper (⑥), page-cache window calculator (⑥). */
+:root{
+  --paper:#F0F2F5; --card:#FFFFFF; --ink:#17202B; --muted:#586374; --line:#D7DDE6; --line-strong:#A9B4C4;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --of:#9A6B00; --of-tint:#FBF0CF;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --gold:#E2B33C;
+  --code-bg:#F7F8FB; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#7FD8C5;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --gold:#E9BE4E;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#7FD8C5;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --gold:#E9BE4E;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#7FD8C5;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,60px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--bk)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:52em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:52em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:620px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-on{font-size:11.5px;font-weight:700;fill:var(--on-accent)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12.5px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.c-bk{fill:var(--bk)}
+.c-neu{fill:var(--neutral)}
+.c-new{fill:var(--of)}
+.c-empty{fill:var(--card);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.c-ghost{fill:none;stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-on{stroke:var(--of);stroke-width:3;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-hw{stroke:var(--of);stroke-width:3.5}
+.mk{fill:var(--of)}
+.mk-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.way h3{color:var(--rc);font-size:24px}
+.way h3 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way .verdict{margin-top:auto}
+.need{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need b i{font-style:normal;font-family:var(--font-display);color:var(--of);margin-right:6px}
+.need p{font-size:14px;color:var(--muted)}
+.need .to{font-size:12.5px;align-self:flex-start;padding:2px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink)}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13.5px}
+.flow .nd{padding:5px 10px;border-radius:10px;border:1.5px solid var(--rc);background:var(--rt);white-space:nowrap}
+.flow .nd small{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);margin-left:4px}
+.flow .nd.x{border-color:var(--bad);background:var(--bad-tint)}
+.flow .ar{color:var(--muted)}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--bk-tint);border:2px solid var(--bk)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--bk);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misuse{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:14px;background:var(--bad-tint);border:1.5px solid var(--bad)}
+.misuse b{color:var(--bad)}
+.misuse ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:5px;font-size:14.5px}
+.rule{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border-radius:14px;background:var(--card);border:2px solid var(--ink)}
+.rule ol{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.steps5{display:flex;flex-direction:column;gap:14px}
+.later{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:19px;white-space:nowrap}
+.t thead th.me{color:var(--bk)}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.me{background:var(--bk-tint)}
+.t .good{color:var(--good);font-weight:700}
+.t .bad{color:var(--bad);font-weight:700}
+.t .mid{color:var(--of);font-weight:700}
+.t td.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---------- ④ chain + group rules ---------- */
+.chain{display:grid;grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr) 28px minmax(0,1fr);gap:8px;align-items:stretch}
+.link{border:2px solid var(--rc);border-radius:16px;background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.link h4{color:var(--rc)}
+.link ul{margin:0;padding-left:1.1em;font-size:14px;display:flex;flex-direction:column;gap:4px}
+.link .leak{margin-top:auto;font-size:12.5px;padding:4px 10px;border-radius:10px;background:var(--bad-tint);color:var(--ink)}
+.chain .arw{display:grid;place-items:center;color:var(--muted);font-size:22px}
+.rules4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.gm{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.gm > b{font-size:14px}
+.gm .mem-row{display:flex;flex-wrap:wrap;gap:6px}
+.gm p{font-size:13px;color:var(--muted)}
+.mc{border:1.5px solid var(--rc);background:var(--rt);border-radius:10px;padding:4px 7px;display:flex;flex-direction:column;gap:4px;min-width:58px}
+.mc > span{font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.mc .ps{display:flex;flex-wrap:wrap;gap:3px}
+.pc{font-family:var(--font-mono);font-size:11px;padding:1px 6px;border-radius:6px;background:var(--bk);color:var(--on-accent)}
+.mc.idle{border-style:dashed;border-color:var(--bad);background:var(--bad-tint)}
+.mc.idle em{font-style:normal;font-size:11.5px;color:var(--bad);font-weight:700}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--bk-tint);border:2px solid var(--bk);min-height:4.6em}
+.cap-txt.alt{background:var(--bad-tint);border-color:var(--bad)}
+.cap-txt b{color:var(--bk)}
+.cap-txt.alt b{color:var(--bad)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--bad)}
+.stage .svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.stage svg{display:block;width:100%;min-width:600px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+
+/* ---------- labs ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.row .lbl{font-size:13px;color:var(--muted)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden}
+.seg-btns button{border:0;background:var(--card);padding:5px 11px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg-btns button:disabled{opacity:.4;cursor:not-allowed}
+.faults{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.faults button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.faults button b{font-family:var(--font-display);font-weight:400;font-size:18px}
+.faults button span{font-size:12.5px;color:var(--muted)}
+.faults button[aria-pressed="true"]{border-color:var(--bad);background:var(--bad-tint);box-shadow:inset 0 0 0 1px var(--bad)}
+.scn{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--neutral-tint)}
+.cfg3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.cfgc{border:2px solid var(--rc);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:opacity .2s}
+.cfgc h4{color:var(--rc)}
+.cfgc .opt{display:flex;flex-direction:column;gap:4px}
+.cfgc .opt > span{font-size:12.5px;color:var(--muted)}
+.cfgc .opt > span code{color:var(--ink)}
+.cfgc.dim{opacity:.5}
+.cfgc .irr{font-size:12px;color:var(--muted);display:none}
+.cfgc.dim .irr{display:block}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:26px;line-height:1.15;font-variant-numeric:tabular-nums}
+.tile span{font-size:12px}
+.cells{display:grid;grid-template-columns:repeat(20,minmax(0,1fr));gap:3px}
+.cells i{aspect-ratio:1.6;border-radius:3px;background:var(--good-tint);border:1px solid var(--good)}
+.cells i.lost{background:var(--bad);border-color:var(--bad)}
+.cells i.fail{background:repeating-linear-gradient(135deg,var(--neutral-tint) 0 3px,var(--line-strong) 3px 5px);border-color:var(--neutral)}
+.cells i.dup{background:var(--warn);border-color:var(--warn)}
+.cells i.dupok{background:var(--good-tint);border:2px solid var(--warn)}
+.cells-head{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:11px;border-radius:3px;display:inline-block}
+.notes{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.notes li{font-size:14.5px;padding:8px 12px;border-radius:10px;background:var(--rt);border-left:4px solid var(--rc)}
+.members{display:flex;flex-wrap:wrap;gap:10px}
+.mbr{border:2px solid var(--cg);background:var(--cg-tint);border-radius:12px;padding:8px 10px;min-width:96px;display:flex;flex-direction:column;gap:6px}
+.mbr.idle{border-style:dashed;border-color:var(--bad);background:var(--bad-tint)}
+.mbr-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mbr-h b{font-family:var(--font-mono);font-size:13.5px}
+.mbr-h button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:8px;width:24px;height:24px;line-height:1;cursor:pointer;font-size:14px;padding:0}
+.mbr .ps{display:flex;flex-wrap:wrap;gap:4px;max-width:180px}
+.mbr .pc{font-size:12px;padding:2px 7px}
+.mbr .pc.mv{background:var(--of-tint);color:var(--ink);outline:2px dashed var(--of);outline-offset:-2px}
+.mbr em{font-style:normal;font-size:12.5px;color:var(--bad);font-weight:700}
+
+/* ---------- ⑥ pits ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.outbox{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px}
+.outbox .bx{border:1.5px solid var(--rc);background:var(--rt);border-radius:10px;padding:6px 10px}
+.outbox .bx.tx{border-width:2px;border-style:dashed}
+.outbox .ar{color:var(--muted)}
+.mini-out{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.dp li code{overflow-wrap:anywhere}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.next li b{color:var(--ink)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted)}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .tiles,.rules4,.faults{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras,.ex{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.cfg3,.later,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .chain{grid-template-columns:1fr}
+  .chain .arw{transform:rotate(90deg);height:22px}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+}
+@media (max-width:520px){
+  .tiles,.rules4,.faults{grid-template-columns:1fr}
+  .cells{grid-template-columns:repeat(10,minmax(0,1fr))}
+  .tile b{font-size:23px}
+
+/* ---------- this page: storage ---------- */
+.f-bk{fill:var(--bk)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--ink)}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-kern{fill:var(--cg-tint);stroke:none;opacity:.55}
+.c-of{fill:var(--of)} .c-cg{fill:var(--cg)} .c-g2{fill:var(--g2)} .c-pd{fill:var(--pd)}
+.c-oft{fill:var(--of-tint);stroke:var(--of);stroke-width:1.2}
+.c-bkt{fill:var(--bk-tint);stroke:var(--bk);stroke-width:1}
+.c-dim{fill:var(--neutral-tint);stroke:var(--line-strong);stroke-width:1}
+.o-bad{fill:none;stroke:var(--bad);stroke-width:2.5;stroke-dasharray:5 3}
+.o-of{fill:none;stroke:var(--of);stroke-width:3}
+.o-ink{fill:none;stroke:var(--ink);stroke-width:2}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:3;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:3.5;fill:none}
+.e-dash{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-ofd{stroke:var(--of);stroke-width:1.6;fill:none;stroke-dasharray:4 3}
+.e-sep{stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:6 5}
+.fade{opacity:.28}
+
+/* ④ four facts */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.fact .to6{margin-top:auto;font-size:12.5px;color:var(--muted)}
+
+/* labs: inputs */
+.numin{font-family:var(--font-mono);font-size:14px;width:7.5em;padding:5px 8px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ctl label{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl label output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--bk)}
+.real{font-size:14px;padding:10px 14px;border-radius:12px;background:var(--code-bg);border:1.5px dashed var(--line-strong)}
+.real b{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.tiles .tile b.sm{font-size:20px}
+.verdict-line{font-size:15px;padding:10px 14px;border-radius:12px;border:2px solid var(--rc);background:var(--rt)}
+.check{font-family:var(--font-mono);font-size:12.5px;color:var(--muted)}
+
+/* experiment results */
+.measure{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.ms{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.ms > small{font-size:12.5px;color:var(--muted)}
+.ms .vs{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;font-size:14px;align-items:baseline}
+.ms .vs b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:15px}
+.ms .vs b.bad{color:var(--bad)} .ms .vs b.good{color:var(--good)}
+.ms p{font-size:13px;color:var(--muted)}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+
+@media (max-width:980px){
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .measure{grid-template-columns:1fr}
+}
+@media (max-width:560px){
+  .facts,.ctl-grid{grid-template-columns:1fr}
+}
+.t-onm{font-family:var(--font-mono)!important;font-size:10.5px;font-weight:600;fill:var(--on-accent)}
+.c-cgl{fill:var(--cg-tint);stroke:var(--cg);stroke-width:1.2}
+.lab .svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.lab .svg-scroll svg{display:block;width:100%;min-width:600px;height:auto}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-pd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-pd" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Kafka</span><span aria-hidden="true">/</span><span class="tb-here">存储：segment、索引、页缓存与零拷贝</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">KAFKA · SEGMENT · .INDEX · .TIMEINDEX · PAGE CACHE · SENDFILE · RETENTION</p>
+  <h1>只往文件末尾追加，缓存和搬运都交给内核</h1>
+  <p class="lead">Kafka 把每个分区存成一串<b>只追加的段文件</b>（segment），每段配一本<b>稀疏索引</b>：按 offset 找消息，先二分索引，再往后扫几 KB。它自己几乎不缓存数据。写进来的数据先留在操作系统的<b>页缓存</b>里；发给消费者时调用 <code>sendfile</code>，内核直接把页缓存里的数据交给网卡，数据不进 JVM，这就是<b>零拷贝</b>。“Kafka 为什么快”的答案，就是这几件事配合起来。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>为什么学</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>老办法</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>选谁</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>原理</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>跑起来</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>接着<a href="kafka-reliability-group.html">上一页</a>的订单 topic。上线一段时间后，找上门三件事：面试官问“Kafka 为什么快”；运维说 retention 设了 7 天，磁盘上却有 12 天前的数据；报表组一回放历史，实时消费就变慢。所以本页偏原理和排障，第⑥步末尾附面试题。标“实测”的地方，都在本机 Kafka 4.1.2 单节点（KRaft、2 核虚拟机）上跑过。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>为什么要学：三件事都卡在“消息怎么存”</h2>
+    <p class="lead">上一页解决了“不丢、不乱”。这一页看 Broker 的磁盘里到底放了什么，Kafka 读写为什么快。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 760 296" role="img" aria-label="Broker 磁盘上 order-created 分区的一串段文件：订单服务往最新一段追加；最老的两段超过 7 天还在；报表组从老段开始重放，库存组读最新一段">
+        <rect class="b-neu" x="8" y="40" width="80" height="100" rx="12"/>
+        <text class="t-b" x="48" y="66" text-anchor="middle">面试官</text>
+        <text class="t-s" x="48" y="88" text-anchor="middle">Kafka</text>
+        <text class="t-s" x="48" y="106" text-anchor="middle">为什么</text>
+        <text class="t-s" x="48" y="124" text-anchor="middle">这么快？</text>
+        <rect class="b-card" x="100" y="30" width="556" height="164" rx="14"/>
+        <text class="t-b" x="116" y="54">Broker 磁盘 · order-created-0/</text>
+        <rect class="c-bk" x="116" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-bk" x="175" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-bk" x="234" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-bk" x="293" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-bk" x="352" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-bk" x="411" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-bk" x="470" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-bk" x="529" y="70" width="52" height="60" rx="5"/>
+        <rect class="c-new" x="588" y="70" width="52" height="60" rx="5"/>
+        <rect class="o-bad" x="111" y="65" width="121" height="70" rx="8"/>
+        <text class="t-m" x="116" y="150">12 天前</text>
+        <text class="t-of" x="640" y="150" text-anchor="end">正在写</text>
+        <text class="t-bad" x="116" y="178">超过 7 天了，还没删</text>
+        <text class="t-m" x="380" y="150" text-anchor="middle">一段一个文件，按时间从老到新</text>
+        <rect class="b-pd" x="672" y="70" width="80" height="60" rx="10"/>
+        <text class="t-b" x="712" y="96" text-anchor="middle">订单服务</text>
+        <text class="t-m" x="712" y="116" text-anchor="middle">一直在写</text>
+        <line class="e-pd" x1="670" y1="100" x2="645" y2="100" marker-end="url(#ah-pd)"/>
+        <rect class="b-g2" x="116" y="216" width="214" height="64" rx="12"/>
+        <text class="t-b" x="132" y="242">报表组 report</text>
+        <text class="t-s" x="132" y="264">从 7 天前开始重放</text>
+        <line class="e-ink" x1="201" y1="214" x2="201" y2="136" marker-end="url(#ah-ink)"/>
+        <rect class="b-cg" x="430" y="216" width="214" height="64" rx="12"/>
+        <text class="t-b" x="446" y="242">库存组 inventory</text>
+        <text class="t-s" x="446" y="264">实时读，一重放就变慢</text>
+        <line class="e-ink" x1="614" y1="214" x2="614" y2="136" marker-end="url(#ah-ink)"/>
+        <circle class="mk" cx="88" cy="40" r="11"/><text class="mk-t" x="88" y="44.5" text-anchor="middle">1</text>
+        <circle class="mk" cx="232" cy="65" r="11"/><text class="mk-t" x="232" y="69.5" text-anchor="middle">2</text>
+        <circle class="mk" cx="644" cy="216" r="11"/><text class="mk-t" x="644" y="220.5" text-anchor="middle">3</text>
+      </svg>
+    </div>
+    <figcaption>三件事落在同一个地方：消息在 Broker 磁盘上怎么存、怎么删、怎么被读走。</figcaption>
+  </figure>
+  <div class="trio">
+    <div class="need" data-role="bk"><b><i>1</i>讲清 Kafka 为什么快</b><p>面试必问。标准答案是一串词：顺序写、页缓存、零拷贝、批量、分区。本页把每个词背后的机制画出来。</p><span class="to">④ 原理</span></div>
+    <div class="need" data-role="bad"><b><i>2</i>保留时间和磁盘对得上</b><p>retention 设了 7 天，磁盘上却有 12 天前的段；磁盘告警了，等它自己删又删不掉。</p><span class="to">⑥ 坑 1</span></div>
+    <div class="need" data-role="cg"><b><i>3</i>回放历史，不拖慢实时</b><p>报表组从 7 天前读起，库存组的延迟跟着涨。要知道为什么，以及怎么避开。</p><span class="to">⑥ 页缓存</span></div>
+  </div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>老办法：自己设计会怎样</h2>
+    <p class="lead">存储是 Kafka 里的一个机制，没有现成的“老技术”可替换。那就假设没有 Kafka，用手上会的东西存消息、发消息。最先想到的四种做法都能跑，但各疼一处，Kafka 的设计正好是冲着这几处去的。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 760 236" role="img" aria-label="左边：消息存进 MySQL 表，按索引写到分散的数据页，删除后留下空洞；右边：消息只追加到文件末尾，过期时整段删除">
+        <text class="t-h" x="16" y="26">存进 MySQL 表：一条消息一行</text>
+        <rect class="c-dim" x="24" y="44" width="44" height="26" rx="4"/><rect class="c-dim" x="76" y="44" width="44" height="26" rx="4"/><rect class="c-dim" x="128" y="44" width="44" height="26" rx="4"/><rect class="c-dim" x="180" y="44" width="44" height="26" rx="4"/><rect class="c-dim" x="232" y="44" width="44" height="26" rx="4"/><rect class="c-dim" x="284" y="44" width="44" height="26" rx="4"/>
+        <rect class="c-dim" x="24" y="78" width="44" height="26" rx="4"/><rect class="c-ghost" x="76" y="78" width="44" height="26" rx="4"/><rect class="c-dim" x="128" y="78" width="44" height="26" rx="4"/><rect class="c-dim" x="180" y="78" width="44" height="26" rx="4"/><rect class="c-dim" x="232" y="78" width="44" height="26" rx="4"/><rect class="c-dim" x="284" y="78" width="44" height="26" rx="4"/>
+        <rect class="c-dim" x="24" y="112" width="44" height="26" rx="4"/><rect class="c-dim" x="76" y="112" width="44" height="26" rx="4"/><rect class="c-dim" x="128" y="112" width="44" height="26" rx="4"/><rect class="c-dim" x="180" y="112" width="44" height="26" rx="4"/><rect class="c-ghost" x="232" y="112" width="44" height="26" rx="4"/><rect class="c-dim" x="284" y="112" width="44" height="26" rx="4"/>
+        <rect class="c-dim" x="24" y="146" width="44" height="26" rx="4"/><rect class="c-dim" x="76" y="146" width="44" height="26" rx="4"/><rect class="c-dim" x="128" y="146" width="44" height="26" rx="4"/><rect class="c-dim" x="180" y="146" width="44" height="26" rx="4"/><rect class="c-dim" x="232" y="146" width="44" height="26" rx="4"/><rect class="c-dim" x="284" y="146" width="44" height="26" rx="4"/>
+        <rect class="c-neu" x="232" y="44" width="44" height="26" rx="4"/><text class="t-on" x="254" y="61" text-anchor="middle">1</text>
+        <rect class="c-neu" x="76" y="112" width="44" height="26" rx="4"/><text class="t-on" x="98" y="129" text-anchor="middle">2</text>
+        <rect class="c-neu" x="284" y="78" width="44" height="26" rx="4"/><text class="t-on" x="306" y="95" text-anchor="middle">3</text>
+        <rect class="c-neu" x="128" y="146" width="44" height="26" rx="4"/><text class="t-on" x="150" y="163" text-anchor="middle">4</text>
+        <rect class="c-neu" x="24" y="44" width="44" height="26" rx="4"/><text class="t-on" x="46" y="61" text-anchor="middle">5</text>
+        <text class="t-m" x="16" y="198">1→5 是写入顺序：写到哪一页由索引决定，磁盘到处跳</text>
+        <text class="t-m" x="16" y="218">虚线格是 delete 留下的空洞；每次写还要记 redo log、binlog</text>
+        <line class="e-sep" x1="372" y1="16" x2="372" y2="224"/>
+        <text class="t-h" x="394" y="26">只追加的文件：永远写在末尾</text>
+        <rect class="c-bk" x="402" y="64" width="60" height="50" rx="5"/>
+        <rect class="c-bk" x="468" y="64" width="60" height="50" rx="5"/>
+        <rect class="c-bk" x="534" y="64" width="60" height="50" rx="5"/>
+        <rect class="c-bk" x="600" y="64" width="60" height="50" rx="5"/>
+        <rect class="c-new" x="666" y="64" width="60" height="50" rx="5"/>
+        <rect class="o-bad" x="398" y="60" width="68" height="58" rx="7"/>
+        <text class="t-bad" x="432" y="138" text-anchor="middle">过期整段删</text>
+        <path class="e-pd" d="M744 168 V 140 H 712 V 120" marker-end="url(#ah-pd)"/>
+        <text class="t-pd" x="736" y="184" text-anchor="end">新消息只追加到这里</text>
+        <text class="t-m" x="394" y="198">磁盘只在一个地方写，机械盘也很快</text>
+        <text class="t-m" x="394" y="218">删除不碰数据，直接删掉最老的段文件</text>
+      </svg>
+    </div>
+    <figcaption>左边是 Java 后端最熟的存法，右边是 Kafka 的存法。差别在写入点：左边分散，右边只有一个。</figcaption>
+  </figure>
+  <div class="duo">
+    <div class="way" data-role="other">
+      <h3>试 1 · 存进 MySQL<small>一条消息一行</small></h3>
+      <ul class="pains">
+        <li>每条消息一次随机写，还要写 redo log 和 binlog</li>
+        <li>消费完 delete，表里留下空洞，还得定期整理</li>
+        <li>多一个下游，就要多记一份“谁读到哪了”</li>
+      </ul>
+      <p class="verdict" data-role="bk">Kafka：不建表，只往文件末尾追加；删除就是删掉最老的整段文件。</p>
+    </div>
+    <div class="way" data-role="other">
+      <h3>试 2 · 一个大文件只追加<small>写是快了</small></h3>
+      <ul class="pains">
+        <li>旧数据删不掉，除非把整个文件重写一遍</li>
+        <li>想读第 1 亿条，只能从文件头一条条数过去</li>
+      </ul>
+      <p class="verdict" data-role="bk">Kafka：切成一段一段（segment），文件名就是这段第一条消息的 offset。</p>
+    </div>
+    <div class="way" data-role="other">
+      <h3>试 3 · 每条消息记一条索引<small>找得快了</small></h3>
+      <ul class="pains">
+        <li>索引条数和消息一样多：10 亿条消息，每条 8 字节，索引就是 8 GB</li>
+        <li>索引放不进内存，查索引本身又要读盘</li>
+      </ul>
+      <p class="verdict" data-role="bk">Kafka：稀疏索引，每攒够 4 KB 数据才记一条。查找时二分到附近，再往后扫几 KB。</p>
+    </div>
+    <div class="way" data-role="other">
+      <h3>试 4 · JVM 里缓存，读出来再发<small>热数据快了</small></h3>
+      <ul class="pains">
+        <li>几十 GB 数据放在堆里，GC 停顿受不了</li>
+        <li>进程一重启，缓存全空</li>
+        <li>同一份数据，堆里一份，操作系统的页缓存里还有一份</li>
+        <li>发给消费者：内核拷到 JVM，JVM 再拷回内核</li>
+      </ul>
+      <p class="verdict" data-role="bk">Kafka：不在堆里缓存消息，全靠页缓存；发送用 sendfile，数据不进 JVM。</p>
+    </div>
+  </div>
+  <div class="essence">
+    <span class="big">追加写<br>稀疏查<br>交给内核</span>
+    <p><b>精华：</b>Kafka 的存储很“笨”。写只往段文件末尾追加，查靠稀疏索引定位到几 KB 以内，缓存交给页缓存，发送交给 <code>sendfile</code>。JVM 只管协议、校验和元数据，消息本身很少经过它。</p>
+    <p>所以调 Kafka 的性能，很多时候是在调操作系统：内存留给页缓存、磁盘别和别人抢、文件句柄够用。</p>
+  </div>
+  <div class="misuse">
+    <b>不懂精华时的典型误用</b>
+    <ul>
+      <li>给 Broker 开 32 GB 堆，想“多缓存点消息”。Kafka 不在堆里缓存消息，堆越大，留给页缓存的越少。官方文档给的参考配置是 <code>-Xmx6g</code>。</li>
+      <li>为了“更安全”把 <code>flush.messages</code> 设成 1，每次写都 fsync。本机实测吞吐从 16.6 MB/s 掉到 4.5 MB/s。不丢消息靠的是副本，见<a href="kafka-reliability-group.html">上一页</a>。</li>
+      <li>一个集群建几万个分区。每个分区一串文件，写入点被打散，文件句柄和内存映射也跟着成倍涨。</li>
+      <li>把 <code>retention.ms</code> 当成“到点就删”。删除按段来，看的是段里最新一条消息的时间。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>选谁：几种消息系统的存法</h2>
+    <p class="lead">存消息不止 Kafka 一种做法。比四件事：写入是不是顺序的，怎么找到一条，怎么删，怎么发出去。最值得对照的是 RocketMQ，两边都是只追加日志，分法不同。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 760 262" role="img" aria-label="左边 Kafka：每个分区一串文件，各有一个写入点；右边 RocketMQ：所有消息顺序写进一个 CommitLog，每个队列只存很小的索引条目">
+        <text class="t-h" x="16" y="26">Kafka：每个分区一串文件</text>
+        <text class="t-b" x="16" y="62">P0</text><rect class="c-bk" x="48" y="46" width="232" height="24" rx="4"/><path class="f-pd" d="M284 58 l10 -7 v14z"/>
+        <text class="t-b" x="16" y="98">P1</text><rect class="c-bk" x="48" y="82" width="170" height="24" rx="4"/><path class="f-pd" d="M222 94 l10 -7 v14z"/>
+        <text class="t-b" x="16" y="134">P2</text><rect class="c-bk" x="48" y="118" width="268" height="24" rx="4"/><path class="f-pd" d="M320 130 l10 -7 v14z"/>
+        <text class="t-b" x="16" y="170">P3</text><rect class="c-bk" x="48" y="154" width="120" height="24" rx="4"/><path class="f-pd" d="M172 166 l10 -7 v14z"/>
+        <text class="t-pd" x="16" y="204">▶ = 写入点：4 个分区就有 4 个</text>
+        <text class="t-m" x="16" y="224">分区到了几千个，磁盘要在几千个文件之间来回写</text>
+        <text class="t-m" x="16" y="244">找一条：只看本分区的文件和索引</text>
+        <line class="e-sep" x1="372" y1="16" x2="372" y2="250"/>
+        <text class="t-h" x="394" y="26">RocketMQ：所有消息写一个 CommitLog</text>
+        <rect class="c-bk" x="400" y="46" width="24" height="30" rx="3"/><rect class="c-g2" x="426" y="46" width="24" height="30" rx="3"/><rect class="c-cg" x="452" y="46" width="24" height="30" rx="3"/><rect class="c-bk" x="478" y="46" width="24" height="30" rx="3"/><rect class="c-bk" x="504" y="46" width="24" height="30" rx="3"/><rect class="c-cg" x="530" y="46" width="24" height="30" rx="3"/><rect class="c-g2" x="556" y="46" width="24" height="30" rx="3"/><rect class="c-bk" x="582" y="46" width="24" height="30" rx="3"/><rect class="c-cg" x="608" y="46" width="24" height="30" rx="3"/><rect class="c-g2" x="634" y="46" width="24" height="30" rx="3"/><rect class="c-bk" x="660" y="46" width="24" height="30" rx="3"/>
+        <path class="f-pd" d="M688 61 l10 -7 v14z"/>
+        <text class="t-pd" x="704" y="66">唯一</text>
+        <text class="t-m" x="400" y="96">不同颜色 = 不同 topic 的消息，混在一起顺序写</text>
+        <text class="t-b" x="400" y="128">ConsumeQueue（每条 20 字节）</text>
+        <rect class="c-oft" x="400" y="140" width="16" height="16" rx="2"/><rect class="c-oft" x="418" y="140" width="16" height="16" rx="2"/><rect class="c-oft" x="436" y="140" width="16" height="16" rx="2"/><rect class="c-oft" x="454" y="140" width="16" height="16" rx="2"/><rect class="c-oft" x="472" y="140" width="16" height="16" rx="2"/>
+        <text class="t-xs" x="496" y="152">队列 A：只存“在 CommitLog 哪、多长”</text>
+        <rect class="c-oft" x="400" y="164" width="16" height="16" rx="2"/><rect class="c-oft" x="418" y="164" width="16" height="16" rx="2"/><rect class="c-oft" x="436" y="164" width="16" height="16" rx="2"/>
+        <text class="t-xs" x="460" y="176">队列 B</text>
+        <path class="e-ofd" d="M408 140 Q 404 110 412 78"/><path class="e-ofd" d="M426 140 Q 470 110 490 78"/><path class="e-ofd" d="M444 140 Q 520 112 594 78"/>
+        <text class="t-m" x="394" y="224">写入点只有一个，队列再多也是顺序写</text>
+        <text class="t-m" x="394" y="244">找一条：先查 ConsumeQueue，再回 CommitLog 取</text>
+      </svg>
+    </div>
+    <figcaption>两边都是只追加。区别在分不分文件：Kafka 每个分区一串文件，RocketMQ 把所有消息混写进一个大日志，再给每个队列建一份很小的索引。</figcaption>
+  </figure>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th></th><th class="me">Kafka</th><th>RocketMQ</th><th>RabbitMQ 经典队列</th><th>Redis Stream</th></tr></thead>
+      <tbody>
+        <tr><th>写入</th><td class="me">每个分区一串段文件，顺序追加</td><td>所有 topic 顺序写进一个 CommitLog</td><td>按队列存，消息确认后就删</td><td>内存里的基数树，靠 RDB / AOF 落盘</td></tr>
+        <tr><th>找一条</th><td class="me">选段 → 二分稀疏索引 → 扫几 KB</td><td>查 ConsumeQueue 拿到位置，再去 CommitLog 读</td><td>只从队头取，没有按位置查</td><td>按消息 ID 在树里查</td></tr>
+        <tr><th>删除</th><td class="me">按段删：超过保留时间或大小</td><td>按文件过期删</td><td>消费者确认（ack）后删</td><td><code>XTRIM</code> / <code>MAXLEN</code> 裁剪</td></tr>
+        <tr><th>发给消费者</th><td class="me"><span class="good">sendfile 零拷贝</span>（明文连接时）</td><td>mmap 映射文件后读写</td><td>没有零拷贝</td><td>从内存直接回复</td></tr>
+        <tr><th>分区 / 队列很多时</th><td class="me"><span class="mid">写入点变多，几千个以上要小心</span></td><td><span class="good">写入点只有一个</span></td><td>队列多时内存压力大</td><td>单个 Stream 只在一个节点上</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="rule">
+    <b>选择规则</b>
+    <ol>
+      <li>要回放历史、多个组各读一份、量大：选只追加日志（Kafka、RocketMQ，或 RabbitMQ 3.9 起的 Stream 类型）。</li>
+      <li>单个 Broker 上分区或队列特别多（几千到上万）：RocketMQ 的单 CommitLog 更稳；用 Kafka 就要控制分区数。</li>
+      <li>量不大、已经有 Redis、数据能全放内存：<a href="../redis/redis-stream-mq.html">Redis Stream</a> 就够。</li>
+    </ol>
+  </div>
+  <p class="pick-line"><b>本页学 Kafka 的存储：</b>段文件、稀疏索引、页缓存、sendfile。把这四样连起来，就能回答“Kafka 为什么快”。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>原理：一串段文件、一本稀疏目录、交给内核搬</h2>
+    <p class="lead">打个比方：一本只往后写的流水账，写满一本换新的（段）；每本前面有一张“每隔几页记一次页码”的目录（稀疏索引）；账本摊在操作系统的桌上（页缓存），有人来借，管理员直接把那几页递出去，不经过你的手（零拷贝）。比喻就到这里，下面看真东西。</p>
+  </div>
+
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 760 262" role="img" aria-label="分区目录里的三组段文件：每组有 .log、.index、.timeindex，文件名是这一段第一条消息的 offset；正在写的段的索引预分配了 10 MiB">
+        <text class="t-h" x="16" y="24">一个分区 = 一个目录 = 一串段（segment）</text>
+        <text class="t-mono" x="16" y="54">00000000000000000000</text>
+        <text class="t-m" x="16" y="72">第 1 段 · 写满了</text>
+        <text class="t-mono" x="272" y="54">00000000000000004672</text>
+        <text class="t-m" x="272" y="72">第 2 段 · 写满了</text>
+        <text class="t-mono" x="528" y="54">00000000000000018688</text>
+        <text class="t-of" x="528" y="72">第 5 段 · 活跃段，正在写</text>
+        <text class="t-h" x="508" y="122" text-anchor="middle">…</text>
+        <rect class="c-bkt" x="16" y="84" width="216" height="56" rx="6"/>
+        <rect class="c-bk" x="20" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="39" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="58" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="77" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="96" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="115" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="134" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="153" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="172" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="191" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="210" y="90" width="16" height="44" rx="2"/>
+        <path class="f-of" d="M123 84 l-5 -8 h10z"/><path class="f-of" d="M218 84 l-5 -8 h10z"/>
+        <rect class="c-bkt" x="272" y="84" width="216" height="56" rx="6"/>
+        <rect class="c-bk" x="276" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="295" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="314" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="333" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="352" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="371" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="390" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="409" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="428" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="447" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="466" y="90" width="16" height="44" rx="2"/>
+        <path class="f-of" d="M379 84 l-5 -8 h10z"/><path class="f-of" d="M474 84 l-5 -8 h10z"/>
+        <rect class="c-bkt" x="528" y="84" width="216" height="56" rx="6"/>
+        <rect class="c-bk" x="532" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="551" y="90" width="16" height="44" rx="2"/><rect class="c-bk" x="570" y="90" width="16" height="44" rx="2"/><rect class="c-new" x="589" y="90" width="16" height="44" rx="2"/>
+        <path class="f-of" d="M597 84 l-5 -8 h10z"/>
+        <path class="e-pd" d="M640 112 H 612" marker-end="url(#ah-pd)"/><text class="t-pd" x="646" y="116">新的一批追加到这</text>
+        <text class="t-s" x="16" y="160"><tspan font-weight="700">.log</tspan>：消息本体，一批（batch）一批追加</text>
+        <rect class="c-oft" x="16" y="172" width="216" height="22" rx="4"/>
+        <text class="t-monos" x="24" y="187">23→4485 · 43→8970 · …</text>
+        <text class="t-xs" x="16" y="210"><tspan font-weight="700">.index</tspan>：offset → 文件位置，8 字节一条，每 4 KB 一条</text>
+        <rect class="c-oft" x="16" y="220" width="160" height="18" rx="4"/>
+        <text class="t-xs" x="16" y="254"><tspan font-weight="700">.timeindex</tspan>：时间戳 → offset，12 字节一条</text>
+        <rect class="c-oft" x="272" y="172" width="216" height="22" rx="4"/>
+        <text class="t-monos" x="280" y="187">4695→4485 · 4715→8970 · …</text>
+        <text class="t-xs" x="272" y="210">写满后截短：1864 字节 = 233 条</text>
+        <rect class="c-oft" x="272" y="220" width="120" height="18" rx="4"/>
+        <rect class="c-oft" x="528" y="172" width="216" height="22" rx="4"/><rect class="o-of" x="528" y="172" width="216" height="22" rx="4" stroke-dasharray="5 3"/>
+        <text class="t-monos" x="536" y="187">18711→4485 · 18731→8970 …</text>
+        <text class="t-of" x="528" y="210">一创建就预分配 10 MiB</text>
+        <rect class="c-oft" x="528" y="220" width="216" height="18" rx="4"/>
+        <text class="t-xs" x="528" y="254">滚到下一段时再截短</text>
+      </svg>
+    </div>
+    <figcaption>文件名和数字都来自第⑤步的实测：段最大 1 MiB 时，每段装 4672 条。.log 上的小三角是被索引记下的位置，大约每 5 批（4 KB 多一点）一个。</figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 760 300" role="img" aria-label="写入路径：生产者发给 Broker，Broker 用 write 写进页缓存就返回，操作系统后台刷盘；读取路径：消费者发 fetch，Broker 调 sendfile，内核直接把页缓存里的数据交给网卡发出，数据不经过 JVM">
+        <text class="t-m" x="16" y="24">用户态</text>
+        <rect class="b-kern" x="8" y="132" width="744" height="102" rx="14"/>
+        <line class="e-sep" x1="8" y1="124" x2="752" y2="124"/>
+        <text class="t-m" x="16" y="152">内核</text>
+        <rect class="b-pd" x="40" y="40" width="124" height="56" rx="12"/>
+        <text class="t-h" x="102" y="64" text-anchor="middle">生产者</text>
+        <text class="t-m" x="102" y="84" text-anchor="middle">produce 请求</text>
+        <rect class="b-bk" x="250" y="30" width="230" height="76" rx="12"/>
+        <text class="t-h" x="365" y="54" text-anchor="middle">Broker（JVM）</text>
+        <text class="t-s" x="365" y="74" text-anchor="middle">写：校验、分配 offset</text>
+        <text class="t-g2" x="365" y="94" text-anchor="middle">读：只下命令，数据不进来</text>
+        <rect class="b-g2" x="612" y="40" width="124" height="56" rx="12"/>
+        <text class="t-h" x="674" y="64" text-anchor="middle">消费者</text>
+        <text class="t-m" x="674" y="84" text-anchor="middle">fetch 请求</text>
+        <rect class="b-cg" x="220" y="152" width="300" height="64" rx="12"/>
+        <text class="t-h" x="370" y="178" text-anchor="middle">页缓存（内核内存）</text>
+        <text class="t-m" x="370" y="200" text-anchor="middle">刚写的、刚读过的都在这</text>
+        <rect class="b-g2" x="612" y="152" width="124" height="64" rx="12"/>
+        <text class="t-h" x="674" y="180" text-anchor="middle">网卡</text>
+        <text class="t-m" x="674" y="200" text-anchor="middle">发给消费者</text>
+        <rect class="b-neu" x="220" y="250" width="300" height="42" rx="10"/>
+        <text class="t-b" x="370" y="276" text-anchor="middle">磁盘：段文件</text>
+        <line class="e-pd" x1="166" y1="68" x2="246" y2="68" marker-end="url(#ah-pd)"/>
+        <text class="t-pd" x="206" y="60" text-anchor="middle">① 发</text>
+        <line class="e-pd" x1="300" y1="108" x2="300" y2="148" marker-end="url(#ah-pd)"/>
+        <text class="t-pd" x="292" y="120" text-anchor="end">② write()，进了页缓存就返回</text>
+        <line class="e-dash" x1="290" y1="218" x2="290" y2="246" marker-end="url(#ah-mut)"/>
+        <text class="t-m" x="282" y="238" text-anchor="end">③ 操作系统后台刷盘</text>
+        <line class="e-dash" x1="460" y1="248" x2="460" y2="220" marker-end="url(#ah-mut)"/>
+        <text class="t-m" x="468" y="238">没命中才读盘</text>
+        <line class="e-ink" x1="608" y1="60" x2="484" y2="60" marker-end="url(#ah-ink)"/>
+        <text class="t-m" x="546" y="52" text-anchor="middle">④ fetch</text>
+        <path class="e-dash" d="M440 108 L 440 146"/>
+        <text class="t-m" x="448" y="140">⑤ 调 sendfile</text>
+        <line class="e-g2" x1="522" y1="184" x2="606" y2="184" marker-end="url(#ah-g2)"/>
+        <text class="t-g2" x="564" y="176" text-anchor="middle">⑥ 直接送</text>
+        <line class="e-g2" x1="674" y1="150" x2="674" y2="100" marker-end="url(#ah-g2)"/>
+      </svg>
+    </div>
+    <figcaption>蓝线是写，棕线是读。写入只到页缓存为止，读取的数据从页缓存直接到网卡，两条路都不在 JVM 里存消息。</figcaption>
+  </figure>
+
+  <div class="facts">
+    <div class="fact" data-role="bk"><h4>① 分段</h4><p>一个分区是一串段文件，文件名是这段第一条消息的 offset（20 位补零）。写满 1 GiB（<code>segment.bytes</code>）或满 7 天（<code>segment.ms</code>）就换新段，只有最后一段在写。</p><span class="to6">按段删除 → <a href="#pit-ret">⑥ 坑 1</a></span></div>
+    <div class="fact" data-role="of"><h4>② 稀疏索引</h4><p><code>.index</code> 每攒够 4 KB 数据（<code>index.interval.bytes</code>）记一条“offset → 文件位置”。找一条消息：选段 → 二分索引 → 从记下的位置往后扫。按时间找先查 <code>.timeindex</code>。</p><span class="to6">索引格式、mmap → <a href="#deep-index">⑥ 第三圈</a></span></div>
+    <div class="fact" data-role="cg"><h4>③ 页缓存</h4><p>写入只是 <code>write()</code> 进页缓存就返回，默认不 fsync，刷盘交给操作系统。消费者读刚写的数据，基本都直接从页缓存拿。</p><span class="to6">回放拖慢实时 → <a href="#pit-replay">⑥ 坑 2</a></span></div>
+    <div class="fact" data-role="g2"><h4>④ 零拷贝</h4><p>明文连接下，Broker 对 <code>.log</code> 里的一段调用 <code>sendfile</code>，内核把页缓存里的数据直接交给网卡，不拷进 JVM。</p><span class="to6">开 TLS 就没了 → <a href="#pit-tls">⑥ 坑 4</a></span></div>
+  </div>
+
+  <div class="stage" id="lk" tabindex="0" aria-label="按 offset 查找一条消息的分步演示，可以用左右方向键切换">
+    <div class="st-top"><h3>动手：按 offset 找一条消息</h3><span class="st-pos" id="lkPos"></span></div>
+    <div class="row">
+      <label class="lbl" for="lkT">要找的 offset</label><input class="numin" id="lkT" type="number" min="0" step="1" value="653">
+      <button class="btn" id="lkRand">换一个</button>
+      <span class="lbl">索引间隔 <code>index.interval.bytes</code></span>
+      <span class="seg-btns" id="lkIv"><button data-v="1024" aria-pressed="false">1 KB</button><button data-v="4096" aria-pressed="true">4 KB（默认）</button><button data-v="16384" aria-pressed="false">16 KB</button></span>
+    </div>
+    <p class="cap-txt" id="lkCap" aria-live="polite"></p>
+    <div class="svg-scroll"><svg class="sv" id="lkSvg" viewBox="0 0 720 300" role="img" aria-label="一个缩小版分区的 4 个段、当前段的稀疏索引和 .log 文件里的批，标出二分查找看过的索引条目和顺序扫描过的批"></svg></div>
+    <div class="ctrl">
+      <button class="btn" id="lkPrev">← 上一步</button>
+      <button class="btn primary" id="lkNext">下一步 →</button>
+      <button class="btn" id="lkAuto">▶ 自动播放</button>
+      <button class="btn" id="lkReset">从头来</button>
+    </div>
+    <p class="real" id="lkReal"></p>
+  </div>
+  <p class="tip">为了画得下，这个分区每段只有 32 KB。查找规则和 Kafka 一样：攒够 <code>index.interval.bytes</code> 才记一条索引，索引记的是“某一批的最后一个 offset → 这一批在文件里的起始位置”（第⑤步实测的索引就是这样）。</p>
+
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><span class="n">命令行</span><span>建 topic 时定存储参数，翻开段文件看</span></div>
+<pre><code><span class="cm"># 建 topic 时定存储参数（下面两个就是默认值）</span>
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create \
+  --topic order-created --partitions 3 \
+  --config segment.bytes=1073741824 \
+  --config retention.ms=604800000
+
+<span class="cm"># 翻开段文件和索引（目录在 log.dirs 下）</span>
+bin/kafka-dump-log.sh --files \
+  &lt;分区目录&gt;/00000000000000000000.index</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">Java</span><span>按 offset 跳、按时间跳</span></div>
+<pre><code>TopicPartition tp = new TopicPartition("order-created", 0);
+consumer.assign(List.of(tp));
+
+<span class="cm">// 按 offset 跳：Broker 用 .index 定位</span>
+consumer.seek(tp, 4730L);
+
+<span class="cm">// 按时间跳：先查 .timeindex 拿到 offset，再走 .index</span>
+long ts = Instant.now().minus(Duration.ofHours(1)).toEpochMilli();
+OffsetAndTimestamp hit = consumer.offsetsForTimes(Map.of(tp, ts)).get(tp);
+if (hit != null) consumer.seek(tp, hit.offset());</code></pre>
+    </div>
+  </div>
+  <p class="note-box"><b>放到第⑥步</b><span>索引间隔调大调小的代价、索引为什么预分配 10 MiB、开 TLS 后零拷贝去哪了、retention 为什么不准、页缓存要留多大。这一步先记住四件事：分段、稀疏索引、页缓存、sendfile。</span></p>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>跑起来：把一个分区翻开看</h2>
+    <p class="lead">沿用<a href="kafka-reliability-group.html#s5">上一页第⑤步</a>的单节点 Kafka（解压版或 Docker 都行）。这一步不写业务代码，用 Kafka 自带的命令把段文件、索引、页缓存、sendfile 挨个看到，最后用一段 Java 摸一下零拷贝。下面的输出都是本机实测，只删了不相关的列。</p>
+  </div>
+
+  <div class="steps5">
+    <div class="codebox">
+      <div class="code-bar"><span class="n">1</span><b>建一个段很小的 topic，灌 2 万条</b><span>命令都在 Kafka 解压目录下执行；Docker 版在前面加 <code>docker exec -it kafka /opt/kafka/</code></span></div>
+<pre><code><span class="cm"># 段大小设成允许的最小值 1 MiB，4 MB 数据就能切出好几段</span>
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create \
+  --topic order-demo --partitions 1 --config segment.bytes=1048576
+
+<span class="cm"># 每条 200 字节；batch.size=1024 让每批只装 4 条，方便看稀疏索引</span>
+bin/kafka-producer-perf-test.sh --topic order-demo \
+  --num-records 20000 --record-size 200 --throughput -1 \
+  --producer-props bootstrap.servers=localhost:9092 batch.size=1024 linger.ms=0</code></pre>
+<pre class="console"><span class="w">Created topic order-demo.</span>
+<span class="w">20000 records sent</span>, …</pre>
+    </div>
+    <p class="note-box"><b>实测</b><span>把 <code>segment.bytes</code> 设成 102400（100 KB）会直接报错：<code>Invalid value 102400 for configuration segment.bytes: Value must be at least 1048576</code>。这是 4.0 加的限制，3.x 最小只要 14 字节。</span></p>
+
+    <div class="codebox">
+      <div class="code-bar"><span class="n">2</span><b>找到分区目录，看看里面有什么</b></div>
+<pre><code><span class="cm"># logDir 就是分区目录的上一级；解压版默认是 /tmp/kraft-combined-logs</span>
+bin/kafka-log-dirs.sh --bootstrap-server localhost:9092 --describe --topic-list order-demo
+ls -l &lt;logDir&gt;/order-demo-0/</code></pre>
+<pre class="console">{"partition":"order-demo-0","size":4485000, … ,"logDir":"…/data"}
+
+    1864  <b>00000000000000000000</b>.index
+ 1047696  <b>00000000000000000000</b>.log
+     708  00000000000000000000.timeindex
+    1864  <b>00000000000000004672</b>.index
+ 1047696  <b>00000000000000004672</b>.log
+      56  00000000000000004672.snapshot
+     456  00000000000000004672.timeindex
+          …（9344、14016 两段同上）
+<span class="w">10485760</span>  <b>00000000000000018688</b>.index      <span class="cm">← 活跃段：索引预分配 10 MiB</span>
+  294216  <b>00000000000000018688</b>.log
+      56  00000000000000018688.snapshot
+<span class="w">10485756</span>  00000000000000018688.timeindex
+       8  leader-epoch-checkpoint
+      43  partition.metadata</pre>
+    </div>
+    <div class="later">
+      <p class="tip">5 段，文件名是每段第一条的 offset：0、4672、9344……每段 4672 条、1047696 字节，再加一批（897 字节）就超过 1 MiB，所以滚到新段。</p>
+      <p class="tip">写满的段 <code>.index</code> 只有 1864 字节，也就是 233 条；正在写的段一创建就是 10485760 字节，滚段时才截短。<code>.snapshot</code> 是生产者状态（幂等去重用），<code>leader-epoch-checkpoint</code> 就是<a href="kafka-reliability-group.html">上一页</a>讲的 Leader Epoch。</p>
+    </div>
+
+    <div class="codebox">
+      <div class="code-bar"><span class="n">3</span><b>翻开第 2 段的索引和日志，手算 offset 4730 在哪</b></div>
+<pre><code>cd &lt;logDir&gt;/order-demo-0
+&lt;kafka&gt;/bin/kafka-dump-log.sh --files 00000000000000004672.index | head -4
+&lt;kafka&gt;/bin/kafka-dump-log.sh --files 00000000000000004672.log  | head -16</code></pre>
+<pre class="console">offset: 4695 position: 4485
+<b>offset: 4715 position: 8970</b>        <span class="cm">← 不超过 4730 的最大一条</span>
+offset: 4735 position: 13455
+
+baseOffset: 4672 lastOffset: 4675 count: 4 position: 0     size: 897
+baseOffset: 4676 lastOffset: 4679 count: 4 position: 897   size: 897
+…
+baseOffset: 4692 lastOffset: <span class="w">4695</span> count: 4 position: <span class="w">4485</span>  size: 897   <span class="cm">← 第 1 条索引指着这批</span>
+…
+<b>baseOffset: 4712 lastOffset: 4715 count: 4 position: 8970</b>  size: 897   <span class="cm">← 从这开始扫</span>
+baseOffset: 4716 lastOffset: 4719 count: 4 position: 9867  size: 897
+baseOffset: 4720 lastOffset: 4723 count: 4 position: 10764 size: 897
+baseOffset: 4724 lastOffset: 4727 count: 4 position: 11661 size: 897
+<b>baseOffset: 4728 lastOffset: 4731 count: 4 position: 12558</b> size: 897   <span class="cm">← 4730 在这一批</span></pre>
+    </div>
+    <ol class="tip" style="margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:4px">
+      <li>选段：4672 ≤ 4730 &lt; 9344，在 <code>00000000000000004672</code> 这一段。</li>
+      <li>查索引：不超过 4730 的最大一条是 <code>4715 → 8970</code>。注意它记的是 4712–4715 这一批的<b>最后一个</b> offset 和这一批的<b>起始</b>位置。</li>
+      <li>扫日志：从第 8970 字节往后，一批一批看 lastOffset，跳过 4 批，第 5 批 4728–4731 包含 4730，它在第 12558 字节。</li>
+      <li>验证：<code>kafka-console-consumer.sh --topic order-demo --partition 0 --offset 4730 --max-messages 1 --property print.offset=true --property print.value=false</code> 打印 <code>Offset:4730</code>。同一时间 strace 抓到 Broker 调的是 <code>sendfile(…, 00000000000000004672.log, [12558], …)</code>，正好从这一批开始发。</li>
+    </ol>
+
+    <div class="codebox">
+      <div class="code-bar"><span class="n">4</span><b>看页缓存和 sendfile</b><span><code>fincore</code> 在 util-linux 里，strace 要 root 权限；Docker 镜像里一般没有这两个命令，这一步用解压版做</span></div>
+<pre><code><span class="cm"># 段文件有多少在页缓存里（RES）</span>
+fincore &lt;logDir&gt;/order-demo-0/*.log
+
+<span class="cm"># 盯着 Broker 的 sendfile；另开一个终端从头消费</span>
+sudo strace -f -y -e trace=sendfile -p &lt;Broker 进程号&gt;
+bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic order-demo --from-beginning --max-messages 20000 &gt; /dev/null</code></pre>
+<pre class="console">  RES PAGES    SIZE FILE
+<b>   1M   256 1023.1K</b> order-demo-0/00000000000000000000.log
+<b>   1M   256 1023.1K</b> order-demo-0/00000000000000004672.log
+   …
+<b> 288K    72  287.3K</b> order-demo-0/00000000000000018688.log
+
+sendfile(243&lt;socket:[10561219]&gt;, 247&lt;…/order-demo-0/<b>00000000000000004672.log</b>&gt;, [12558] =&gt; [264460], 1035138) = 251902
+sendfile(243&lt;socket:[10561219]&gt;, 247&lt;…/order-demo-0/00000000000000004672.log&gt;, [264460] =&gt; [497755], 783236) = 233295
+…</pre>
+    </div>
+    <div class="later">
+      <p class="tip">RES 等于 SIZE：刚写进去的数据全在页缓存里，这时候消费不用读盘。</p>
+      <p class="tip">sendfile 的参数是：socket、段文件、从文件第几个字节开始、最多发多少。本机从头读完 2 万条（4.4 MB）一共 <b>25 次</b> sendfile；同样的读法换成 TLS 端口，<b>0 次</b>。本机是启动 Broker 时套上 strace 抓的，加了 <code>-y</code> 显示文件名。</p>
+    </div>
+
+    <div class="codebox">
+      <div class="code-bar"><span class="n">5</span><b>Java 里摸一下零拷贝：同一个 1 GiB 文件发给 socket，两种写法比 CPU</b><span><code>ZeroCopyDemo.java</code>，JDK 11 以上直接 <code>java ZeroCopyDemo.java</code></span></div>
+<pre><code>import java.io.*;
+import java.lang.management.ManagementFactory;
+import java.net.*;
+import java.nio.channels.*;
+import java.nio.file.*;
+
+public class ZeroCopyDemo {
+    public static void main(String[] args) throws Exception {
+        Path file = Path.of("big.bin");
+        if (Files.notExists(file)) {                          <span class="cm">// 准备一个 1 GiB 的文件</span>
+            try (OutputStream out = Files.newOutputStream(file)) {
+                byte[] mb = new byte[1 &lt;&lt; 20];
+                for (int i = 0; i &lt; 1024; i++) out.write(mb);
+            }
+        }
+        for (int round = 1; round &lt;= 3; round++) {
+            send("read+write", file, false);
+            send("transferTo", file, true);
+        }
+    }
+
+    static void send(String name, Path file, boolean zeroCopy) throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            Thread sink = new Thread(() -&gt; {                  <span class="cm">// 接收端：读到就扔</span>
+                try (Socket s = server.accept(); InputStream in = s.getInputStream()) {
+                    byte[] b = new byte[64 * 1024];
+                    while (in.read(b) != -1) { }
+                } catch (IOException e) { throw new UncheckedIOException(e); }
+            });
+            sink.start();
+            var mx = ManagementFactory.getThreadMXBean();
+            long cpu0 = mx.getCurrentThreadCpuTime(), t0 = System.nanoTime();
+            if (zeroCopy) {                                   <span class="cm">// 零拷贝：FileChannel.transferTo → sendfile</span>
+                try (FileChannel ch = FileChannel.open(file);
+                     SocketChannel sock = SocketChannel.open(new InetSocketAddress("localhost", server.getLocalPort()))) {
+                    long size = ch.size();
+                    for (long pos = 0; pos &lt; size; ) pos += ch.transferTo(pos, size - pos, sock);
+                }
+            } else {                                          <span class="cm">// 老办法：读进 byte[]，再写给 socket</span>
+                try (InputStream in = Files.newInputStream(file);
+                     Socket sock = new Socket("localhost", server.getLocalPort());
+                     OutputStream out = sock.getOutputStream()) {
+                    byte[] buf = new byte[64 * 1024];
+                    for (int n; (n = in.read(buf)) != -1; ) out.write(buf, 0, n);
+                }
+            }
+            sink.join();
+            System.out.printf("%s  发送线程 CPU %4d ms  总耗时 %4d ms%n", name,
+                    (mx.getCurrentThreadCpuTime() - cpu0) / 1_000_000, (System.nanoTime() - t0) / 1_000_000);
+        }
+    }
+}</code></pre>
+<pre class="console">read+write  发送线程 CPU  552 ms  总耗时 1235 ms   <span class="cm">← 第一轮有 JIT 预热</span>
+transferTo  发送线程 CPU   57 ms  总耗时  484 ms
+<span class="w">read+write  发送线程 CPU  415 ms  总耗时  717 ms</span>
+<b>transferTo  发送线程 CPU   57 ms  总耗时  299 ms</b>
+<span class="w">read+write  发送线程 CPU  421 ms  总耗时  590 ms</span>
+<b>transferTo  发送线程 CPU   60 ms  总耗时  310 ms</b></pre>
+    </div>
+    <p class="tip">本机 JDK 21、2 核。发送 1 GiB，发送线程的 CPU 从约 420 ms 降到约 58 ms，少了 7 倍左右。差在拷贝：老办法要把数据从页缓存拷进 <code>byte[]</code>，再拷回 socket 缓冲区；<code>transferTo</code> 在 Linux 上就是 sendfile，数据不出内核。Kafka 明文连接发数据走的就是这个方法。</p>
+
+    <div class="done-box"><b>到这里已经能交差了：</b>能画出一个分区的段文件和索引，能说清“找一条消息 = 选段 + 二分索引 + 往后扫几 KB”，能用 <code>kafka-dump-log.sh</code>、<code>fincore</code>、<code>strace</code> 现场验证，还能用 Java 演示零拷贝省了什么。面试和日常排查够用了。</div>
+    <div class="todo">
+      <b>已知还没处理的细节（都在第⑥步）</b>
+      <ul>
+        <li>retention 设了 7 天，为什么会留 12 天？→ <a href="#pit-ret">坑 1</a></li>
+        <li>回放历史为什么拖慢实时消费？页缓存该留多大？→ <a href="#pit-replay">坑 2</a>、<a href="#pc">页缓存实验台</a></li>
+        <li>开 TLS 后零拷贝去哪了？→ <a href="#pit-tls">坑 4</a>、<a href="#zc">零拷贝实验台</a></li>
+        <li>要不要每条都刷盘？→ <a href="#pit-flush">坑 5</a></li>
+        <li>分区开多少才不伤存储？→ <a href="#pit-many">坑 6</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>细节 · 规范 · 优化</h2>
+    <p class="lead">按圈往里走：第一圈是不知道就出事的坑，第二圈是团队里该怎么配，第三圈是零拷贝和页缓存的细账、索引的源码细节和版本差异。带 <span class="tag-real">实测</span> 的条目都在本机跑过。</p>
+  </div>
+
+  <div class="sub" id="round1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项：不知道就出事</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-ret"><b><em>坑 1</em>retention 设了 7 天，磁盘上有 12 天前的数据 <span class="tag-real">实测</span></b>
+        <dl>
+          <dt>现象</dt><dd>流量小的 topic，老数据迟迟不删，磁盘一直涨。</dd>
+          <dt>原因</dt><dd>删除按段来，要等段里<b>最新</b>一条超过 <code>retention.ms</code> 才删整段。正在写的段要满 7 天（<code>segment.ms</code>）或写满 1 GiB 才滚出来。一段攒了 7 天，再等 7 天才删，最老的消息最多活 14 天。另外每 5 分钟才检查一次（<code>log.retention.check.interval.ms</code>），删前先改名，1 分钟后才真删（<code>file.delete.delay.ms</code>）。</dd>
+          <dt>实测</dt><dd><code>retention.ms=60000</code>，每 10 秒写一条：4 分多钟后第 1 条还在，停写 1 分多钟后才整段删掉。再加 <code>segment.ms=20000</code>，只留最近 70 秒左右。</dd>
+          <dt>做法</dt><dd class="fix">流量小的 topic 设 <code>segment.ms</code>（比如 1 天）；磁盘按“保留时长 + 一个段”预留；合规上“到点必须删”的数据别指望 retention。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-replay"><b><em>坑 2</em>报表组一回放，实时消费跟着变慢 <span class="tag-real">实测</span></b>
+        <dl>
+          <dt>现象</dt><dd>回放开始后磁盘读 IO 飙升，实时组的 lag 上涨，生产延迟也可能跟着变高。</dd>
+          <dt>原因</dt><dd>实时组读刚写的数据，在页缓存里；回放读几天前的段，只能读盘，读进来的旧数据还会占页缓存，把新数据挤出去。</dd>
+          <dt>实测</dt><dd>写入 963 MB 后把页缓存清掉再从头读：Broker 从磁盘读了 963 MB（<code>/proc/&lt;pid&gt;/io</code> 的 <code>read_bytes</code>），73 MB/s；马上再读一遍：磁盘读 0 MB，152 MB/s。</dd>
+          <dt>做法</dt><dd class="fix">给回放的客户端配限速配额（<code>consumer_byte_rate</code>），错开高峰；大规模回放从 follower 读（<code>replica.selector.class</code> + <code>client.rack</code>）或上分层存储。实时组的落后时间要远小于下面算出的“热窗口”。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-heap"><b><em>坑 3</em>Broker 的堆开得越大越好？</b>
+        <dl>
+          <dt>现象</dt><dd>32 GB 的机器给 Broker 开了 24 GB 堆，结果磁盘读变多，消费反而慢了。</dd>
+          <dt>原因</dt><dd>消息不缓存在堆里。堆占走的内存，页缓存就用不上；索引的 mmap、发送的 sendfile 也都靠页缓存。</dd>
+          <dt>做法</dt><dd class="fix">堆按官方文档的参考配置给 6 GB 左右（<code>-Xmx6g -Xms6g</code>，G1），剩下的内存留给页缓存。用下面的<a href="#pc">页缓存实验台</a>估一下够不够。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-tls"><b><em>坑 4</em>开了 TLS，Broker CPU 涨了好几倍 <span class="tag-real">实测</span></b>
+        <dl>
+          <dt>现象</dt><dd>读流量不变，开 TLS 后 Broker CPU 明显上涨，吞吐下降。</dd>
+          <dt>原因</dt><dd>加密只能在用户态做。Kafka 的 <code>SslTransportLayer</code> 先把数据从页缓存读进 JVM 的直接缓冲区，用 <code>SSLEngine</code> 加密，再写给 socket，用不上 sendfile。官方文档也写明 SSL 时不用 sendfile。</dd>
+          <dt>实测</dt><dd>热读同一份 963 MB：明文 Broker CPU 约 1.0 秒，TLS 约 5.9 秒；消费速度 152 MB/s 降到 86 MB/s。strace 计数：明文 25 次 sendfile，TLS 0 次。</dd>
+          <dt>做法</dt><dd class="fix">容量规划把加密的 CPU 算进去；不同 listener 可以配不同协议，内网可信链路走明文、对外的走 TLS；CPU 选带 AES 指令的。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-flush"><b><em>坑 5</em>为了不丢消息，设成每条都刷盘 <span class="tag-real">实测</span></b>
+        <dl>
+          <dt>现象</dt><dd>吞吐掉一大截，延迟抖动。</dd>
+          <dt>原因</dt><dd><code>flush.messages=1</code> 让每次追加后都 fsync。fsync 会阻塞写，操作系统也没法再合并、排序写入。</dd>
+          <dt>实测</dt><dd>10 万条 1 KB：默认 16.6 MB/s，<code>flush.messages=1</code> 只有 4.5 MB/s。默认配置下生产 2 万条，<code>.log</code> 只在滚段时 fsync 了 4 次（每段一次），正在写的段一次没刷。</dd>
+          <dt>做法</dt><dd class="fix">保持默认，不主动 fsync。不丢消息靠 3 副本 + <code>acks=all</code> + <code>min.insync.replicas=2</code>（<a href="kafka-reliability-group.html">上一页</a>），官方文档也推荐默认刷盘设置。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-many"><b><em>坑 6</em>分区太多，Broker 起不来或重启很慢</b>
+        <dl>
+          <dt>现象</dt><dd>报 <code>Too many open files</code> 或 <code>Map failed</code>；异常关机后要恢复很久。</dd>
+          <dt>原因</dt><dd>每段有 <code>.log</code>、<code>.index</code>、<code>.timeindex</code> 三个文件，索引用 mmap。官方文档按每段 2 个内存映射算，会撞上 <code>vm.max_map_count</code>（很多发行版默认 65530 左右）。异常关机后，没确认刷过盘的段要逐批校验 CRC、重建索引。</dd>
+          <dt>做法</dt><dd class="fix">文件句柄至少 100000（文档建议）；调大 <code>vm.max_map_count</code>；控制每个 Broker 的分区数；<code>num.recovery.threads.per.data.dir</code> 按磁盘数调大（4.x 默认 2，3.x 默认 1）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-ts"><b><em>坑 7</em>带着旧时间戳写进来，转眼就被删了 <span class="tag-real">实测</span></b>
+        <dl>
+          <dt>现象</dt><dd>迁移、回放数据时保留了原始时间戳，写进去没多久就没了；或者时间戳在未来，直接写不进去。</dd>
+          <dt>原因</dt><dd>按时间删看的是消息里的时间戳，默认是生产者填的 CreateTime。8 天前的时间戳，段的最新时间就是 8 天前，下次检查就删。4.x 默认拒收比 Broker 时钟晚 1 小时以上的消息（<code>message.timestamp.after.max.ms</code>），3.x 默认不限。</dd>
+          <dt>实测</dt><dd>时间戳是 8 天前的一条写成功（offset 0），25 秒后最早 offset 变成 1；时间戳是 2 小时后的一条报 <code>InvalidTimestampException</code>。</dd>
+          <dt>做法</dt><dd class="fix">迁移、回放时用当前时间，原始时间放进消息体或 header；或者 topic 设 <code>message.timestamp.type=LogAppendTime</code>，用 Broker 写入的时间。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-seg"><b><em>坑 8</em>segment.bytes 调得太小或太大 <span class="tag-real">实测</span></b>
+        <dl>
+          <dt>现象</dt><dd>太小：文件数爆炸，句柄和映射跟着涨。太大：删除粒度粗，磁盘回收慢。</dd>
+          <dt>实测</dt><dd>4.x 设 100 KB 直接报错，最小 1 MiB；3.x 最小只要 14 字节，所以老集群上能看到很小的段。</dd>
+          <dt>做法</dt><dd class="fix">默认 1 GiB 大多合适。想让小 topic 删得及时，调 <code>segment.ms</code>，别把 <code>segment.bytes</code> 调得很小。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="round2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范：团队里怎么配</h3></div>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">topic</span><span>存储相关配置模板</span></div>
+<pre><code><span class="cm"># 普通业务 topic：段大小用默认，保留时间按业务定</span>
+retention.ms=604800000      <span class="cm"># 7 天</span>
+segment.bytes=1073741824    <span class="cm"># 1 GiB（默认）</span>
+
+<span class="cm"># 每天写不满 1 GiB 的小 topic，再加：</span>
+segment.ms=86400000         <span class="cm"># 每天滚一段，删除最多晚 1 天</span>
+
+<span class="cm"># 保持默认，不要改：</span>
+<span class="cm"># flush.messages / flush.ms    不主动 fsync，靠副本</span>
+<span class="cm"># index.interval.bytes=4096    索引大小和扫描长度的平衡点</span>
+<span class="cm"># compression.type=producer    原样存生产者压好的批</span></code></pre>
+      </div>
+      <div class="mini-out">
+        <b>磁盘容量这样估</b>
+        <p class="tip" style="margin-top:6px">写入速率 × 保留时长 × 副本数，再加余量。比如订单写入 5 MB/s、保留 7 天、3 副本：</p>
+<pre><code>5 MB/s × 604800 s ≈ 2.9 TiB    <span class="cm"># 一份</span>
+2.9 TiB × 3 副本   ≈ 8.7 TiB    <span class="cm"># 整个集群</span></code></pre>
+        <p class="tip">再留两块余量：每个分区最多多留一个段（坑 1），磁盘水位别超过 70%～80%。</p>
+      </div>
+    </div>
+    <div class="rules-list">
+      <div class="rl"><b>内存先留给页缓存</b><p>堆 6 GB 左右；页缓存至少装得下“写入速率 × 30 秒”，这是官方文档给的估算法。实时消费者落后得越多，要的越多。</p></div>
+      <div class="rl"><b>数据盘单独用</b><p>不和应用日志、系统盘混用。文件系统用 XFS 或 ext4，官方文档的对比测试里 XFS 更好。</p></div>
+      <div class="rl"><b>系统参数一次配好</b><p><code>ulimit -n</code> 至少 100000；调大 <code>vm.max_map_count</code>；常见做法是关掉 swap 或把 <code>vm.swappiness</code> 调到很低。</p></div>
+      <div class="rl"><b>回放和实时分开管</b><p>回放用单独的 client id 配限速；大回放走 follower 读或分层存储；回放前看一眼页缓存够不够。</p></div>
+      <div class="rl"><b>盯这三个指标</b><p>分区磁盘占用（<code>kafka-log-dirs.sh --describe</code>）；磁盘读 IO（<code>iostat</code> 的 rMB/s，以实时消费为主时应接近 0）；消费 lag 换算成时间后和热窗口比。</p></div>
+      <div class="rl"><b>别碰的开关</b><p>不改刷盘参数、不调小 <code>index.interval.bytes</code>、不把 <code>segment.bytes</code> 调到几 MB，除非有压测数据撑着。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="round3">
+    <div class="round"><span class="rb">第三圈</span><h3>优化和深处：拷贝细账、页缓存、索引源码</h3></div>
+
+    <div class="stage" id="zc" tabindex="0" aria-label="一次发送中数据在磁盘、页缓存、应用缓冲区、socket 缓冲区、网卡之间怎么走的分步演示，可以用左右方向键切换">
+      <div class="st-top"><h3>零拷贝实验台：一次发送，数据走了几趟</h3><span class="st-pos" id="zcPos"></span></div>
+      <div class="row">
+        <span class="lbl">发送方式</span>
+        <span class="seg-btns" id="zcMode"><button data-v="rw" aria-pressed="true">read + write</button><button data-v="mmap" aria-pressed="false">mmap + write</button><button data-v="sendfile" aria-pressed="false">sendfile（Kafka 明文）</button><button data-v="tls" aria-pressed="false">Kafka 开 TLS</button></span>
+      </div>
+      <div class="row">
+        <span class="lbl">数据在不在页缓存</span>
+        <span class="seg-btns" id="zcCache"><button data-v="0" aria-pressed="true">不在，要读盘</button><button data-v="1" aria-pressed="false">在（追尾读）</button></span>
+      </div>
+      <p class="cap-txt" id="zcCap" aria-live="polite"></p>
+      <div class="svg-scroll"><svg class="sv" id="zcSvg" viewBox="0 0 720 268" role="img" aria-label="磁盘、页缓存、socket 缓冲区、网卡在内核里，应用缓冲区在用户态；箭头表示每一步数据从哪拷到哪"></svg></div>
+      <div class="tiles" id="zcTiles"></div>
+      <div class="ctrl">
+        <button class="btn" id="zcPrev">← 上一步</button>
+        <button class="btn primary" id="zcNext">下一步 →</button>
+        <button class="btn" id="zcAuto">▶ 自动播放</button>
+        <button class="btn" id="zcReset">从头来</button>
+      </div>
+    </div>
+    <div class="deep">
+      <div class="dp" data-role="g2"><h4>Java 和 Kafka 源码里对应什么</h4><ul>
+        <li><code>FileChannel.transferTo</code> 在 Linux 上走 sendfile；<code>FileChannel.map</code> 就是 mmap，返回 <code>MappedByteBuffer</code>。</li>
+        <li>Kafka 4.1.2 的字节码里：<code>PlaintextTransportLayer.transferFrom</code> 调的是 <code>FileChannel.transferTo</code>；<code>SslTransportLayer.transferFrom</code> 先 <code>ByteBuffer.allocateDirect</code>，把文件读进来再加密。</li>
+        <li>老办法在 Java 里比教科书还多拷一次：堆里的 <code>byte[]</code> 不能直接交给系统调用，JDK 先读进一块本地内存，再拷进数组。⑤ 里 read+write 多花的 CPU 有一部分在这。</li>
+      </ul></div>
+      <div class="dp" data-role="pd"><h4>零拷贝只在“读”这一侧</h4><ul>
+        <li>生产者发来的数据要进 JVM：校验 CRC、分配 offset，然后 <code>write()</code> 进页缓存。这一侧没有零拷贝，靠的是批量和顺序写。</li>
+        <li>批量：一批（RecordBatch）共用一个批头，⑤ 里 4 条 200 字节的消息一批 897 字节。topic 的 <code>compression.type=producer</code>（默认）时，Broker 原样存生产者压好的批，消费者拿到的也是同一份压缩数据。</li>
+        <li>Netty 说的“零拷贝”是另一回事：<code>CompositeByteBuf</code>、<code>slice</code> 是在 JVM 里少拷贝；它的 <code>DefaultFileRegion</code> 才是走 transferTo。</li>
+      </ul></div>
+    </div>
+
+    <div class="lab" id="pc">
+      <div class="st-top"><h3>页缓存实验台：最近多久的数据还在内存里</h3></div>
+      <div class="ctl-grid">
+        <div class="ctl"><label for="pcMem">机器内存 <output id="pcMemO"></output></label><input id="pcMem" type="range" min="8" max="128" step="8" value="32"></div>
+        <div class="ctl"><label for="pcHeap">Broker 堆 <output id="pcHeapO"></output></label><input id="pcHeap" type="range" min="1" max="32" step="1" value="6"></div>
+        <div class="ctl"><label for="pcW">写入速率（含副本复制） <output id="pcWO"></output></label><input id="pcW" type="range" min="5" max="300" step="5" value="50"></div>
+        <div class="ctl"><label for="pcLag">积分组落后 <output id="pcLagO"></output></label><input id="pcLag" type="range" min="0" max="5" step="1" value="2"></div>
+        <div class="ctl"><label for="pcRe">报表组回放速度 <output id="pcReO"></output></label><input id="pcRe" type="range" min="0" max="4" step="1" value="0"></div>
+        <div class="ctl"><label>其他进程和系统 <output>2 GB</output></label><p class="tip">库存组固定落后 2 秒，代表一直跟得上的实时组。</p></div>
+      </div>
+      <div class="tiles" id="pcTiles"></div>
+      <div class="svg-scroll"><svg class="sv" id="pcSvg" viewBox="0 0 720 150" role="img" aria-label="时间轴：从现在往过去，页缓存能覆盖的范围，以及三个消费组各自读到的位置"></svg></div>
+      <ul class="notes" id="pcNotes"></ul>
+      <p class="tip">粗算：页缓存 ≈ 内存 − 堆 − 2 GB；按最简单的“最近用过的留下”来估。只有写入时，热窗口 = 页缓存 ÷ 写入速率；有回放时，回放读进来的旧数据也要占地方，热窗口 = 页缓存 ÷（写入 + 回放）。Linux 实际用两条链表管理页缓存，结果会比这个好一些，方向一样。</p>
+    </div>
+
+    <div class="deep" id="deep-index">
+      <div class="dp" data-role="of"><h4>索引的源码细节</h4><ul>
+        <li>条目格式：<code>.index</code> 每条 8 字节 = 相对 offset 4 字节 + 文件位置 4 字节；<code>.timeindex</code> 每条 12 字节 = 时间戳 8 字节 + 相对 offset 4 字节。存的是减掉段起始 offset 的相对值，4 字节就够。</li>
+        <li>预分配 + mmap：活跃段的索引一创建就是 10 MiB（<code>segment.index.bytes</code>），用 <code>MappedByteBuffer</code> 映射进内存；滚段时截到实际大小（⑤ 实测 1864 字节）。索引写满（10 MiB ÷ 8 字节，约 131 万条）也会触发滚段。</li>
+        <li>热区二分：多数查找是追尾读，落在索引最后面。<code>AbstractIndex</code> 先在最后 8 KB（offset 索引就是 1024 条）里二分，这一块总被访问，一直在内存里，不会缺页。4.1.2 字节码里能看到常量 8192。</li>
+        <li>旧段的索引用到时才打开映射（源码里的 <code>LazyIndex</code>），所以平时占的映射比“每段 2 个”少，回放老数据时才会打开。</li>
+      </ul></div>
+      <div class="dp" data-role="bk"><h4>段、文件和刷盘</h4><ul>
+        <li>所有段按起始 offset 放在一个 <code>ConcurrentNavigableMap</code>（跳表）里，选段就是一次 floor 查找。</li>
+        <li>其他文件：<code>.snapshot</code> 是生产者状态，滚段时写；<code>.txnindex</code> 有被中止的事务才出现；<code>.deleted</code> 是删除前的改名。</li>
+        <li>刷盘：默认 <code>log.flush.interval.messages</code> 是 Long 最大值，不主动 fsync；滚段时把旧段 fsync 一次（⑤ 生产 2 万条，4 次滚段 4 次 fsync）。</li>
+        <li>异常关机：<code>recovery-point-offset-checkpoint</code> 记着刷到哪了，之后的段要逐批校验 CRC、重建索引。</li>
+        <li>敢不刷盘的前提是副本：一台机器掉电丢的页缓存数据，别的副本上还有。</li>
+      </ul></div>
+    </div>
+
+    <h3>版本差异</h3>
+    <div class="eras">
+      <div class="era"><div class="era-top"><span class="jdk">2.x / 3.x</span><b>老集群上常见</b></div><ul>
+        <li><code>segment.bytes</code> 最小 14 字节，能看到很小的段</li>
+        <li><code>num.recovery.threads.per.data.dir</code> 默认 1，恢复慢</li>
+        <li>不限未来时间戳（<code>message.timestamp.after.max.ms</code> 默认 Long 最大值）</li>
+        <li>还要给很老的客户端转换消息格式，转换的那部分在 JVM 里做，没有零拷贝</li>
+      </ul></div>
+      <div class="era"><div class="era-top"><span class="jdk">4.0+</span><b>Broker 要 JDK 17</b></div><ul>
+        <li><code>segment.bytes</code> 最小 1 MiB（实测）</li>
+        <li>恢复线程默认 2</li>
+        <li>默认拒收晚 1 小时以上的时间戳（实测）</li>
+        <li>Fetch 请求最低 v4，老消息格式的转换没有了</li>
+        <li>只有 KRaft，元数据也是一份日志（<code>__cluster_metadata</code>）</li>
+      </ul></div>
+      <div class="era"><div class="era-top"><span class="jdk">没变的</span><b>从早期一直这样</b></div><ul>
+        <li>段 1 GiB、索引每 4 KB 一条、索引预分配 10 MiB</li>
+        <li>默认不主动 fsync</li>
+        <li>明文连接用 sendfile，TLS 不用</li>
+        <li>按段删除，看段里最新的时间戳</li>
+      </ul></div>
+    </div>
+
+    <h3>面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>Kafka 为什么这么快？</summary><ul>
+        <li>写：只往段文件末尾顺序追加；按批写，一批共用一个批头，压缩后原样存；只 <code>write()</code> 进页缓存，不等 fsync。</li>
+        <li>读：稀疏索引二分 + 往后扫几 KB 就能定位；追尾读命中页缓存；明文连接用 sendfile，数据不进 JVM。</li>
+        <li>并行：一个 topic 分成多个分区，分散到多块盘、多台机器。</li>
+      </ul></details>
+      <details><summary>稀疏索引怎么查一条消息？为什么不每条都建索引？</summary><p>跳表里 floor 找到段 → 在 <code>.index</code> 里二分，找不超过目标的最大一条 → 从它记的位置往后扫批头，直到某批的 lastOffset ≥ 目标 → 整批返回。稀疏是为了让索引小到能常驻内存：1 GiB 的段只有约 26 万条、2 MiB。代价是每次最多多扫约 4 KB。</p></details>
+      <details><summary>零拷贝具体少了什么？</summary><p>read + write：2 次 DMA、2 次 CPU 拷贝、4 次用户态和内核切换。sendfile（网卡支持 gather）：2 次 DMA、0 次 CPU 拷贝、2 次切换。数据已在页缓存时，读盘那次 DMA 也省了。开 TLS 就退回到用户态加密，CPU 拷贝和加密都回来了。</p></details>
+      <details><summary>Kafka 默认不刷盘，不怕丢消息吗？</summary><p>单机掉电会丢页缓存里还没刷的数据。Kafka 靠副本：<code>acks=all</code> + <code>min.insync.replicas=2</code> 时，一条消息至少在两台机器的页缓存里，同时掉电才会丢。官方文档也认为副本比本机 fsync 更可靠，推荐默认刷盘设置。</p></details>
+      <details><summary>为什么不把消息缓存在 JVM 堆里？</summary><p>GC 停顿；进程重启缓存清空；和页缓存重复存两份；Java 对象还有额外开销。页缓存自动用掉所有空闲内存，Broker 重启后还在。</p></details>
+      <details><summary>Kafka 和 RocketMQ 的存储有什么不同？</summary><p>Kafka 每个分区一串文件，分区多了写入点多，磁盘上接近随机写。RocketMQ 所有消息写一个 CommitLog，再给每个队列建 20 字节一条的 ConsumeQueue，写入点只有一个，但读一条要多查一次。发送上，Kafka 用 sendfile，RocketMQ 用 mmap。</p></details>
+      <details><summary>retention 为什么不准？</summary><p>按段删，要段里最新一条过期；活跃段要先滚出来（满 1 GiB 或 7 天）；每 5 分钟检查一次；删除前改名再等 1 分钟。还有时间戳：按消息里的时间戳算，生产者填错了也会删早或删晚。</p></details>
+    </div>
+
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li><b>日志压缩（compact）：</b>按 key 只留最新一条，<code>__consumer_offsets</code> 就靠它。</li>
+      <li><b>分层存储（KIP-405）：</b>老段搬到对象存储，Broker 只留热数据，回放不再挤页缓存。</li>
+      <li><b>事务和 read_committed：</b><code>.txnindex</code>、LSO，被中止的事务怎么被跳过。</li>
+      <li><b>副本同步和截断：</b>follower 怎么按 Leader Epoch 截断日志，接上一页的 HW。</li>
+      <li><b>Linux IO 调优：</b>XFS 挂载参数、<code>dirty_ratio</code>、预读、IO 调度器。</li>
+      <li><b>RocketMQ 的 CommitLog：</b>mmap、预热和刷盘策略，和 Kafka 对着看。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步，再做一遍</h2>
+    <p class="lead">每个练习都在 ⑤ 的单节点和 <code>order-demo</code> 上做，用一条第⑥步的内容。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="bad"><h4>练习 1 · 让 retention 准一点</h4><p>建一个 <code>retention.ms=60000</code> 的 topic，每 10 秒写一条，用 <code>kafka-get-offsets.sh --time -2</code> 看最早 offset 动没动。再建一个加了 <code>segment.ms=20000</code> 的对比。（检查间隔默认 5 分钟，可以在 Broker 上把 <code>log.retention.check.interval.ms</code> 调小。）</p><span class="uses">用到：⑥ 坑 1</span></div>
+    <div class="exc" data-role="cg"><h4>练习 2 · 做一次冷读</h4><p>用 <code>fincore</code> 看 ⑤ 的 <code>.log</code> 在不在页缓存。用 Python 的 <code>os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)</code> 把它们踢出去，再从头消费，对比 Broker <code>/proc/&lt;pid&gt;/io</code> 里 <code>read_bytes</code> 涨了多少。</p><span class="uses">用到：⑥ 坑 2、页缓存实验台</span></div>
+    <div class="exc" data-role="g2"><h4>练习 3 · 按时间回放</h4><p>写一个 Java 消费者，用 <code>offsetsForTimes</code> 从“1 分钟前”开始读 <code>order-demo</code>。再故意用 8 天前的时间戳发一条，看它多久被删。</p><span class="uses">用到：④ 最小语法、⑥ 坑 7</span></div>
+  </div>
+  <h3>自测</h3>
+  <div class="faq">
+    <details><summary>1. 用一句话说出 Kafka 存储的精华。</summary><p>只往段文件末尾追加，用稀疏索引定位，缓存交给页缓存，发送用 sendfile，JVM 基本不碰消息本身。</p></details>
+    <details><summary>2. 自己在 JVM 里缓存消息，疼在哪？</summary><p>GC 停顿、重启后缓存全空、和页缓存重复存两份、发给消费者要在内核和 JVM 之间多拷两次。</p></details>
+    <details><summary>3. 要从 1 小时前开始重新消费，Java 里怎么写？</summary><p><code>consumer.offsetsForTimes(Map.of(tp, 一小时前的毫秒时间戳))</code> 拿到 <code>OffsetAndTimestamp</code>，不为 null 就 <code>consumer.seek(tp, hit.offset())</code>。Broker 先查 <code>.timeindex</code> 再查 <code>.index</code>。</p></details>
+    <details><summary>4. 把 index.interval.bytes 从 4 KB 调到 64 KB，会怎样？</summary><p>索引条数变成 1/16，更省内存；但每次查找最多要往后多扫约 64 KB。④ 的查找实验台切到 16 KB 就能看到扫的批数变多。</p></details>
+    <details><summary>5. retention.ms 是 7 天，为什么磁盘上有 12 天前的数据？（头号坑）</summary><p>删除按段来，要等段里最新一条超过 7 天。流量小的 topic，一段要满 7 天才滚出来，再过 7 天才删，最老的数据最多留约 14 天。设 <code>segment.ms</code> 可以缩短。</p></details>
+    <details><summary>6. 开 TLS 以后 Broker CPU 为什么会涨？</summary><p>加密只能在用户态做，数据要先读进 JVM 的缓冲区加密再写出去，用不上 sendfile。本机实测同样读 963 MB，Broker CPU 从约 1 秒涨到约 5.9 秒。</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>测试环境：Kafka 4.1.2 单节点（KRaft，broker 和 controller 合在一个进程）· OpenJDK 21 · Linux 6.8 · 2 核 11 GB 的云主机。实测数字只代表这台机器，换了硬件要自己量。默认值来自 4.1.2 自带的文档和 jar 包，3.x 的差别来自 4.0 的升级说明。</p>
+  <p>相关页面：<a href="kafka-reliability-group.html">Kafka 消息可靠性与消费组</a> · <a href="../redis/redis-persistence.html">Redis 持久化 RDB 与 AOF</a>（AOF 的 fsync 策略可以和这里的刷盘对照）· <a href="../redis/redis-stream-mq.html">Redis Stream 与消息队列</a> · <a href="../redis/redis-threading-io.html">Redis 线程模型与 IO 多路复用</a></p>
+</footer>
+
+</main>
+
+<script>
+/*SIM-START*/
+/* ---- 1. 查找实验台：一个缩小版分区（每段 32 KiB），按 Kafka 的规则建稀疏索引，再按 offset 查找 ---- */
+function rng32(seed){ var a = seed >>> 0; return function(){ a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function buildLog(segBytes, interval, nSeg, seed){
+  var r = rng32(seed), segs = [], off = 0;
+  for (var s = 0; s < nSeg; s++){
+    var seg = {base: off, batches: [], index: [], size: 0}, since = 0;
+    var cap = (s === nSeg - 1) ? Math.floor(segBytes * 0.55) : segBytes;   // 最后一段是正在写的活跃段
+    while (true){
+      var count = 1 + Math.floor(r() * 8);
+      var size = 61 + count * (70 + Math.floor(r() * 60));
+      if (seg.size + size > cap && seg.batches.length) break;
+      if (since > interval){ seg.index.push({off: off + count - 1, pos: seg.size}); since = 0; }  // 索引记“这一批的最后一个 offset → 这一批的起始位置”
+      seg.batches.push({base: off, last: off + count - 1, pos: seg.size, size: size});
+      seg.size += size; since += size; off += count;
+    }
+    segs.push(seg);
+  }
+  return {segs: segs, next: off, segBytes: segBytes, interval: interval};
+}
+function pad20(n){ var s = String(n); while (s.length < 20) s = '0' + s; return s; }
+function lookup(log, target){
+  var res = {target: target, ok: true};
+  if (target < 0 || target >= log.next){ res.ok = false; return res; }
+  var si = 0; for (var i = 0; i < log.segs.length; i++) if (log.segs[i].base <= target) si = i;
+  var seg = log.segs[si]; res.seg = si; res.file = pad20(seg.base);
+  var idx = seg.index, probes = [], slot = -1;
+  if (idx.length && idx[0].off <= target){
+    var lo = 0, hi = idx.length - 1;
+    while (lo < hi){
+      var mid = (lo + hi + 1) >>> 1; probes.push(mid);
+      if (idx[mid].off > target) hi = mid - 1;
+      else if (idx[mid].off < target) lo = mid;
+      else { lo = mid; break; }
+    }
+    slot = lo;
+  } else if (idx.length){ probes.push(0); }
+  res.probes = probes; res.slot = slot;
+  res.startPos = slot < 0 ? 0 : idx[slot].pos;
+  res.startOff = slot < 0 ? seg.base : idx[slot].off;
+  var bi = 0; while (seg.batches[bi].pos < res.startPos) bi++;
+  var scanned = [];
+  while (seg.batches[bi].last < target){ scanned.push(bi); bi++; }
+  res.scanned = scanned; res.found = bi; res.batch = seg.batches[bi];
+  res.scanBytes = res.batch.pos - res.startPos;
+  res.dropped = target - res.batch.base;      // 同一批里 target 前面的记录，消费者客户端自己丢掉
+  return res;
+}
+/* 真实尺寸下的粗算：一段 segBytes 字节，每 interval 字节一条索引 */
+function realScale(segBytes, interval){
+  var entries = Math.floor(segBytes / Math.max(interval, 1));
+  return {entries: entries, indexBytes: entries * 8, probes: entries > 0 ? Math.ceil(Math.log2(entries + 1)) : 0};
+}
+
+/* ---- 2. 零拷贝实验台：四种发送方式，数据在不在页缓存 ---- */
+var ZC_MODES = {
+  rw: {name: 'read + write', steps: [
+    {k:'sw', t:'read() 进内核'},
+    {k:'dma', from:'disk', to:'pc', t:'DMA：磁盘 → 页缓存', cold:true},
+    {k:'cpu', from:'pc', to:'user', t:'CPU 拷贝：页缓存 → 应用缓冲区（byte[]）'},
+    {k:'sw', t:'read() 返回用户态'},
+    {k:'sw', t:'write() 进内核'},
+    {k:'cpu', from:'user', to:'sock', t:'CPU 拷贝：应用缓冲区 → socket 缓冲区'},
+    {k:'sw', t:'write() 返回用户态'},
+    {k:'dma', from:'sock', to:'nic', t:'DMA：socket 缓冲区 → 网卡'}]},
+  mmap: {name: 'mmap + write', steps: [
+    {k:'sw', t:'mmap() 进内核：把文件映射进进程的地址空间'},
+    {k:'sw', t:'mmap() 返回用户态'},
+    {k:'dma', from:'disk', to:'pc', t:'应用读映射内存时缺页，内核把磁盘数据 DMA 进页缓存；应用和内核共用这块内存', cold:true},
+    {k:'sw', t:'write() 进内核'},
+    {k:'cpu', from:'pc', to:'sock', t:'CPU 拷贝：页缓存 → socket 缓冲区'},
+    {k:'sw', t:'write() 返回用户态'},
+    {k:'dma', from:'sock', to:'nic', t:'DMA：socket 缓冲区 → 网卡'}]},
+  sendfile: {name: 'sendfile', steps: [
+    {k:'sw', t:'sendfile() 进内核'},
+    {k:'dma', from:'disk', to:'pc', t:'DMA：磁盘 → 页缓存', cold:true},
+    {k:'desc', from:'pc', to:'sock', t:'只把“数据在页缓存哪、多长”的描述交给 socket，不搬数据'},
+    {k:'dma', from:'pc', to:'nic', t:'DMA：网卡按描述直接从页缓存取数据（gather）'},
+    {k:'sw', t:'sendfile() 返回用户态'}]},
+  tls: {name: 'Kafka 开 TLS', steps: [
+    {k:'sw', t:'read() 进内核'},
+    {k:'dma', from:'disk', to:'pc', t:'DMA：磁盘 → 页缓存', cold:true},
+    {k:'cpu', from:'pc', to:'user', t:'CPU 拷贝：页缓存 → JVM 的直接缓冲区'},
+    {k:'sw', t:'read() 返回用户态'},
+    {k:'enc', from:'user', to:'user', t:'CPU 加密：SSLEngine.wrap 把明文加密进另一块缓冲区'},
+    {k:'sw', t:'write() 进内核'},
+    {k:'cpu', from:'user', to:'sock', t:'CPU 拷贝：密文 → socket 缓冲区'},
+    {k:'sw', t:'write() 返回用户态'},
+    {k:'dma', from:'sock', to:'nic', t:'DMA：socket 缓冲区 → 网卡'}]}
+};
+function zcSteps(mode, cached){
+  return ZC_MODES[mode].steps.filter(function(s){ return !(cached && s.cold); });
+}
+function zcCount(steps){
+  var c = {dma:0, cpu:0, sw:0, enc:0};
+  steps.forEach(function(s){ if (s.k === 'dma') c.dma++; else if (s.k === 'cpu') c.cpu++; else if (s.k === 'sw') c.sw++; else if (s.k === 'enc') c.enc++; });
+  return c;
+}
+
+/* ---- 3. 页缓存粗算：最近写入的多少分钟还在内存里，哪些实时消费者读得到 ---- */
+function pcModel(p){
+  var cacheGB = Math.max(0, p.memGB - p.heapGB - p.otherGB);
+  var cacheMB = cacheGB * 1024;
+  var w = Math.max(p.writeMBs, 0.001);
+  var win = cacheMB / w;                                        // 只有写入时，最近 win 秒写进来的数据还在缓存里
+  var winR = p.replayMBs > 0 ? cacheMB / (w + p.replayMBs) : win; // 回放把旧数据读进来，和新数据抢位置（按 LRU 粗算）
+  var groups = p.groups.map(function(g){
+    return {name: g.name, lagSec: g.lagSec, lagMB: g.lagSec * w, hitAlone: g.lagSec <= win, hit: g.lagSec <= winR};
+  });
+  var misses = groups.filter(function(g){ return !g.hit; }).length;
+  return {cacheGB: cacheGB, win: win, winR: winR, replay: p.replayMBs > 0, need30MB: w * 30, ok30: cacheMB >= w * 30,
+          groups: groups, misses: misses, diskReadMBs: p.replayMBs + misses * w};
+}
+/*SIM-END*/
+(function(){
+  'use strict';
+  function $(id){ return document.getElementById(id); }
+  function fmtN(n){ return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function fmtBytes(b){ return b >= 1048576 ? (b / 1048576) + ' MiB' : (b / 1024) + ' KiB'; }
+  function fmtSec(s){
+    if (s < 1) return '不到 1 秒';
+    if (s < 60) return Math.round(s) + ' 秒';
+    if (s < 5400) return (s / 60).toFixed(s < 600 ? 1 : 0).replace(/\.0$/, '') + ' 分钟';
+    if (s < 172800) return (s / 3600).toFixed(1).replace(/\.0$/, '') + ' 小时';
+    return (s / 86400).toFixed(1).replace(/\.0$/, '') + ' 天';
+  }
+  function segBtns(id, onPick){
+    var box = $(id);
+    box.addEventListener('click', function(e){
+      var b = e.target && e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      var all = box.querySelectorAll('button');
+      for (var i = 0; i < all.length; i++) all[i].setAttribute('aria-pressed', all[i] === b ? 'true' : 'false');
+      onPick(b.getAttribute('data-v'));
+    });
+  }
+  function makeStepper(pfx, count, render, ms){
+    var pos = 0, timer = null;
+    function last(){ return Math.max(0, count() - 1); }
+    function stop(){ if (timer){ clearInterval(timer); timer = null; } $(pfx + 'Auto').textContent = '▶ 自动播放'; }
+    function go(p){
+      pos = Math.max(0, Math.min(last(), p));
+      render(pos);
+      $(pfx + 'Pos').innerHTML = '第 <b>' + pos + '</b> / ' + last() + ' 步';
+      $(pfx + 'Prev').disabled = pos === 0;
+      $(pfx + 'Next').disabled = pos === last();
+    }
+    $(pfx + 'Prev').addEventListener('click', function(){ stop(); go(pos - 1); });
+    $(pfx + 'Next').addEventListener('click', function(){ stop(); go(pos + 1); });
+    $(pfx + 'Reset').addEventListener('click', function(){ stop(); go(0); });
+    $(pfx + 'Auto').addEventListener('click', function(){
+      if (timer){ stop(); return; }
+      if (pos >= last()) go(0);
+      $(pfx + 'Auto').textContent = '❚❚ 暂停';
+      timer = setInterval(function(){ if (pos >= last()){ stop(); return; } go(pos + 1); }, ms || 2200);
+    });
+    $(pfx).addEventListener('keydown', function(e){
+      var tg = e.target && e.target.tagName;
+      if (tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA') return;
+      if (e.key === 'ArrowRight'){ stop(); go(pos + 1); e.preventDefault(); }
+      else if (e.key === 'ArrowLeft'){ stop(); go(pos - 1); e.preventDefault(); }
+    });
+    return {go: go, stop: stop};
+  }
+  var CIRC = ['①','②','③','④','⑤','⑥','⑦','⑧'];
+
+  /* ---------- ④ 查找实验台 ---------- */
+  var LK_SEG = 32768, LK_N = 4, LK_SEED = 7;
+  var lk = {iv: 4096, log: null, res: null, phases: []};
+  function lkCompute(){
+    lk.log = buildLog(LK_SEG, lk.iv, LK_N, LK_SEED);
+    var inp = $('lkT');
+    inp.setAttribute('max', String(lk.log.next - 1));
+    var t = parseInt(inp.value, 10); if (isNaN(t)) t = 0;
+    t = Math.max(0, Math.min(lk.log.next - 1, t));
+    inp.value = String(t);
+    lk.res = lookup(lk.log, t);
+    var ph = [{k:'intro'}, {k:'seg'}];
+    for (var i = 0; i < lk.res.probes.length; i++) ph.push({k:'probe', i:i});
+    ph.push({k:'slot'}, {k:'scan'}, {k:'done'});
+    lk.phases = ph;
+    var rs = realScale(1073741824, lk.iv);
+    $('lkReal').innerHTML = '换成真实尺寸：段 1 GiB、每 <b>' + (lk.iv / 1024) + ' KB</b> 一条索引 → 每段约 <b>' + fmtN(rs.entries) + '</b> 条（<b>' + fmtBytes(rs.indexBytes) + '</b>），二分最多 <b>' + rs.probes + '</b> 次，之后最多往后扫 <b>' + (lk.iv / 1024) + ' KB</b> 多一点。⑤ 实测的 1 MiB 段是 233 条。';
+  }
+  function lkCap(p){
+    var ph = lk.phases[p], r = lk.res, L = lk.log, seg = L.segs[r.seg], idx = seg.index;
+    var nextBase = r.seg + 1 < L.segs.length ? L.segs[r.seg + 1].base : null;
+    if (ph.k === 'intro') return '要找 offset <b>' + r.target + '</b>。这个缩小版分区有 ' + L.segs.length + ' 段，最后一段正在写。先看它落在哪一段。';
+    if (ph.k === 'seg') return '段文件名就是这一段第一条消息的 offset。' + (nextBase != null ? '<b>' + seg.base + ' ≤ ' + r.target + ' &lt; ' + nextBase + '</b>' : '<b>' + r.target + ' ≥ ' + seg.base + '</b>，是最后一段') + '，所以在 <code>' + pad20(seg.base) + '.log</code>。Broker 把所有段按起始 offset 放在一个跳表里，这一步是一次 floor 查找。';
+    if (ph.k === 'probe'){
+      var j = r.probes[ph.i], e = idx[j], rel;
+      if (r.slot < 0) rel = '已经比 ' + r.target + ' 大，目标在第一条索引之前';
+      else if (e.off > r.target) rel = '比 ' + r.target + ' 大，答案在它左边';
+      else if (e.off < r.target) rel = '不超过 ' + r.target + '，答案是它或它右边的某一条';
+      else rel = '正好等于 ' + r.target + '，不用再找';
+      return '二分第 ' + (ph.i + 1) + ' 次：看第 ' + (j + 1) + ' 条索引，offset <b>' + e.off + '</b>，' + rel + '。';
+    }
+    if (ph.k === 'slot'){
+      if (r.slot < 0) return '索引里没有不超过 ' + r.target + ' 的条目，那就从段头（位置 0）开始读。';
+      var en = idx[r.slot];
+      return '不超过 ' + r.target + ' 的最大一条是 <b>' + en.off + ' → 位置 ' + fmtN(en.pos) + '</b>：offset ' + en.off + ' 所在的那一批从第 ' + fmtN(en.pos) + ' 字节开始，目标就在这之后不远。';
+    }
+    if (ph.k === 'scan') return '从位置 ' + fmtN(r.startPos) + ' 往后，一批一批只看批头的 lastOffset：' + (r.scanned.length ? '跳过 <b>' + r.scanned.length + ' 批</b>（' + fmtN(r.scanBytes) + ' 字节），' : '第一批就是，') + '到 ' + r.batch.base + '–' + r.batch.last + ' 这一批时 lastOffset ≥ ' + r.target + '，停。';
+    return 'offset <b>' + r.target + '</b> 在 ' + r.batch.base + '–' + r.batch.last + ' 这一批（第 ' + fmtN(r.batch.pos) + ' 字节起，' + r.batch.size + ' 字节）。Broker 把整批发出去' + (r.dropped ? '，同一批里排在它前面的 ' + r.dropped + ' 条由消费者客户端丢掉' : '') + '。合计看了 ' + r.probes.length + ' 条索引，扫了 ' + fmtN(r.scanBytes) + ' 字节。';
+  }
+  function lkDraw(p){
+    var ph = lk.phases[p], k = ph.k, r = lk.res, L = lk.log, segs = L.segs, h = '';
+    var shown = k !== 'intro';
+    var probeUpto = k === 'probe' ? ph.i : (k === 'intro' || k === 'seg' ? -1 : r.probes.length - 1);
+    var after = k === 'slot' || k === 'scan' || k === 'done';
+    for (var i = 0; i < segs.length; i++){
+      var x = 10 + i * 178, s = segs[i], lastOff = (i + 1 < segs.length ? segs[i + 1].base : L.next) - 1, on = shown && i === r.seg;
+      h += '<rect class="' + (on ? 'b-bk' : 'b-card') + '" x="' + x + '" y="6" width="170" height="42" rx="8"/>';
+      h += '<text class="t-monos" x="' + (x + 85) + '" y="23" text-anchor="middle">' + pad20(s.base) + '</text>';
+      h += '<text class="' + (on ? 't-bk' : 't-xs') + '" x="' + (x + 85) + '" y="40" text-anchor="middle">offset ' + s.base + '–' + lastOff + (i === segs.length - 1 ? ' · 活跃段' : '') + '</text>';
+    }
+    if (!shown){
+      h += '<text class="t-m" x="10" y="84">先看 offset ' + r.target + ' 落在哪一段，再翻那一段的索引和日志。</text>';
+      $('lkSvg').innerHTML = h; return;
+    }
+    var seg = segs[r.seg], idx = seg.index, n = idx.length;
+    var cw = Math.min(64, 700 / Math.max(n, 1));
+    h += '<text class="t-b" x="10" y="72">这一段的 .index（' + n + ' 条）</text>';
+    if (!n) h += '<text class="t-m" x="10" y="104">这一段还没攒够一条索引，只能从段头扫。</text>';
+    for (var j = 0; j < n; j++){
+      var cx = 10 + j * cw, pi = r.probes.indexOf(j);
+      var isProbe = pi >= 0 && pi <= probeUpto;
+      var cur = k === 'probe' && r.probes[ph.i] === j;
+      var chosen = after && j === r.slot;
+      var fill = cur || chosen;
+      h += '<rect class="' + (fill ? 'c-of' : 'c-oft') + '" x="' + (cx + 1).toFixed(1) + '" y="80" width="' + (cw - 3).toFixed(1) + '" height="40" rx="4"' + (isProbe && !fill ? ' stroke-width="3"' : '') + '/>';
+      h += '<text class="' + (fill ? 't-onm' : 't-monos') + '" x="' + (cx + cw / 2).toFixed(1) + '" y="' + (cw >= 44 ? 97 : 104) + '" text-anchor="middle">' + idx[j].off + '</text>';
+      if (cw >= 44) h += '<text class="' + (fill ? 't-onm' : 't-xs') + '" x="' + (cx + cw / 2).toFixed(1) + '" y="113" text-anchor="middle">@' + idx[j].pos + '</text>';
+      if (isProbe) h += '<text class="t-of" x="' + (cx + cw / 2).toFixed(1) + '" y="136" text-anchor="middle">' + CIRC[pi] + '</text>';
+    }
+    var X0 = 10, sc = 700 / L.segBytes, showScan = k === 'scan' || k === 'done';
+    h += '<text class="t-b" x="10" y="156">这一段的 .log（缩小版，满了是 32 KB）</text>';
+    h += '<rect class="c-bkt" x="10" y="166" width="' + (seg.size * sc).toFixed(1) + '" height="40" rx="4"/>';
+    for (var b = 0; b < seg.batches.length; b++){
+      var bt = seg.batches[b], cls = 'c-bk';
+      if (showScan && r.scanned.indexOf(b) >= 0) cls = 'c-of';
+      if (showScan && b === r.found) cls = 'c-g2';
+      h += '<rect class="' + cls + '" x="' + (X0 + bt.pos * sc).toFixed(1) + '" y="170" width="' + Math.max(1.2, bt.size * sc - 0.8).toFixed(1) + '" height="32" rx="1.5"/>';
+    }
+    for (var a = 0; a < n; a++) h += '<path class="f-of" d="M' + (X0 + idx[a].pos * sc).toFixed(1) + ' 166 l-4 -7 h8z"/>';
+    h += '<text class="t-xs" x="10" y="220">位置 0</text><text class="t-xs" x="' + (10 + seg.size * sc).toFixed(1) + '" y="220" text-anchor="end">' + fmtN(seg.size) + ' 字节</text>';
+    var sx = X0 + r.startPos * sc;
+    if (after && r.slot >= 0){
+      var cm = 10 + r.slot * cw + cw / 2;
+      h += '<path class="e-ofd" d="M' + cm.toFixed(1) + ' 122 L ' + sx.toFixed(1) + ' 158" marker-end="url(#ah-of)"/>';
+    }
+    if (showScan){
+      var fx = X0 + (r.batch.pos + r.batch.size) * sc;
+      h += '<line class="e-on" x1="' + sx.toFixed(1) + '" y1="232" x2="' + fx.toFixed(1) + '" y2="232"/>';
+      var lbl = (r.slot < 0 ? '从段头起，' : '') + (r.scanned.length ? '跳过 ' + r.scanned.length + ' 批 · ' + fmtN(r.scanBytes) + ' 字节' : '第一批就是');
+      h += '<text class="t-of" x="' + (sx > 470 ? fx.toFixed(1) : sx.toFixed(1)) + '" y="250" text-anchor="' + (sx > 470 ? 'end' : 'start') + '">' + lbl + '</text>';
+    }
+    if (k === 'done'){
+      var mx = X0 + (r.batch.pos + r.batch.size / 2) * sc;
+      h += '<line class="e-g2" x1="' + mx.toFixed(1) + '" y1="206" x2="' + mx.toFixed(1) + '" y2="262" marker-end="url(#ah-g2)"/>';
+      var anc = mx < 200 ? 'start' : (mx > 520 ? 'end' : 'middle');
+      h += '<text class="t-g2" x="' + (anc === 'start' ? mx - 6 : (anc === 'end' ? mx + 6 : mx)).toFixed(1) + '" y="284" text-anchor="' + anc + '">offset ' + r.target + ' 在 ' + r.batch.base + '–' + r.batch.last + ' 这一批 → 整批发给消费者</text>';
+    }
+    $('lkSvg').innerHTML = h;
+  }
+  var lkStep = makeStepper('lk', function(){ return lk.phases.length; }, function(p){
+    var ph = lk.phases[p];
+    var cap = $('lkCap'); cap.innerHTML = lkCap(p); cap.className = 'cap-txt';
+    lkDraw(p);
+  }, 2000);
+  function lkReset(){ lkCompute(); lkStep.stop(); lkStep.go(0); }
+  $('lkT').addEventListener('change', lkReset);
+  $('lkRand').addEventListener('click', function(){
+    var t = Math.floor(Math.random() * lk.log.next);
+    $('lkT').value = String(t); lkReset();
+  });
+  segBtns('lkIv', function(v){ lk.iv = parseInt(v, 10); lkReset(); });
+  lkCompute(); lkStep.go(0);
+
+  /* ---------- ⑥ 零拷贝实验台 ---------- */
+  var zc = {mode: 'rw', cached: false};
+  var ZBOX = {
+    disk: {x:14, y:200, w:124, h:54, c:'b-neu'},
+    pc:   {x:178, y:146, w:152, h:56, c:'b-cg'},
+    sock: {x:384, y:146, w:152, h:56, c:'b-card'},
+    nic:  {x:590, y:146, w:116, h:56, c:'b-g2'},
+    user: {x:280, y:30, w:170, h:56, c:'b-pd'}
+  };
+  var ZUSER = {
+    rw: ['应用缓冲区', 'byte[]，在 JVM 堆里'],
+    mmap: ['映射的内存', '和页缓存是同一块'],
+    sendfile: ['Broker（JVM）', '只发起调用，数据不进来'],
+    tls: ['直接缓冲区', 'JVM 堆外，明文 → 密文']
+  };
+  var ZPATH = {
+    'disk>pc': ['M138 222 L 176 192', 157, 196, 'end'],
+    'pc>user': ['M260 144 L 300 90', 270, 112, 'end'],
+    'user>sock': ['M432 90 L 458 144', 452, 112, 'start'],
+    'pc>sock': ['M332 166 L 382 166', 357, 158, 'middle'],
+    'sock>nic': ['M538 174 L 588 174', 563, 166, 'middle'],
+    'pc>nic': ['M262 204 Q 450 262 648 204', 450, 250, 'middle'],
+    'user>user': ['M452 44 C 506 26, 506 90, 452 74', 500, 40, 'start']
+  };
+  var ZKIND = {dma: ['e-bk', 'ah-bk', 'DMA'], cpu: ['e-warn', 'ah-warn', 'CPU 拷贝'], desc: ['e-dash', 'ah-mut', '只传描述'], enc: ['e-warn', 'ah-warn', '加密']};
+  var ZINTRO = {
+    rw: 'read + write：Java 里最直观的写法，<code>InputStream</code> 读进 <code>byte[]</code>，再 <code>OutputStream</code> 写给 socket。',
+    mmap: 'mmap + write：先把文件映射进进程的地址空间，再 <code>write()</code> 给 socket。RocketMQ 走的就是 mmap。',
+    sendfile: 'sendfile：Kafka 明文连接走这条路，<code>FileChannel.transferTo</code> 在 Linux 上就是 sendfile。',
+    tls: 'Kafka 开 TLS：<code>SslTransportLayer</code> 把数据读进直接缓冲区，用 <code>SSLEngine</code> 加密后再写给 socket。'
+  };
+  var ZEND = {
+    rw: '数据被 CPU 搬了两趟，还在用户态和内核之间来回切了 4 次。',
+    mmap: '比 read + write 少一次 CPU 拷贝，但还要 write()，切换次数没变。',
+    sendfile: 'CPU 一次都没搬数据，只切换 2 次。网卡支持 gather 时就是这样，⑤ 里 Java 的发送线程 CPU 少了 7 倍左右。',
+    tls: '比 read + write 还多一步加密。⑥ 坑 4 实测：同样读 963 MB，Broker CPU 约是明文的 6 倍。'
+  };
+  function zcList(){ return zcSteps(zc.mode, zc.cached); }
+  function zcDraw(p){
+    var steps = zcList(), h = '';
+    h += '<text class="t-m" x="14" y="22">用户态</text>';
+    h += '<rect class="b-kern" x="6" y="130" width="708" height="132" rx="12"/>';
+    h += '<line class="e-sep" x1="6" y1="120" x2="714" y2="120"/>';
+    h += '<text class="t-m" x="14" y="148">内核</text>';
+    var names = {disk:['磁盘', '段文件'], pc:['页缓存', ''], sock:['socket 缓冲区', ''], nic:['网卡', ''], user: ZUSER[zc.mode]};
+    for (var key in ZBOX){
+      var b = ZBOX[key];
+      h += '<rect class="' + b.c + '" x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h + '" rx="10"/>';
+      h += '<text class="t-b" x="' + (b.x + b.w / 2) + '" y="' + (b.y + (names[key][1] ? 24 : 32)) + '" text-anchor="middle">' + names[key][0] + '</text>';
+      if (names[key][1]) h += '<text class="t-xs" x="' + (b.x + b.w / 2) + '" y="' + (b.y + 43) + '" text-anchor="middle">' + names[key][1] + '</text>';
+    }
+    if (zc.cached) h += '<text class="t-good" x="' + (ZBOX.pc.x + ZBOX.pc.w / 2) + '" y="' + (ZBOX.pc.y + 46) + '" text-anchor="middle">数据已经在这</text>';
+    if (zc.mode === 'mmap') h += '<path class="e-dash" d="M260 144 L 300 90"/><text class="t-xs" x="270" y="112" text-anchor="end">映射，不拷贝</text>';
+    for (var i = 0; i < p; i++){
+      var s = steps[i], cur = i === p - 1;
+      if (s.k === 'sw'){
+        if (!cur) continue;
+        var down = s.t.indexOf('进内核') >= 0;
+        h += '<line class="e-on" x1="660" y1="' + (down ? 92 : 140) + '" x2="660" y2="' + (down ? 138 : 94) + '" marker-end="url(#ah-of)"/>';
+        h += '<text class="t-of" x="652" y="' + (down ? 84 : 84) + '" text-anchor="end">' + (down ? '切进内核' : '切回用户态') + '</text>';
+        continue;
+      }
+      var key2 = s.from + '>' + s.to, pa = ZPATH[key2], kd = ZKIND[s.k];
+      if (!pa) continue;
+      h += '<g' + (cur ? '' : ' class="fade"') + '><path class="' + kd[0] + '" d="' + pa[0] + '" marker-end="url(#' + kd[1] + ')"/>';
+      h += '<text class="' + (s.k === 'dma' ? 't-bk' : (s.k === 'desc' ? 't-m' : 't-warn')) + '" x="' + pa[1] + '" y="' + pa[2] + '" text-anchor="' + pa[3] + '">' + kd[2] + '</text></g>';
+    }
+    $('zcSvg').innerHTML = h;
+  }
+  function zcTiles(p){
+    var steps = zcList(), done = zcCount(steps.slice(0, p)), all = zcCount(steps);
+    var jvm = {rw: ['要拷进来', 'bad'], mmap: ['映射，不拷', 'of'], sendfile: ['不进', 'done'], tls: ['拷进来还要加密', 'bad']}[zc.mode];
+    var t = '';
+    t += '<div class="tile" data-role="bk"><small>DMA 拷贝</small><b>' + done.dma + ' / ' + all.dma + '</b><span>' + (zc.cached ? '读盘那次省了' : '硬件搬，不占 CPU') + '</span></div>';
+    t += '<div class="tile" data-role="' + (all.cpu + all.enc ? 'warn' : 'done') + '"><small>CPU 拷贝</small><b>' + (done.cpu + done.enc) + ' / ' + (all.cpu + all.enc) + '</b><span>' + (all.enc ? '含 1 次加密' : (all.cpu ? 'CPU 逐字节搬' : '一次都没有')) + '</span></div>';
+    t += '<div class="tile" data-role="of"><small>用户态 ↔ 内核切换</small><b>' + done.sw + ' / ' + all.sw + '</b><span>每次系统调用进出各一次</span></div>';
+    t += '<div class="tile" data-role="' + jvm[1] + '"><small>数据进不进 JVM</small><b class="sm">' + jvm[0] + '</b><span>' + ZINTRO[zc.mode].split('：')[0] + '</span></div>';
+    $('zcTiles').innerHTML = t;
+  }
+  var zcStep = makeStepper('zc', function(){ return zcList().length + 1; }, function(p){
+    var steps = zcList(), cap = $('zcCap');
+    if (p === 0){ cap.innerHTML = ZINTRO[zc.mode] + (zc.cached ? '数据已经在页缓存里（消费者在追尾读）。' : '数据还在磁盘上。') + '点“下一步”看数据怎么走。'; cap.className = 'cap-txt'; }
+    else {
+      var s = steps[p - 1], txt = '<b>第 ' + p + ' 步</b>：' + s.t + '。';
+      if (p === steps.length){ var c = zcCount(steps); txt += '<span class="wl" style="color:var(--ink)">合计：DMA ' + c.dma + ' 次、CPU 拷贝 ' + c.cpu + ' 次' + (c.enc ? '、加密 ' + c.enc + ' 次' : '') + '、切换 ' + c.sw + ' 次。' + ZEND[zc.mode] + '</span>'; }
+      cap.innerHTML = txt; cap.className = 'cap-txt' + (s.k === 'cpu' || s.k === 'enc' ? ' alt' : '');
+    }
+    zcDraw(p); zcTiles(p);
+  }, 1600);
+  segBtns('zcMode', function(v){ zc.mode = v; zcStep.stop(); zcStep.go(0); });
+  segBtns('zcCache', function(v){ zc.cached = v === '1'; zcStep.stop(); zcStep.go(0); });
+  zcStep.go(0);
+
+  /* ---------- ⑥ 页缓存实验台 ---------- */
+  var LAGS = [5, 30, 60, 300, 900, 1800], RE = [0, 25, 50, 100, 200], T_MAX = 604800;
+  function tx(t){ return 40 + Math.log(Math.max(t, 1)) / Math.log(T_MAX) * 660; }
+  function pcRender(){
+    var mem = +$('pcMem').value, heap = +$('pcHeap').value, w = +$('pcW').value, lag = LAGS[+$('pcLag').value], re = RE[+$('pcRe').value];
+    $('pcMemO').textContent = mem + ' GB'; $('pcHeapO').textContent = heap + ' GB'; $('pcWO').textContent = w + ' MB/s';
+    $('pcLagO').textContent = fmtSec(lag); $('pcReO').textContent = re ? re + ' MB/s' : '不回放';
+    var m = pcModel({memGB: mem, heapGB: heap, otherGB: 2, writeMBs: w, replayMBs: re, groups: [{name: '库存组', lagSec: 2}, {name: '积分组', lagSec: lag}]});
+    var t = '';
+    t += '<div class="tile" data-role="cg"><small>页缓存约</small><b>' + m.cacheGB + ' GB</b><span>内存 − 堆 − 2 GB</span></div>';
+    t += '<div class="tile" data-role="' + (m.ok30 ? 'done' : 'bad') + '"><small>热窗口（只有写入）</small><b class="sm">' + fmtSec(m.win) + '</b><span>最近这么久写的还在内存</span></div>';
+    t += '<div class="tile" data-role="' + (m.replay ? (m.misses ? 'bad' : 'warn') : 'other') + '"><small>热窗口（有回放时）</small><b class="sm">' + (m.replay ? fmtSec(m.winR) : '没有回放') + '</b><span>回放读进的旧数据也占地方</span></div>';
+    t += '<div class="tile" data-role="' + (m.diskReadMBs > 0 ? 'bad' : 'done') + '"><small>要从磁盘读</small><b class="sm">' + (m.diskReadMBs > 0 ? '约 ' + fmtN(m.diskReadMBs) + ' MB/s' : '0') + '</b><span>没命中页缓存的读</span></div>';
+    $('pcTiles').innerHTML = t;
+    var h = '';
+    h += '<line class="e-ink" x1="40" y1="112" x2="700" y2="112"/>';
+    [[1, '现在'], [10, '10 秒前'], [60, '1 分钟'], [600, '10 分钟'], [3600, '1 小时'], [86400, '1 天'], [604800, '7 天前']].forEach(function(k){
+      var x = tx(k[0]);
+      h += '<line class="e-ink" x1="' + x.toFixed(1) + '" y1="108" x2="' + x.toFixed(1) + '" y2="116"/>';
+      h += '<text class="t-xs" x="' + x.toFixed(1) + '" y="130" text-anchor="' + (k[0] === 1 ? 'start' : (k[0] === 604800 ? 'end' : 'middle')) + '">' + k[1] + '</text>';
+    });
+    if (m.win >= 1) h += '<rect class="c-cgl" x="40" y="74" width="' + (tx(m.win) - 40).toFixed(1) + '" height="30" rx="4"/>';
+    if (m.replay && m.winR >= 1) h += '<rect class="c-cg" x="40" y="82" width="' + (tx(m.winR) - 40).toFixed(1) + '" height="14" rx="3"/>';
+    var x30 = tx(30);
+    h += '<line class="e-ofd" x1="' + x30.toFixed(1) + '" y1="64" x2="' + x30.toFixed(1) + '" y2="112"/><text class="t-xs" x="' + (x30 + 4).toFixed(1) + '" y="70">30 秒线</text>';
+    var marks = m.groups.map(function(g, i){ return {n: g.name, t: g.lagSec, hit: g.hit, row: i}; });
+    if (m.replay) marks.push({n: '报表组', t: T_MAX, hit: false, row: 0});
+    marks.forEach(function(mk){
+      var x = tx(mk.t), y = mk.row ? 46 : 22, anc = mk.t >= 86400 ? 'end' : 'start';
+      h += '<line class="' + (mk.hit ? 'e-mut' : 'e-bad') + '" x1="' + x.toFixed(1) + '" y1="' + (y + 6) + '" x2="' + x.toFixed(1) + '" y2="106"/>';
+      h += '<circle class="' + (mk.hit ? 'f-good' : 'f-bad') + '" cx="' + x.toFixed(1) + '" cy="' + (y + 6) + '" r="5"/>';
+      h += '<text class="' + (mk.hit ? 't-good' : 't-bad') + '" x="' + (anc === 'end' ? x - 8 : x + 8).toFixed(1) + '" y="' + (y + 10) + '" text-anchor="' + anc + '">' + mk.n + (mk.hit ? ' · 读缓存' : ' · 读盘') + '</text>';
+    });
+    h += '<rect class="c-cgl" x="40" y="138" width="14" height="9" rx="2"/><text class="t-xs" x="58" y="146">只有写入时页缓存盖住的范围</text>';
+    h += '<rect class="c-cg" x="250" y="138" width="14" height="9" rx="2"/><text class="t-xs" x="268" y="146">有回放时</text>';
+    h += '<text class="t-xs" x="700" y="146" text-anchor="end">往前推的时间（对数刻度）</text>';
+    $('pcSvg').innerHTML = h;
+    var notes = [];
+    if (m.cacheGB <= 0) notes.push(['bad', '堆和系统把内存占光了，页缓存一点不剩，每次读都要读盘。']);
+    else notes.push([m.ok30 ? 'done' : 'bad', '页缓存约 ' + m.cacheGB + ' GB，' + (m.ok30 ? '装得下' : '装不下') + ' 30 秒的写入（官方文档的估算线：' + w + ' MB/s × 30 秒 = ' + fmtN(m.need30MB) + ' MB）。']);
+    m.groups.forEach(function(g){
+      notes.push([g.hit ? 'done' : 'bad', g.name + '落后 ' + fmtSec(g.lagSec) + '，' + (g.hit ? '在热窗口里，读页缓存。' : (g.hitAlone ? '不回放时还在热窗口里，回放一开就被挤出去，开始读盘。' : '超出了热窗口，要读盘。'))]);
+    });
+    if (m.replay) notes.push(['bad', '报表组以 ' + re + ' MB/s 读 7 天前的数据，全部来自磁盘；读进来的旧数据也占页缓存，热窗口从 ' + fmtSec(m.win) + ' 缩到 ' + fmtSec(m.winR) + '。' + (m.misses ? '给报表组限速，或者加内存、减堆。' : '')]);
+    if (heap > 8) notes.push(['other', '堆开到 ' + heap + ' GB，比官方文档参考的 6 GB 大；多出来的内存留给页缓存更有用。']);
+    $('pcNotes').innerHTML = notes.map(function(n){ return '<li data-role="' + n[0] + '">' + n[1] + '</li>'; }).join('');
+  }
+  ['pcMem', 'pcHeap', 'pcW', 'pcLag', 'pcRe'].forEach(function(id){ $(id).addEventListener('input', pcRender); });
+  pcRender();
+})();
+</script>
+
+</body>
+</html>
