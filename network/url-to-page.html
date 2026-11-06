@@ -1,0 +1,1938 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>从 URL 到页面</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a basic-theory topic (① 要解决的问题 ② 朴素做法 ③ 几种思路 ④ 关键洞察 ⑤ 手推一遍 ⑥ 边界和变体 ↺). Colors: DNS purple (cg), TCP blue (pd), TLS teal (bk), HTTP and the server side brown (g2), rendering magenta (rn), the RTT ruler and highlights amber (of), blocking JS orange (warn), wrong red, right green, old ways grey. Interactives: a sequence-diagram stepper of one measured visit to lwn.net (⑤), a guess-first round-trip calculator and a guess-first <script>-placement lab (⑥), both driven by pure simulators fuzzed in node. Numbers come from the author's 2-vCPU ARM VM in Singapore. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --rn:#A8327A; --rn-tint:#F7E1EE;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --rn:#F08BC6; --rn-tint:#3D1A30;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --rn:#F08BC6; --rn-tint:#3D1A30;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="rn"]{--rc:var(--rn);--rt:var(--rn-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:660px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-rn{font-size:12px;font-weight:700;fill:var(--rn)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.halo{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+.halo-c{paint-order:stroke;stroke:var(--code-bg);stroke-width:4px;stroke-linejoin:round}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-rn{fill:var(--rn-tint);stroke:var(--rn);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.b-dash{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:5 4}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)} .f-rn{fill:var(--rn)}
+.f-card{fill:var(--card)} .f-code{fill:var(--code-bg)} .f-oft{fill:var(--of-tint)} .f-pdt{fill:var(--pd-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-g2t{fill:var(--g2-tint)} .f-rnt{fill:var(--rn-tint)} .f-neut{fill:var(--neutral-tint)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-life{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:2 5}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-rn{stroke:var(--rn);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-rnd{stroke:var(--rn);stroke-width:2;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev b{color:var(--bad)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+.hl{background:var(--of-tint)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+pre.console .r{color:#FF9B98}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td, .t tr.hl th{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.design.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:20px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way svg{display:block;width:100%;height:auto}
+.way pre{padding:10px 12px;background:var(--code-bg);border-radius:10px;font-size:12px}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.pains code{overflow-wrap:anywhere}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b{color:var(--rc)}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+.mech-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.mech-h .sn{font-size:20px}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:5.4em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--muted)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:640px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+#seq g.st{transition:opacity .25s}
+#seq g.st.fut{opacity:.16}
+#seq g.st.cur .arw{stroke-width:3.4}
+#seq g.st.cur text{font-weight:700}
+#seq .clock{transition:transform .3s}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl.span{grid-column:1 / -1}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:10px;border-radius:3px;display:inline-block;background:var(--rc);border:1.5px solid var(--rc)}
+.lg i.t{background:var(--rt)}
+.lg i.mk{width:3px;height:14px;border-radius:1px;border:0}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+.lab-res ul{margin:6px 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:3px}
+
+/* waterfall */
+.wf{display:flex;flex-direction:column;gap:6px}
+.wf-h{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
+.wf-h b{color:var(--ink);font-size:14px}
+.wf-row{display:grid;grid-template-columns:6.2em minmax(0,1fr);gap:8px;align-items:center}
+.wf-row > span{font-size:12.5px;color:var(--muted);text-align:right}
+.wf-track{position:relative;height:28px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);overflow:hidden}
+.wf-seg{position:absolute;top:3px;bottom:3px;border-radius:5px;background:var(--rt);border:1.5px solid var(--rc);font-size:11px;line-height:20px;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:clip;color:var(--ink)}
+.wf-seg.solid{background:var(--rc);color:var(--on-accent)}
+.wf-seg.wait{background:transparent;border-style:dashed;color:var(--muted)}
+.wf-mk{position:absolute;top:0;bottom:0;width:0;border-left:2.5px solid var(--good)}
+.wf-mk.base{border-left:2px dashed var(--neutral)}
+.wf-axis{position:relative;height:18px;margin-left:calc(6.2em + 8px);font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+.wf-axis span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.wf-axis span:first-child{transform:none}
+.wf.ghost{opacity:.62}
+
+/* script lab */
+.sl{display:flex;flex-direction:column;gap:6px}
+.sl-row{display:grid;grid-template-columns:8.6em minmax(0,1fr) 9.4em;gap:8px;align-items:center}
+.sl-row > span{font-size:13px;text-align:right;min-width:0}
+.sl-row > span code{font-size:12px}
+.sl-row > em{font-style:normal;font-family:var(--font-mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
+.sl-row.win > span{font-weight:700}
+.sl-track{position:relative;height:30px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);overflow:hidden}
+.sl-seg{position:absolute;top:4px;bottom:4px;border-radius:4px}
+.sl-seg.parse{background:var(--rn-tint);border:1.5px solid var(--rn)}
+.sl-seg.exec{background:var(--warn);border:1.5px solid var(--warn)}
+.sl-seg.dl-css{background:var(--of-tint);border:1.5px solid var(--of)}
+.sl-seg.dl-js{background:var(--g2-tint);border:1.5px solid var(--g2)}
+.sl-mk{position:absolute;top:0;bottom:0;width:0}
+.sl-mk.fcp{border-left:3px solid var(--good)}
+.sl-mk.dcl{border-left:2.5px dashed var(--pd)}
+
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.dp svg{display:block;width:100%;height:auto}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metaphor{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ex,.design.three{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+  .ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .facts,.presets,.ctl-grid{grid-template-columns:1fr}
+  .metaphor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+  .sl-row{grid-template-columns:5.6em minmax(0,1fr)}
+  .sl-row > em{grid-column:2;margin-top:-4px}
+  .wf-row{grid-template-columns:4.6em minmax(0,1fr)}
+  .wf-axis{margin-left:calc(4.6em + 8px)}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-pd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-pd" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-cg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-cg" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-rn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-rn" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-good" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>网络</span><span aria-hidden="true">/</span><span class="tb-here">从 URL 到页面</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">DNS · TCP · TLS 1.2 / 1.3 · HTTP/1.1 · HTTP/2 · HTTP/3 · DOM · CSSOM · LAYOUT · PAINT · COMPOSITE</p>
+  <h1>回车之后的那一秒，花在了哪</h1>
+  <p class="lead">从回车到看见页面，浏览器要做五件事：先问路（DNS），再拉线（TCP），再对暗号（TLS），然后开口要（HTTP），最后把文字画成像素（渲染）。<b>页面快不快，主要看要来回跑几趟（RTT），而不是网有多粗。</b>DNS、TCP、TLS 各要来回，TLS 1.3、HTTP/2、HTTP/3 和每一层缓存，都是在砍掉其中几趟。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>要解决的问题</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>朴素做法</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>几种思路</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>关键洞察</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>手推一遍</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>边界和变体</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>面试必问这道题；线上用户又反馈“页面要等好几秒才出来”，你得说清这几秒卡在哪一段、哪一段归后端管。所以本页每一段都配了实测数字，⑥ 末尾有面试题。标<span class="tag-real">实测</span>的数字都是在一台 2 核 ARM 云主机（新加坡）上量的：curl 7.81，Java 程序在 Temurin 8u512、17.0.21 和 Ubuntu OpenJDK 21.0.12 上都跑过。浏览器内部那一段本机没法跑，按 HTML 规范和 Chrome 的公开文档来讲。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>要解决的问题：只有一个名字，要变成一屏像素</h2>
+    <p class="lead">你手里只有 <code>lwn.net</code> 这几个字母，页面放在地球另一边的一台机器上。中间隔着一串路由器，它们会丢包、会乱序，谁路过都能偷看。下面五个问题，每个都对应一层技术。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 334" role="img" aria-label="浏览器和 lwn.net 服务器之间隔着很多路由器，往返一趟约 250 毫秒；要解决五个问题：在哪、丢包、偷看、怎么说、怎么画，分别对应 DNS、TCP、TLS、HTTP、渲染；实测打开 lwn.net 约 1 秒，正好是 4 个往返">
+        <rect x="20" y="24" width="220" height="130" rx="12" class="b-card"/>
+        <circle cx="36" cy="38" r="4" class="f-mut"/><circle cx="50" cy="38" r="4" class="f-mut"/><circle cx="64" cy="38" r="4" class="f-mut"/>
+        <rect x="32" y="50" width="196" height="26" rx="13" class="f-code"/>
+        <text class="t-mono" x="46" y="67">https://lwn.net/</text><text class="t-of" x="186" y="67">⏎</text>
+        <rect x="32" y="86" width="196" height="56" rx="8" class="b-dash"/>
+        <text class="t-m" x="130" y="118" text-anchor="middle">页面还是白的</text>
+
+        <polyline class="e-dash" points="240,89 320,62 400,112 480,62 560,112 680,89"/>
+        <circle cx="320" cy="62" r="6" class="f-mut"/><circle cx="400" cy="112" r="6" class="f-mut"/><circle cx="480" cy="62" r="6" class="f-mut"/><circle cx="560" cy="112" r="6" class="f-mut"/>
+        <text class="t-m" x="460" y="40" text-anchor="middle">中间隔着十几台路由器，每台只看包上写的 IP 地址</text>
+        <text class="t-of" x="460" y="144" text-anchor="middle">一个包过去再回来 ≈ 250 ms，这叫 RTT（往返时间）</text>
+
+        <rect x="680" y="24" width="200" height="130" rx="12" class="b-g2"/>
+        <text class="t-b" x="696" y="48">lwn.net 的服务器</text>
+        <text class="t-mono" x="696" y="68">173.255.236.65</text>
+        <text class="t-m" x="696" y="88">Apache，现场生成 HTML</text>
+        <rect x="696" y="100" width="168" height="12" rx="3" class="f-card"/><rect x="696" y="118" width="168" height="12" rx="3" class="f-card"/><rect x="696" y="136" width="168" height="8" rx="3" class="f-card"/>
+
+        <g transform="translate(20,176)">
+          <rect x="0" y="0" width="164" height="72" rx="10" class="b-cg"/><text class="t-b" x="10" y="22">只知道名字 lwn.net</text><text class="t-m" x="10" y="40">它在哪台机器上？</text><text class="t-cg" x="10" y="61">→ DNS：名字换成 IP</text>
+          <rect x="174" y="0" width="164" height="72" rx="10" class="b-pd"/><text class="t-b" x="184" y="22">网络会丢包、乱序</text><text class="t-m" x="184" y="40">怎么保证一字不差？</text><text class="t-pd" x="184" y="61">→ TCP：可靠字节流</text>
+          <rect x="348" y="0" width="164" height="72" rx="10" class="b-bk"/><text class="t-b" x="358" y="22">路上谁都能看能改</text><text class="t-m" x="358" y="40">怎么不被偷看、冒充？</text><text class="t-bk" x="358" y="61">→ TLS：加密 + 验身份</text>
+          <rect x="522" y="0" width="164" height="72" rx="10" class="b-g2"/><text class="t-b" x="532" y="22">要哪个页面？</text><text class="t-m" x="532" y="40">双方按什么格式说话？</text><text class="t-g2" x="532" y="61">→ HTTP：请求与响应</text>
+          <rect x="696" y="0" width="164" height="72" rx="10" class="b-rn"/><text class="t-b" x="706" y="22">收到的是一堆文字</text><text class="t-m" x="706" y="40">屏幕要的是像素</text><text class="t-rn" x="706" y="61">→ 渲染：HTML → 像素</text>
+        </g>
+
+        <text class="t-b" x="20" y="274">本机实测 · 打开 lwn.net 首页（curl，5 次平均）</text>
+        <rect x="20" y="282" width="4.3" height="24" class="f-cg"/>
+        <rect x="24.3" y="282" width="211.7" height="24" class="b-pd"/><text class="t-s" x="130" y="299" text-anchor="middle">TCP 握手 248 ms</text>
+        <rect x="236" y="282" width="215.3" height="24" class="b-bk"/><text class="t-s" x="343.6" y="299" text-anchor="middle">TLS 1.3 握手 252 ms</text>
+        <rect x="451.3" y="282" width="217" height="24" class="b-g2"/><text class="t-s" x="559.8" y="299" text-anchor="middle">请求 → 首字节 254 ms</text>
+        <rect x="668.3" y="282" width="212" height="24" class="b-g2" style="fill:var(--card)"/><text class="t-s" x="774.3" y="299" text-anchor="middle">下载 31 KB 248 ms</text>
+        <text class="t-m" x="20" y="324">DNS 5 ms（系统缓存命中）</text>
+        <text class="t-of" x="236" y="324" text-anchor="middle">1 RTT</text><text class="t-of" x="451.3" y="324" text-anchor="middle">2 RTT</text><text class="t-of" x="668.3" y="324" text-anchor="middle">3 RTT</text><text class="t-of" x="880" y="324" text-anchor="end">4 RTT ≈ 1.0 s</text>
+      </svg>
+    </div>
+    <figcaption>最下面那条按时间比例画：一秒钟几乎全在等来回。服务器生成页面只用了几毫秒（首字节那段比 1 个 RTT 多出约 6 ms），31 KB 的字节本身按 100 Mbps 算只要 2.5 ms；“下载”那段多出的 1 个 RTT，是 TCP 刚建好时不敢一口气发太多（④ 里讲）。</figcaption>
+  </figure>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>朴素做法：用你会的 Java 写一个“浏览器”</h2>
+    <p class="lead">Java 后端天天调别的服务，最朴素的写法就是开一个 Socket，写一行请求，把回来的东西打印出来。下面是真跑的结果。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><span class="n">朴素版</span><b>Naive.java</b>（JDK 11+ 可以直接 <code>java Naive.java</code>）</div>
+<pre><code>try (Socket s = new Socket("lwn.net", 80)) {   <span class="cm">// 这一行里藏着 DNS 和 TCP 握手</span>
+    s.getOutputStream().write(
+        ("GET / HTTP/1.1\r\n" +
+         "Host: lwn.net\r\n" +
+         "Connection: close\r\n\r\n").getBytes());
+    BufferedReader r = new BufferedReader(
+        new InputStreamReader(s.getInputStream()));
+    for (String line; (line = r.readLine()) != null; )
+        System.out.println(line);
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">输出</span><span class="tag-real">实测</span>服务器根本不给页面</div>
+<pre class="console"><b>HTTP/1.1 301 Moved Permanently</b>
+<span class="w">Server: Apache/2.4.62 (CentOS Stream) OpenSSL/3.5.9</span>
+<span class="w">Cache-Control: max-age=0, no-cache</span>
+<b>Location: https://lwn.net/</b>
+<span class="w">Content-Length: 59</span>
+<span class="w">Connection: close</span>
+<span class="w">Content-Type: text/plain; charset=utf-8</span>
+
+<span class="w">Your browser should have redirected you to https://lwn.net/</span></pre>
+    </div>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 184" role="img" aria-label="朴素版浏览器的四步各缺了什么：每次都从头握手、明文被 301 赶走、一问一答用完就关、只有文字没有画面">
+        <g transform="translate(16,18)">
+          <rect x="0" y="0" width="196" height="52" rx="10" class="b-neu"/><text class="t-mono" x="98" y="31" text-anchor="middle">new Socket("lwn.net", 80)</text>
+          <path class="e-mut" d="M196 26 H220" marker-end="url(#ah-mut)"/>
+          <rect x="224" y="0" width="196" height="52" rx="10" class="b-neu"/><text class="t-mono" x="322" y="31" text-anchor="middle">write("GET / HTTP/1.1…")</text>
+          <path class="e-mut" d="M420 26 H444" marker-end="url(#ah-mut)"/>
+          <rect x="448" y="0" width="196" height="52" rx="10" class="b-neu"/><text class="t-s" x="546" y="31" text-anchor="middle"><tspan class="t-mono">readLine()</tspan> 读回文本</text>
+          <path class="e-mut" d="M644 26 H668" marker-end="url(#ah-mut)"/>
+          <rect x="672" y="0" width="196" height="52" rx="10" class="b-neu"/><text class="t-s" x="770" y="31" text-anchor="middle">打印到控制台</text>
+
+          <text class="t-bad" x="0" y="90">✕ 藏着 DNS + TCP 握手</text><text class="t-s" x="0" y="110">每次都从头来，至少 1 RTT</text><text class="t-m" x="0" y="130">→ ③ 复用连接 · ④ 机制 2</text>
+          <text class="t-bad" x="224" y="90">✕ 明文，路上能看能改</text><text class="t-s" x="224" y="110">lwn.net 直接回 301 → https</text><text class="t-m" x="224" y="130">→ ④ 机制 2：TLS</text>
+          <text class="t-bad" x="448" y="90">✕ 一问一答，用完就关</text><text class="t-s" x="448" y="110">CSS、图片只能排队或再连</text><text class="t-m" x="448" y="130">→ ③ HTTP/2 多路复用</text>
+          <text class="t-bad" x="672" y="90">✕ 只有文字，没有画面</text><text class="t-s" x="672" y="110">&lt;html&gt;… 没人把它画出来</text><text class="t-m" x="672" y="130">→ ④ 机制 4：渲染</text>
+          <text class="t-of" x="0" y="160">四个痛点里有三个是“多跑了来回”：握手、重定向、排队。这就是要找的精华。</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>朴素版能跑通（换成 443 端口再自己做 TLS 就能拿到页面，⑤ 就是这么做的），但它把浏览器的活只干了一小半，而且干得很慢。</figcaption>
+  </figure>
+  <div class="essence">
+    <span class="big">精华</span>
+    <p><b>时间 ≈ 来回次数 × RTT + 服务器耗时 + 字节数 ÷ 带宽</b>，而在大多数网页上，第一项远大于后两项。DNS、TCP、TLS、HTTP 请求，每一步都至少要一个来回；浏览器和协议这些年的大部分改进，都是在减少来回的次数。</p>
+    <p>不懂这一点的典型误判见下面三张卡：一慢就加带宽、一慢就查接口、以为升级协议一定快。</p>
+  </div>
+  <div class="misj">
+    <div class="mj"><b><i>误判 1</i>页面慢，加带宽</b>
+      <dl><dt>为什么像对的</dt><dd>“下载”听起来就是带宽的事。</dd>
+      <dt>实际</dt><dd class="ev">RTT 100 ms、HTML 30 KB 时，带宽从 10 Mbps 提到 100 Mbps，首次绘制只快 <b>不到 1%</b>（⑥ 实验台 A 第 1 题）。几十 KB 的页面，卡的是来回，不是管子粗细。</dd></dl></div>
+    <div class="mj"><b><i>误判 2</i>页面慢，先查接口</b>
+      <dl><dt>为什么像对的</dt><dd>后端只看得到自己的日志。</dd>
+      <dt>实际</dt><dd class="ev">lwn.net 那一秒里，服务器只占约 6 ms，其余全是来回。先用 <code>curl -w</code> 或浏览器的 Timing 面板拆开看是哪一段（④ 末尾），再决定查谁。</dd></dl></div>
+    <div class="mj"><b><i>误判 3</i>升级到 HTTP/2，一定快</b>
+      <dl><dt>为什么像对的</dt><dd>新协议握手少、能多路复用。</dd>
+      <dt>实际</dt><dd class="ev">省掉的握手只对新连接有效；冷连接上一口气拉很多大文件时，6 条 HTTP/1.1 连接<b>反而更快</b>（⑥ 第三圈实测 1.45 s 对 1.65 s）。</dd></dl></div>
+    <div class="mj"><b><i>误判 4</i>“https 慢，内网就用 http”</b>
+      <dl><dt>为什么像对的</dt><dd>多一次握手、多了加解密。</dd>
+      <dt>实际</dt><dd class="ev">TLS 1.3 只多 1 个 RTT，连接复用后就没有了；加解密本身很便宜（④ 设计取舍 B：本机 AES-GCM 每秒约 2.9 GB）。贵的是每次都新建连接。</dd></dl></div>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>几种思路：怎样少跑几趟</h2>
+    <p class="lead">按“新建一条连接、到拿到第一个字节”数来回次数。每往下一行，就少一次握手；最后两行是“干脆不握手”。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 316" role="img" aria-label="到首字节需要的往返次数：HTTP/1.1 加 TLS 1.2 要 4 个，HTTP/2 加 TLS 1.3 要 3 个，HTTP/3 要 2 个，HTTP/3 回访 0-RTT 和复用连接各 1 个，强缓存命中 0 个">
+        <g class="t-monos">
+          <text x="236" y="20" text-anchor="middle">0</text><text x="386" y="20" text-anchor="middle">1 RTT</text><text x="536" y="20" text-anchor="middle">2 RTT</text><text x="686" y="20" text-anchor="middle">3 RTT</text><text x="836" y="20" text-anchor="middle">4 RTT</text>
+        </g>
+        <path class="e-grid" d="M236 28 V300 M386 28 V300 M536 28 V300 M686 28 V300 M836 28 V300"/>
+
+        <text class="t-b" x="16" y="56">HTTP/1.1 + TLS 1.2</text>
+        <rect x="236" y="36" width="150" height="32" rx="6" class="b-pd"/><text class="t-s" x="311" y="57" text-anchor="middle">TCP 握手</text>
+        <rect x="386" y="36" width="300" height="32" rx="6" class="b-bk"/><text class="t-s" x="536" y="57" text-anchor="middle">TLS 1.2 握手 · 实测 505 ms</text>
+        <rect x="686" y="36" width="150" height="32" rx="6" class="b-g2"/><text class="t-s" x="761" y="57" text-anchor="middle">请求 → 首字节</text>
+        <text class="t-of" x="844" y="57">4</text>
+
+        <text class="t-b" x="16" y="102">HTTP/2 + TLS 1.3</text>
+        <rect x="236" y="82" width="150" height="32" rx="6" class="b-pd"/><text class="t-s" x="311" y="103" text-anchor="middle">TCP 握手</text>
+        <rect x="386" y="82" width="150" height="32" rx="6" class="b-bk"/><text class="t-s" x="461" y="103" text-anchor="middle">TLS 1.3 · 实测 252 ms</text>
+        <rect x="536" y="82" width="150" height="32" rx="6" class="b-g2"/><text class="t-s" x="611" y="103" text-anchor="middle">请求 → 首字节</text>
+        <text class="t-of" x="694" y="103">3</text>
+
+        <text class="t-b" x="16" y="148">HTTP/3（QUIC，走 UDP）</text>
+        <rect x="236" y="128" width="150" height="32" rx="6" class="b-bk"/><text class="t-s" x="311" y="149" text-anchor="middle">QUIC 握手（含 TLS）</text>
+        <rect x="386" y="128" width="150" height="32" rx="6" class="b-g2"/><text class="t-s" x="461" y="149" text-anchor="middle">请求 → 首字节</text>
+        <text class="t-of" x="544" y="149">2</text>
+
+        <text class="t-b" x="16" y="194">HTTP/3 回访（0-RTT）</text>
+        <rect x="236" y="174" width="150" height="32" rx="6" class="b-g2"/><text class="t-s" x="311" y="195" text-anchor="middle">请求跟握手一起发</text>
+        <text class="t-of" x="394" y="195">1</text>
+
+        <text class="t-b" x="16" y="240">已有连接（keep-alive）</text>
+        <rect x="236" y="220" width="150" height="32" rx="6" class="b-g2"/><text class="t-s" x="311" y="241" text-anchor="middle">直接发请求</text>
+        <text class="t-of" x="394" y="241">1</text><text class="t-m" x="420" y="241">实测：同一条连接的第 2 个请求 262 ms，第 1 个 1048 ms</text>
+
+        <text class="t-b" x="16" y="286">本地缓存还新鲜</text>
+        <text class="t-good" x="236" y="287">强缓存命中：不发请求，0 个来回</text>
+      </svg>
+    </div>
+    <figcaption>都假设 DNS 已经缓存，没缓存时每行再加约 1 个来回。实测线路是本机到 lwn.net，RTT 约 250 ms：TLS 1.2 握手 505 ms，TLS 1.3 握手 252 ms，正好差 1 个 RTT。拿到首字节之后还有下载和渲染，④ 和 ⑤ 接着讲。</figcaption>
+  </figure>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>思路</th><th>新连接到首字节</th><th>同时要 10 个文件</th><th>路上丢了一个包</th><th>代价</th></tr></thead>
+      <tbody>
+        <tr><th>HTTP/1.1 + TLS 1.2</th><td>4 个来回</td><td>一条连接同一时间只跑一个请求；浏览器对同一个域名最多开 6 条连接</td><td>只卡这条连接</td><td>连接多，每条都要握手</td></tr>
+        <tr><th>HTTP/2 + TLS 1.3</th><td>3 个来回</td><td>一条连接多路复用，10 个请求同时在路上</td><td>这条连接上<b>所有</b>请求一起等重传（TCP 层的队头阻塞）</td><td>只能跑在 TLS 上（浏览器只支持加密的 HTTP/2）</td></tr>
+        <tr><th>HTTP/3（QUIC）</th><td>2 个来回，回访可 1 个</td><td>多路复用</td><td>只卡丢包的那个请求</td><td>走 UDP，有的公司网络会拦；0-RTT 的数据可能被重放</td></tr>
+        <tr class="hl"><th>复用 + 缓存</th><td>1 个或 0 个</td><td>看底下是哪个协议</td><td>看底下是哪个协议</td><td>要后端把 keep-alive、Cache-Control 配对</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="pick-line">选择规则：<b>能不发请求就用缓存，能复用连接就复用，必须新建连接时，用握手更少的协议。</b>本页主线按 <b>TCP + TLS 1.3 + HTTP/1.1</b> 讲：报文是文本，最容易看清，⑤ 的 Java 程序就是这么走的。HTTP/2、HTTP/3 改了哪些地方，放在 ⑥ 第三圈。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>关键洞察：一条流水线，每一站都在数来回</h2>
+    <p class="lead">先看全景，再逐站拆开。每一站都标了要几个来回，这是这一页最重要的一把尺子。参数、版本差异这些细节，放到 ⑥。</p>
+  </div>
+
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="other"><h4>IP 和端口</h4><p>IP 找到机器，端口找到机器上的进程：https 默认 443，http 默认 80，Tomcat 默认 8080。路由器只看 IP，不认识域名。</p></div>
+      <div class="fact" data-role="of"><h4>RTT</h4><p>一个包到对面、再收到回音的时间。同城 1～5 ms，本机到谷歌的就近节点约 2 ms，到 lwn.net 约 250 ms。它受光速和路由限制，加带宽降不下来。</p></div>
+      <div class="fact" data-role="other"><h4>分层</h4><p>每层只管一件事，靠下一层干活：HTTP 跑在 TLS 上，TLS 跑在 TCP 上，TCP 跑在 IP 上。坏处是每层各握各的手，来回次数加在一起。</p></div>
+      <div class="fact" data-role="other"><h4>包</h4><p>数据被切成约 1.4 KB 一个的 TCP 包（MSS = 1460 字节）。几十 KB 的网页就是几十个包，能一次发多少个由“拥塞窗口”决定，机制 4 讲。</p></div>
+    </div>
+  </div>
+
+  <figure id="m-map">
+    <h3 class="mech-h"><span class="sn">机制 1</span>全景：12 站，3 段地盘</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 420" role="img" aria-label="从回车到上屏的十二站：浏览器解析输入、查缓存、DNS、TCP、TLS、发请求；服务器经过 CDN、Nginx、Tomcat、Spring MVC、数据库；响应回到渲染进程：解析 HTML、CSSOM、样式计算、布局、绘制、合成。解析 HTML 时发现的子资源会再走 DNS 到请求这几站">
+        <text class="t-m" x="22" y="34">浏览器进程 + 网络服务</text>
+        <g>
+          <rect x="22" y="44" width="128" height="70" rx="10" class="b-card"/><text class="t-b" x="32" y="64">① 解析输入</text><text class="t-m" x="32" y="83">网址还是搜索词？</text><text class="t-m" x="32" y="102">补 https · 查 HSTS</text>
+          <rect x="168" y="44" width="128" height="70" rx="10" class="b-card"/><text class="t-b" x="178" y="64">② 查缓存</text><text class="t-m" x="178" y="83">HTTP 缓存还新鲜？</text><text class="t-good" x="178" y="102">新鲜就跳到 ⑦</text>
+          <rect x="314" y="44" width="128" height="70" rx="10" class="b-cg"/><text class="t-b" x="324" y="64">③ DNS</text><text class="t-m" x="324" y="83">名字 → IP</text><text class="t-cg" x="324" y="102">命中缓存 ≈ 0</text>
+          <rect x="460" y="44" width="128" height="70" rx="10" class="b-pd"/><text class="t-b" x="470" y="64">④ TCP 连接</text><text class="t-m" x="470" y="83">三次握手</text><text class="t-pd" x="470" y="102">1 RTT</text>
+          <rect x="606" y="44" width="128" height="70" rx="10" class="b-bk"/><text class="t-b" x="616" y="64">⑤ TLS 握手</text><text class="t-m" x="616" y="83">换密钥 + 验证书</text><text class="t-bk" x="616" y="102">1 RTT（1.2 要 2）</text>
+          <rect x="752" y="44" width="128" height="70" rx="10" class="b-g2"/><text class="t-b" x="762" y="64">⑥ 发请求</text><text class="t-monos" x="762" y="83">GET / HTTP/1.1</text><text class="t-g2" x="762" y="102">1 RTT + 服务器</text>
+          <path class="e-mut" d="M150 79 H166 M296 79 H312 M442 79 H458 M588 79 H604 M734 79 H750" marker-end="url(#ah-mut)"/>
+        </g>
+
+        <path class="e-g2" d="M816 114 V164" marker-end="url(#ah-g2)"/><text class="t-g2" x="826" y="144">请求到达</text>
+        <text class="t-m" x="440" y="160">服务器：后端的地盘</text>
+        <rect x="440" y="166" width="440" height="78" rx="12" class="b-g2"/>
+        <g>
+          <rect x="452" y="184" width="76" height="44" rx="8" class="f-card"/><text class="t-b" x="490" y="203" text-anchor="middle">CDN / LB</text><text class="t-xs" x="490" y="219" text-anchor="middle">就近、分流</text>
+          <rect x="538" y="184" width="76" height="44" rx="8" class="f-card"/><text class="t-b" x="576" y="203" text-anchor="middle">Nginx</text><text class="t-xs" x="576" y="219" text-anchor="middle">常在这里解密</text>
+          <rect x="624" y="184" width="76" height="44" rx="8" class="f-card"/><text class="t-b" x="662" y="203" text-anchor="middle">Tomcat</text><text class="t-xs" x="662" y="219" text-anchor="middle">线程池接活</text>
+          <rect x="710" y="184" width="76" height="44" rx="8" class="f-card"/><text class="t-b" x="748" y="203" text-anchor="middle">Spring MVC</text><text class="t-xs" x="748" y="219" text-anchor="middle">Controller</text>
+          <rect x="796" y="184" width="76" height="44" rx="8" class="f-card"/><text class="t-b" x="834" y="203" text-anchor="middle">MySQL</text><text class="t-xs" x="834" y="219" text-anchor="middle">Redis 等</text>
+          <path class="e-g2" d="M528 206 H536 M614 206 H622 M700 206 H708 M786 206 H794" style="stroke-width:1.8"/>
+        </g>
+
+        <path class="e-g2" d="M440 205 H86 V288" marker-end="url(#ah-g2)"/>
+        <text class="t-g2" x="110" y="198">响应：状态行 + 头 + HTML，边收边往下交</text>
+
+        <path class="e-rnd" d="M22 327 H10 V140 H378 V118" marker-end="url(#ah-rn)"/>
+        <text class="t-rn" x="24" y="134">发现 CSS、JS、图片：子资源再走 ③～⑥</text>
+        <text class="t-m" x="24" y="156">同一主机能复用连接，就跳过 ③④⑤</text>
+
+        <text class="t-m" x="160" y="284">渲染进程（每个标签页一般一个）</text>
+        <g>
+          <rect x="22" y="292" width="128" height="70" rx="10" class="b-rn"/><text class="t-b" x="32" y="312">⑦ 解析 HTML</text><text class="t-m" x="32" y="331">边收边建 DOM 树</text><text class="t-bad" x="32" y="350">同步 JS 会叫停</text>
+          <rect x="168" y="292" width="128" height="70" rx="10" class="b-rn"/><text class="t-b" x="178" y="312">⑧ CSS → CSSOM</text><text class="t-m" x="178" y="331">每个元素长啥样</text><text class="t-bad" x="178" y="350">没好就不画</text>
+          <rect x="314" y="292" width="128" height="70" rx="10" class="b-rn"/><text class="t-b" x="324" y="312">⑨ 样式计算</text><text class="t-m" x="324" y="331">DOM 配上 CSSOM</text><text class="t-m" x="324" y="350">得到渲染树</text>
+          <rect x="460" y="292" width="128" height="70" rx="10" class="b-rn"/><text class="t-b" x="470" y="312">⑩ 布局 Layout</text><text class="t-m" x="470" y="331">算位置和大小</text><text class="t-m" x="470" y="350">改宽高要重来</text>
+          <rect x="606" y="292" width="128" height="70" rx="10" class="b-rn"/><text class="t-b" x="616" y="312">⑪ 绘制 Paint</text><text class="t-m" x="616" y="331">生成绘制指令</text><text class="t-m" x="616" y="350">改颜色要重来</text>
+          <rect x="752" y="292" width="128" height="70" rx="10" class="b-rn"/><text class="t-b" x="762" y="312">⑫ 合成</text><text class="t-m" x="762" y="331">分层、栅格化</text><text class="t-m" x="762" y="350">GPU 拼好上屏</text>
+          <path class="e-mut" d="M150 327 H166 M296 327 H312 M442 327 H458 M588 327 H604 M734 327 H750" marker-end="url(#ah-mut)"/>
+        </g>
+        <text class="t-m" x="22" y="392">⑦～⑪ 跑在渲染进程的主线程上，页面里的 JS 也在这条线程上跑；⑫ 交给合成线程和 GPU。</text>
+        <text class="t-of" x="22" y="412">首次绘制（FCP）= 第一次走完 ⑨～⑫，把内容送上屏幕。</text>
+      </svg>
+    </div>
+    <figcaption>三段地盘：上面一排是浏览器在联网（来回次数在这里），中间是后端（TTFB 里只有服务器耗时这一截归你），下面一排是浏览器在画（同步 JS 和 CSS 会卡住它）。虚线是这张图里最容易被忽略的一条：HTML 只是开头，每个子资源都要再走一遍网络。</figcaption>
+  </figure>
+
+  <div class="formula">
+    <span class="f">时间 ≈ <em>来回次数 × RTT</em> + 服务器耗时 + 字节数 ÷ 带宽</span>
+    <p>下面这把“尺子”是在本机到 lwn.net（RTT ≈ 250 ms）这条线路上量的。每一段都是整数个 RTT，零头只有几毫秒。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>哪一段</th><th class="num">几个来回</th><th class="num">实测</th><th>怎么量的</th></tr></thead>
+      <tbody>
+        <tr><th>TCP 握手</th><td class="num">1</td><td class="num">248 ms</td><td>curl <code>time_connect − time_namelookup</code>，5 次平均</td></tr>
+        <tr><th>TLS 1.3 握手</th><td class="num">1</td><td class="num">252 ms</td><td>curl <code>--tlsv1.3 -k</code>，<code>time_appconnect − time_connect</code></td></tr>
+        <tr><th>TLS 1.2 握手</th><td class="num">2</td><td class="num">505 ms</td><td>同上，<code>--tlsv1.2 --tls-max 1.2</code></td></tr>
+        <tr><th>请求 → 首字节</th><td class="num">1 + 服务器</td><td class="num">254 ms</td><td><code>time_starttransfer − time_appconnect</code>，服务器约 6 ms</td></tr>
+        <tr><th>下载 31 KB 的 HTML</th><td class="num">+1</td><td class="num">248 ms</td><td>首字节到最后一个字节；机制 4 解释为什么是 1 个来回</td></tr>
+        <tr><th>同一页 gzip 后 5.6 KB（HN 首页）</th><td class="num">0</td><td class="num">0.2 ms</td><td>不压缩的 34 KB 是 205～285 ms</td></tr>
+        <tr class="hl"><th>同一条连接再要一次</th><td class="num">1</td><td class="num">262 ms</td><td>curl 一条命令请求两次，第二次 <code>num_connects=0</code></td></tr>
+        <tr><th>DNS 冷查询</th><td class="num">不固定</td><td class="num">795 / 837 ms</td><td><code>dig</code> 两个没查过的域名；紧接着再查都是 0 ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure id="m-dns">
+    <h3 class="mech-h"><span class="sn">机制 2</span>DNS：一层层缓存，最后才一级级去问</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 262" role="img" aria-label="DNS 查询先看浏览器缓存、再看操作系统、再问递归解析器；解析器没缓存时，依次问根服务器、.com 服务器、权威服务器，答案原路返回，每层按 TTL 缓存">
+        <rect x="16" y="94" width="140" height="70" rx="10" class="b-card"/><text class="t-b" x="28" y="116">浏览器缓存</text><text class="t-m" x="28" y="135">Chrome 自己记一份</text><text class="t-m" x="28" y="153">命中就不出门</text>
+        <path class="e-mut" d="M156 129 H182" marker-end="url(#ah-mut)"/>
+        <rect x="186" y="94" width="172" height="70" rx="10" class="b-card"/><text class="t-b" x="198" y="116">操作系统</text><text class="t-m" x="198" y="135">hosts 文件、本地缓存</text><text class="t-monos" x="198" y="153">本机：127.0.0.53</text>
+        <path class="e-mut" d="M358 129 H384" marker-end="url(#ah-mut)"/>
+        <rect x="388" y="94" width="172" height="70" rx="10" class="b-cg"/><text class="t-b" x="400" y="116">递归解析器</text><text class="t-m" x="400" y="135">运营商 / 公司 / 8.8.8.8</text><text class="t-m" x="400" y="153">没缓存就替你去问</text>
+        <text class="t-m" x="16" y="190">没有就问下一层；答案原路返回，</text>
+        <text class="t-m" x="16" y="208">每一层都按 TTL 缓存一份</text>
+
+        <rect x="646" y="16" width="238" height="62" rx="10" class="b-card" style="stroke:var(--cg)"/><text class="t-b" x="658" y="38">根服务器（.）</text><text class="t-m" x="658" y="56">答：去问 .com 的服务器</text><text class="t-monos" x="658" y="72">本机 dig +trace：2 ms</text>
+        <rect x="646" y="98" width="238" height="62" rx="10" class="b-card" style="stroke:var(--cg)"/><text class="t-b" x="658" y="120">.com 顶级域服务器</text><text class="t-m" x="658" y="138">答：去问 awsdns-48.org</text><text class="t-monos" x="658" y="154">76 ms</text>
+        <rect x="646" y="180" width="238" height="62" rx="10" class="b-cg"/><text class="t-b" x="658" y="202">ycombinator.com 权威</text><text class="t-m" x="658" y="220">答：A 209.216.230.207</text><text class="t-monos" x="658" y="236">1 ms</text>
+        <path class="e-cg" d="M560 112 L642 50" marker-end="url(#ah-cg)"/><text class="t-cg halo" x="590" y="74">1</text>
+        <path class="e-cg" d="M560 129 H642" marker-end="url(#ah-cg)"/><text class="t-cg halo" x="596" y="122">2</text>
+        <path class="e-cg" d="M560 146 L642 208" marker-end="url(#ah-cg)"/><text class="t-cg halo" x="600" y="168">3</text>
+        <text class="t-of" x="388" y="190">实测 dig www.dragonflybsd.org：</text>
+        <text class="t-of" x="388" y="208">第一次 837 ms，再查 0 ms，</text>
+        <text class="t-of" x="388" y="226">TTL 从 3600 变成 3599</text>
+      </svg>
+    </div>
+    <figcaption>例子是 <code>dig +trace news.ycombinator.com</code> 的真实路径。DNS 默认走 UDP 53 端口，一问一答各一个包。很多网站的名字会先 CNAME 到 CDN：<code>www.netbsd.org</code> 实测指向 <code>dualstack.o.ssl.global.fastly.net</code>，CDN 再按你在哪返回最近的节点 IP。TTL 的代价是改了记录要等它过期，⑥ 坑 1 是 Java 里的版本。</figcaption>
+  </figure>
+
+  <figure id="m-tls">
+    <h3 class="mech-h"><span class="sn">机制 3</span>TCP 握手 + TLS 1.3 握手：三个来回之后才拿到第一个字节</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 330" role="img" aria-label="时序图：SYN、SYN-ACK 是第一个来回；ACK 加 ClientHello、ServerHello 加证书和 Finished 是第二个来回；Finished 加 GET 请求、200 响应是第三个来回">
+        <rect x="150" y="8" width="120" height="28" rx="8" class="b-card"/><text class="t-b" x="210" y="27" text-anchor="middle">浏览器</text>
+        <rect x="630" y="8" width="120" height="28" rx="8" class="b-g2"/><text class="t-b" x="690" y="27" text-anchor="middle">lwn.net</text>
+        <path class="e-life" d="M210 40 V310 M690 40 V310"/>
+
+        <path class="e-pd" d="M210 60 L686 96" marker-end="url(#ah-pd)"/><text class="t-pd halo" x="450" y="72" text-anchor="middle">SYN  seq = x</text>
+        <path class="e-pd" d="M690 100 L214 136" marker-end="url(#ah-pd)"/><text class="t-pd halo" x="450" y="112" text-anchor="middle">SYN-ACK  seq = y，ack = x+1</text>
+        <path class="e-bk" d="M210 140 L686 176" marker-end="url(#ah-bk)"/><text class="t-bk halo" x="450" y="152" text-anchor="middle">ACK ack = y+1 ＋ ClientHello</text><text class="t-m halo" x="450" y="174" text-anchor="middle">支持的算法 · 临时公钥 A · SNI = lwn.net</text>
+        <path class="e-bk" d="M690 180 L214 216" marker-end="url(#ah-bk)"/><text class="t-bk halo" x="450" y="192" text-anchor="middle">ServerHello（临时公钥 B）＋ {证书, 签名, Finished}</text><text class="t-m halo" x="450" y="214" text-anchor="middle">{ } 里的内容已经加密</text>
+        <path class="e-g2" d="M210 220 L686 256" marker-end="url(#ah-g2)"/><text class="t-g2 halo" x="450" y="232" text-anchor="middle">{Finished} ＋ {GET / HTTP/1.1  Host: lwn.net}</text>
+        <path class="e-g2" d="M690 262 L214 298" marker-end="url(#ah-g2)"/><text class="t-g2 halo" x="450" y="274" text-anchor="middle">{HTTP/1.1 200 OK …第一批数据}</text>
+
+        <path class="e-pd" d="M198 60 H188 V136 H198" style="stroke-width:1.8"/><text class="t-pd" x="182" y="102" text-anchor="end">1 RTT · TCP</text>
+        <path class="e-bk" d="M198 140 H188 V216 H198" style="stroke-width:1.8"/><text class="t-bk" x="182" y="182" text-anchor="end">1 RTT · TLS 1.3</text>
+        <path class="e-g2" d="M198 220 H188 V298 H198" style="stroke-width:1.8"/><text class="t-g2" x="182" y="263" text-anchor="end">1 RTT · 首字节</text>
+
+        <text class="t-m" x="704" y="104">挑自己的起始序号 y</text>
+        <text class="t-m" x="704" y="182">用 A 和私钥 b 算出会话密钥</text>
+        <text class="t-m" x="704" y="200">证书 + 签名：证明我是</text>
+        <text class="t-m" x="704" y="216">lwn.net 的主人</text>
+        <text class="t-m" x="704" y="262">处理请求，约 6 ms</text>
+        <text class="t-of" x="210" y="326">TLS 1.2 这里要多一个来回：先商量算法，再交换密钥（实测 505 ms 对 252 ms）。</text>
+      </svg>
+    </div>
+    <figcaption>浏览器的 ACK 不用等，和 ClientHello 一起发出去；请求也不用等，和 Finished 一起发。所以新连接到首字节是 3 个来回，正好对上 ⑤ 实测的 TCP 1.0、TLS 1.0、首字节 1.0 个 RTT。花括号里的内容都已经用会话密钥加密，路由器只看得到 IP、端口和 SNI 里的域名。</figcaption>
+  </figure>
+  <div class="two">
+    <div class="way" data-role="bk">
+      <h4>两个临时公钥，换出同一把密钥<small>ECDHE</small></h4>
+      <ul class="pains">
+        <li class="ok">浏览器随机挑私钥 a，发出公钥 A = a·G；服务器挑私钥 b，发出 B = b·G</li>
+        <li class="ok">双方各自算 a·B 和 b·A，结果相同，再从它派生出 AES 密钥</li>
+        <li class="ok">路上的人只看到 A 和 B，算不出 a·b·G（椭圆曲线离散对数问题）</li>
+      </ul>
+      <p class="tip">实测 lwn.net：<code>openssl s_client -brief</code> 显示 <code>Protocol version: TLSv1.3</code>、<code>Server Temp Key: X25519</code>、套件 <code>TLS_AES_256_GCM_SHA384</code>。</p>
+    </div>
+    <div class="way" data-role="bk">
+      <h4>证书链：凭什么相信它是 lwn.net</h4>
+      <svg viewBox="0 0 400 168" class="sv" role="img" aria-label="lwn.net 证书由 Let's Encrypt YE2 签发，YE2 由 ISRG Root YE 签发，根证书预装在系统和 JDK 里">
+        <rect x="8" y="8" width="180" height="40" rx="8" class="b-bk"/><text class="t-b" x="98" y="26" text-anchor="middle">lwn.net</text><text class="t-xs" x="98" y="41" text-anchor="middle">叶子证书，服务器发来</text>
+        <rect x="8" y="64" width="180" height="40" rx="8" class="b-bk"/><text class="t-b" x="98" y="82" text-anchor="middle">Let's Encrypt YE2</text><text class="t-xs" x="98" y="97" text-anchor="middle">中间 CA，服务器也要发</text>
+        <rect x="8" y="120" width="180" height="40" rx="8" class="b-card"/><text class="t-b" x="98" y="138" text-anchor="middle">ISRG Root YE</text><text class="t-xs" x="98" y="153" text-anchor="middle">根 CA，客户端本地有</text>
+        <path class="e-bk" d="M98 64 V50" marker-end="url(#ah-bk)"/><path class="e-bk" d="M98 120 V106" marker-end="url(#ah-bk)"/>
+        <text class="t-m" x="206" y="32">用上一级的公钥</text><text class="t-m" x="206" y="48">验下一级的签名</text>
+        <text class="t-m" x="206" y="86">缺了中间证书：</text><text class="t-bad" x="206" y="102">Java 报 PKIX（⑥ 坑 3）</text>
+        <text class="t-m" x="206" y="138">操作系统、浏览器、</text><text class="t-m" x="206" y="154">JDK 的 cacerts 里预装</text>
+      </svg>
+      <p class="tip">实测 lwn.net 一共发来 4 张：叶子、YE2、Root YE，再加一张由 ISRG Root X2 交叉签名的证书，给还没内置新根的老客户端用。</p>
+    </div>
+  </div>
+
+  <figure id="m-cwnd">
+    <h3 class="mech-h"><span class="sn">机制 4</span>慢启动：新连接不敢一口气发太多</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 228" role="img" aria-label="新连接第一批最多发 10 个包，约 14.6 KB；收到确认后翻倍为 20 个、40 个。5.6 KB 第一批就装下，31 KB 要第二批多 1 个 RTT，复用的连接窗口已经变大，一批发完">
+        <text class="t-b" x="16" y="46">拥塞窗口</text><text class="t-xs" x="16" y="64">每格 1 个包 ≈ 1.4 KB</text>
+        <text class="t-m" x="210" y="22">第 1 批（随首字节一起到）</text><text class="t-m" x="440" y="22">第 2 批</text><text class="t-m" x="670" y="22">第 3 批</text>
+        <g><rect x="210" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="227" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="244" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="261" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="278" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="295" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="312" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="329" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="346" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="363" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="440" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="457" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="474" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="491" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="508" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="525" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="542" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="559" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="576" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="593" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="440" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="457" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="474" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="491" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="508" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="525" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="542" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="559" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="576" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="593" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="670" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="687" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="704" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="721" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="738" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="755" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="772" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="789" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="806" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="823" y="34" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="670" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="687" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="704" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="721" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="738" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="755" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="772" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="789" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="806" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="823" y="51" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="670" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="687" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="704" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="721" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="738" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="755" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="772" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="789" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="806" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="823" y="68" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="670" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="687" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="704" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="721" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="738" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="755" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="772" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="789" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="806" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/><rect x="823" y="85" width="14" height="14" rx="3" class="b-of" style="stroke-width:1.2"/></g>
+        <path class="e-of" d="M382 48 H434" marker-end="url(#ah-of)"/><text class="t-of" x="408" y="42" text-anchor="middle">+1 RTT</text>
+        <path class="e-of" d="M612 48 H664" marker-end="url(#ah-of)"/><text class="t-of" x="638" y="42" text-anchor="middle">+1 RTT</text>
+        <text class="t-m" x="210" y="122">10 个包 · 14.6 KB</text><text class="t-m" x="440" y="122">20 个 · 累计 43.8 KB</text><text class="t-m" x="670" y="122">40 个 · 累计 102 KB</text>
+
+        <text class="t-s" x="16" y="154">HN 首页 gzip 后 5.6 KB</text>
+        <rect x="210" y="143" width="64" height="14" rx="3" class="b-good"/><text class="t-good" x="286" y="155">第 1 批就装下 → 下载段 ≈ 0（实测 0.2 ms）</text>
+        <text class="t-s" x="16" y="182">lwn.net 31 KB</text>
+        <rect x="210" y="171" width="167" height="14" rx="3" class="b-of"/><rect x="440" y="171" width="94" height="14" rx="3" class="b-of"/><text class="t-of" x="546" y="183">+1 RTT（实测 248 ms）</text>
+        <text class="t-s" x="16" y="210">复用连接再要 31 KB</text>
+        <rect x="670" y="199" width="89" height="14" rx="3" class="b-good"/><text class="t-good" x="771" y="206">一批发完</text><text class="t-xs" x="771" y="220">实测整次 258 ms</text>
+      </svg>
+    </div>
+    <figcaption>Linux 默认的初始拥塞窗口是 10 个包（RFC 6928）。每收到一批确认，窗口就变大，大约每个 RTT 翻一倍，直到丢包或碰到带宽上限。所以几十 KB 的页面，多一批就多一个 RTT：压缩省下的是来回，不只是字节。“复用连接”那行来自 ↺ 练习 1 的程序：同一条连接上第二次请求同一页，整个请求只花 1 个 RTT。</figcaption>
+  </figure>
+
+  <div class="sub" id="m-server">
+    <h3><span class="sn">机制 5</span>服务器那一截：TTFB = 1 RTT + 服务器耗时<small>后端真正能改的部分</small></h3>
+    <div class="facts">
+      <div class="fact" data-role="g2"><h4>Nginx / 负载均衡</h4><p>常在这里解开 TLS，再用普通 HTTP 转给后端。它和后端之间的连接也有握手成本，老版本默认每个请求都新建，见 <a href="#pit-upstream">⑥ 坑 7</a>。</p></div>
+      <div class="fact" data-role="g2"><h4>Tomcat</h4><p>Acceptor 线程收连接，Poller 用 epoll 盯着哪个 socket 可读，再把请求交给线程池。线程池怎么调度见 <a href="../juc/threadpool-execute.html">ThreadPoolExecutor 那页</a>，epoll 见 <a href="../redis/redis-threading-io.html">Redis 线程模型</a>。</p></div>
+      <div class="fact" data-role="g2"><h4>Spring MVC</h4><p>DispatcherServlet 找到 Controller、调用、把返回值写成响应体。整条链路见 <a href="../spring/spring-mvc-flow.html">Spring MVC 请求流程</a>。</p></div>
+      <div class="fact" data-role="g2"><h4>数据库</h4><p>从连接池借连接。连接池存在的理由和 keep-alive 一样：建连接要握手、要认证，太贵。见 <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a>。</p></div>
+    </div>
+    <p class="tip">并发一高，服务器耗时里会多出排队时间，TTFB 跟着变长，见 <a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a>。</p>
+  </div>
+
+  <figure id="m-render">
+    <h3 class="mech-h"><span class="sn">机制 6</span>渲染：两棵树合起来才能画，同步脚本会叫停解析</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 290" role="img" aria-label="HTML 字节经解析器变成 DOM，CSS 变成 CSSOM，两者合成渲染树后依次布局、绘制、合成上屏；同步 script 会让解析器停下，CSSOM 没准备好就不画；预加载扫描器提前发出下载">
+        <rect x="140" y="16" width="124" height="48" rx="10" class="b-warn"/><text class="t-b" x="202" y="36" text-anchor="middle">同步 &lt;script&gt;</text><text class="t-xs" x="202" y="53" text-anchor="middle">执行前先等前面的 CSS</text>
+        <path class="e-bad" d="M202 64 V96" marker-end="url(#ah-bad)"/><text class="t-bad" x="212" y="86">叫停解析：下载 + 执行完才继续</text>
+        <rect x="430" y="16" width="300" height="48" rx="10" class="b-dash"/><text class="t-b" x="442" y="36">预加载扫描器</text><text class="t-m" x="442" y="54">解析器停下时先往后扫，提前发出下载</text>
+
+        <rect x="16" y="100" width="104" height="48" rx="10" class="b-g2"/><text class="t-b" x="68" y="121" text-anchor="middle">HTML 字节</text><text class="t-xs" x="68" y="138" text-anchor="middle">边下载边交过来</text>
+        <path class="e-mut" d="M120 124 H136" marker-end="url(#ah-mut)"/>
+        <rect x="140" y="100" width="124" height="48" rx="10" class="b-rn"/><text class="t-b" x="202" y="121" text-anchor="middle">解析器</text><text class="t-xs" x="202" y="138" text-anchor="middle">分词、建节点</text>
+        <path class="e-mut" d="M264 124 H280" marker-end="url(#ah-mut)"/>
+        <rect x="284" y="100" width="104" height="48" rx="10" class="b-rn"/><text class="t-b" x="336" y="121" text-anchor="middle">DOM 树</text><text class="t-xs" x="336" y="138" text-anchor="middle">有哪些元素</text>
+
+        <rect x="16" y="196" width="104" height="48" rx="10" class="b-g2"/><text class="t-b" x="68" y="217" text-anchor="middle">CSS 文件</text><text class="t-xs" x="68" y="234" text-anchor="middle">要整份到齐</text>
+        <path class="e-mut" d="M120 220 H136" marker-end="url(#ah-mut)"/>
+        <rect x="140" y="196" width="124" height="48" rx="10" class="b-rn"/><text class="t-b" x="202" y="217" text-anchor="middle">解析规则</text><text class="t-xs" x="202" y="234" text-anchor="middle">选择器 + 声明</text>
+        <path class="e-mut" d="M264 220 H280" marker-end="url(#ah-mut)"/>
+        <rect x="284" y="196" width="104" height="48" rx="10" class="b-rn"/><text class="t-b" x="336" y="217" text-anchor="middle">CSSOM</text><text class="t-xs" x="336" y="234" text-anchor="middle">每个元素的样式</text>
+
+        <path class="e-rn" d="M388 124 C 410 124, 410 160, 426 162" marker-end="url(#ah-rn)"/>
+        <path class="e-rn" d="M388 220 C 410 220, 410 186, 426 184" marker-end="url(#ah-rn)"/>
+        <rect x="430" y="148" width="110" height="48" rx="10" class="b-rn"/><text class="t-b" x="485" y="169" text-anchor="middle">渲染树</text><text class="t-xs" x="485" y="186" text-anchor="middle">样式计算</text>
+        <path class="e-mut" d="M540 172 H556" marker-end="url(#ah-mut)"/>
+        <rect x="560" y="148" width="96" height="48" rx="10" class="b-rn"/><text class="t-b" x="608" y="169" text-anchor="middle">布局</text><text class="t-xs" x="608" y="186" text-anchor="middle">位置、大小</text>
+        <path class="e-mut" d="M656 172 H672" marker-end="url(#ah-mut)"/>
+        <rect x="676" y="148" width="96" height="48" rx="10" class="b-rn"/><text class="t-b" x="724" y="169" text-anchor="middle">绘制</text><text class="t-xs" x="724" y="186" text-anchor="middle">绘制指令</text>
+        <path class="e-mut" d="M772 172 H788" marker-end="url(#ah-mut)"/>
+        <rect x="792" y="148" width="96" height="48" rx="10" class="b-rn"/><text class="t-b" x="840" y="169" text-anchor="middle">合成</text><text class="t-xs" x="840" y="186" text-anchor="middle">上屏</text>
+        <text class="t-bad" x="430" y="222">CSSOM 没准备好：渲染树不建，页面不画（白屏）</text>
+        <text class="t-m" x="430" y="242">CSS 不挡解析，挡的是“画”和后面的同步脚本</text>
+        <text class="t-m" x="16" y="276">async 脚本：下完就插队执行，不等 CSS、不等解析完。defer 脚本：解析完再按顺序执行。⑥ 实验台 B 可以对比四种写法。</text>
+      </svg>
+    </div>
+    <figcaption>HTML 可以边下边解析、边解析边画；CSS 必须整份到齐才能用，所以它挡住首次绘制。同步脚本挡住解析，是因为它可能用 <code>document.write</code> 往后面插内容，也可能读样式和尺寸（为什么必须这样，见下面的设计取舍 C）。预加载扫描器是对这两条规则的补救：解析器停下时，下载不停。</figcaption>
+  </figure>
+
+  <div class="sub" id="why">
+    <h3>为什么这样设计<small>三条约束，各逼出一个设计</small></h3>
+
+    <h4 id="why-a">A · 为什么是三次握手，不是两次</h4>
+    <div class="design">
+      <div class="way" data-role="other">
+        <h4>被放弃的：两次握手</h4>
+        <svg viewBox="0 0 400 220" class="sv" role="img" aria-label="两次握手时，一个迷路很久的旧 SYN 到达服务器，服务器回 SYN-ACK 后就认为连上了，白白占着资源">
+          <text class="t-b" x="60" y="16" text-anchor="middle">客户端</text><text class="t-b" x="300" y="16" text-anchor="middle">服务器</text>
+          <path class="e-life" d="M60 24 V148 M300 24 V148"/>
+          <path class="e-dash" d="M60 36 L296 84" marker-end="url(#ah-mut)"/><text class="t-m halo" x="180" y="52" text-anchor="middle">迷路很久的旧 SYN seq=100</text>
+          <path class="e-mut" d="M300 96 L64 144" marker-end="url(#ah-mut)"/><text class="t-s halo" x="180" y="112" text-anchor="middle">SYN-ACK ack=101</text>
+          <text class="t-bad" x="308" y="100">已建立</text>
+          <text class="t-m" x="16" y="166">不认识，不理</text>
+          <text class="t-bad" x="16" y="190">服务器以为连上了，分配缓冲区干等</text>
+          <text class="t-m" x="16" y="210">它也不知道自己的序号 y 对方收到没有</text>
+        </svg>
+      </div>
+      <div class="way" data-role="pd">
+        <h4>现行：三次握手</h4>
+        <svg viewBox="0 0 400 220" class="sv" role="img" aria-label="三次握手时，客户端收到不认识的 SYN-ACK 会回 RST，服务器丢掉这个半开连接；只有收到第三个包 ACK 才算建立">
+          <text class="t-b" x="60" y="16" text-anchor="middle">客户端</text><text class="t-b" x="300" y="16" text-anchor="middle">服务器</text>
+          <path class="e-life" d="M60 24 V200 M300 24 V200"/>
+          <path class="e-dash" d="M60 36 L296 84" marker-end="url(#ah-mut)"/><text class="t-m halo" x="180" y="52" text-anchor="middle">迷路很久的旧 SYN seq=100</text>
+          <path class="e-pd" d="M300 96 L64 144" marker-end="url(#ah-pd)"/><text class="t-pd halo" x="180" y="112" text-anchor="middle">SYN-ACK ack=101</text>
+          <text class="t-m" x="308" y="100">还没算建立</text>
+          <path class="e-pd" d="M60 150 L296 198" marker-end="url(#ah-pd)"/><text class="t-pd halo" x="180" y="166" text-anchor="middle">RST：我没发过</text>
+          <text class="t-good" x="306" y="204">丢掉</text>
+          <text class="t-m" x="16" y="214">正常情况：第 3 个包 ACK ack=y+1 到了才算建立</text>
+        </svg>
+      </div>
+    </div>
+    <p class="verdict" data-role="pd"><b>约束：</b>网络会把旧包延迟、重复地送到；双方的起始序号都要被对方确认收到。两次握手只确认了客户端的序号，服务器也分不清新旧 SYN（RFC 793 写明三次握手主要就是为了防旧的重复连接请求）。四次也没必要：服务器的 SYN 和 ACK 可以合在一个包里。</p>
+
+    <h4 id="why-b">B · 为什么 TLS 先用非对称、再用对称</h4>
+    <div class="design three">
+      <div class="way" data-role="other">
+        <h4>被放弃的：全程非对称</h4>
+        <ul class="pains"><li>本机一个核：RSA-2048 签名每秒 350 次，X25519 密钥交换每秒约 7 500 次</li><li>同一个核用 AES-128-GCM 加密 16 KB 只要约 5 µs（每秒约 2.9 GB）</li></ul>
+      </div>
+      <div class="way" data-role="other">
+        <h4>被放弃的：事先约好密钥</h4>
+        <ul class="pains"><li>要和世界上每个网站提前约一把密钥，做不到</li><li>密钥一旦泄露，以前录下来的流量全能解开</li></ul>
+      </div>
+      <div class="way" data-role="bk">
+        <h4>现行：握手非对称，数据对称</h4>
+        <ul class="pains"><li class="ok">握手：临时公钥换出会话密钥（ECDHE），证书加签名证明身份</li><li class="ok">之后每条记录用 AES-GCM 这类对称算法加密，快</li><li class="ok">每条连接的密钥都是新的，服务器私钥以后泄露也解不开以前的流量（前向保密）</li></ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="bk"><b>约束：</b>要在一条谁都能偷听的路上，和一台从没打过交道的服务器商量出密钥；后面几 MB 的数据又要加解密得足够快。非对称解决“怎么商量”，对称解决“怎么快”。数字来自本机 <code>openssl speed</code>。</p>
+
+    <h4 id="why-c">C · 为什么同步脚本要叫停解析、CSS 要挡住首屏</h4>
+    <div class="design">
+      <div class="way" data-role="other">
+        <h4>被放弃的：边执行脚本边往下解析</h4>
+<pre><code>&lt;script&gt;
+  document.write('&lt;table&gt;');      <span class="cm">// 往后面插标签</span>
+  let w = box.offsetWidth;          <span class="cm">// 读尺寸，要先有样式</span>
+&lt;/script&gt;</code></pre>
+        <ul class="pains"><li>解析器不等它，后面的 DOM 长什么样就看谁跑得快，每次打开都可能不一样</li><li>不等 CSS 就画：先闪一下没样式的页面（FOUC），CSS 到了再整页重排</li></ul>
+      </div>
+      <div class="way" data-role="rn">
+        <h4>现行：遇到同步脚本就停，CSS 没好不画</h4>
+        <ul class="pains"><li class="ok">结果确定：脚本看到的 DOM 和样式，正好是它前面那部分</li><li>代价是首屏变慢。于是又加了三样东西补救：<code>defer</code>、<code>async</code> 和预加载扫描器，规则不变，下载提前</li></ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="rn"><b>约束：</b>要兼容 90 年代就有的 <code>document.write</code>，又要页面每次打开都长得一样。代价落在首屏上，所以首屏优化的大半功夫都是“别让脚本挡路、让 CSS 早点到”。</p>
+  </div>
+
+  <div class="sub" id="usage">
+    <h3>最少的“语法”：拆开看每一段的工具</h3>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">命令</span>四个就够用</div>
+<pre><code><span class="cm"># ① 各段耗时（都是从开始累计的秒数）</span>
+curl -s -o /dev/null -w 'dns   %{time_namelookup}\ntcp   %{time_connect}\ntls   %{time_appconnect}\nttfb  %{time_starttransfer}\ntotal %{time_total}\n' https://lwn.net/
+
+<span class="cm"># ② DNS 一级一级问下去</span>
+dig +trace lwn.net
+
+<span class="cm"># ③ TLS 版本、密钥交换、证书链</span>
+openssl s_client -connect lwn.net:443 -servername lwn.net -brief &lt;/dev/null
+
+<span class="cm"># ④ 浏览器：DevTools → Network → 点一个请求 → Timing</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">输出</span><span class="tag-real">实测</span>①，这次 DNS 缓存刚好过期</div>
+<pre class="console"><b>dns   0.427562</b>   <span class="cm">← 427 ms：系统缓存过期，重新去问</span>
+<span class="w">tcp   0.660846</span>   <span class="cm">← 233 ms = 1 RTT</span>
+<span class="w">tls   0.939383</span>   <span class="cm">← 279 ms = 1 RTT + 加载 CA 约 37 ms</span>
+<span class="w">ttfb  1.178104</span>   <span class="cm">← 239 ms = 1 RTT + 服务器</span>
+<span class="w">total 1.411235</span>   <span class="cm">← 233 ms：慢启动多 1 批</span></pre>
+      </div>
+    </div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>Chrome Timing 里的名字</th><th>对应全景图</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><th>Queueing / Stalled</th><td>还没出门</td><td>在排队：HTTP/1.1 下同一域名 6 条连接都忙，或者在等磁盘缓存</td></tr>
+          <tr><th>DNS Lookup</th><td>③</td><td>命中缓存时不显示</td></tr>
+          <tr><th>Initial connection</th><td>④ + ⑤</td><td>包含 TCP 和 TLS；其中 TLS 那部分另外显示成 SSL</td></tr>
+          <tr><th>Request sent</th><td>⑥</td><td>把请求写出去，通常不到 1 ms</td></tr>
+          <tr><th>Waiting for server response</th><td>⑥ → 服务器 → 首字节</td><td>就是 TTFB：1 RTT + 服务器耗时</td></tr>
+          <tr><th>Content Download</th><td>首字节 → 最后一个字节</td><td>慢启动的那几批在这里</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note-box"><b>放到 ⑥</b><span>HTTP/2 和 HTTP/3 的帧、TCP 的重传和挥手、各种缓存头的细节、浏览器内部的进程分工，先不展开。curl 的 <code>time_appconnect</code> 里还混着本地加载 CA 证书包的时间（本机 OpenSSL 3.0 约 37 ms），比较握手快慢时加 <code>-k</code> 或者看差值。</span></p>
+  </div>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>手推一遍：本机打开 lwn.net，每一步多少毫秒</h2>
+    <p class="lead">先跟着时序图一步步走，用“来回次数”自己算总时间；再跑一个 80 行的 Java 程序，把前五步真的走一遍。图里联网的数字都是这个程序实测的，CSS 和渲染两步是估算。</p>
+  </div>
+
+  <div class="stage" id="walk" tabindex="0" aria-label="打开 lwn.net 的分步时序图，左右方向键切换步骤">
+    <div class="st-top">
+      <div class="ctrl">
+        <button class="btn" type="button" id="wk-prev">← 上一步</button>
+        <button class="btn primary" type="button" id="wk-next">下一步 →</button>
+        <button class="btn" type="button" id="wk-play">自动播放</button>
+        <button class="btn" type="button" id="wk-reset">从头来</button>
+      </div>
+      <span class="st-pos" id="wk-pos">第 <b>0</b> / 7 步</span>
+    </div>
+    <p class="cap-txt" id="wk-cap">回车。</p>
+    <div class="ledger" id="wk-ledger">
+      <div class="lg-c" data-role="of"><small>从回车算起</small><b id="lg-t">0 ms</b><span>时序图向下就是时间</span></div>
+      <div class="lg-c" data-role="of"><small>跑了几个来回</small><b id="lg-r">0</b><span>RTT ≈ 235 ms</span></div>
+      <div class="lg-c" data-role="g2"><small>服务器耗时</small><b id="lg-s">0 ms</b><span>后端能改的部分</span></div>
+      <div class="lg-c" data-role="done"><small>真正传字节</small><b id="lg-b">0 ms</b><span>按 100 Mbps 估</span></div>
+    </div>
+    <div class="svg-scroll">
+      <svg id="seq" class="sv" viewBox="0 0 900 660" role="img" aria-label="打开 lwn.net 的时序图：DNS 5 毫秒，TCP、TLS、首字节、下载各一个往返，再加 CSS 一个往返和渲染，首次绘制约 1.2 秒">
+        <rect x="190" y="12" width="120" height="30" rx="8" class="b-card"/><text class="t-b" x="250" y="32" text-anchor="middle">浏览器</text>
+        <rect x="326" y="12" width="88" height="30" rx="8" class="b-cg"/><text class="t-b" x="370" y="32" text-anchor="middle">系统 DNS</text>
+        <rect x="700" y="12" width="120" height="30" rx="8" class="b-g2"/><text class="t-b" x="760" y="32" text-anchor="middle">lwn.net</text>
+        <path class="e-life" d="M250 46 V646 M760 46 V646"/>
+        <path class="e-life" d="M370 46 V96"/>
+
+        <g class="st" data-s="1">
+          <path class="e-cg arw" d="M250 70 H366" marker-end="url(#ah-cg)"/><path class="e-cg arw" d="M370 80 H254" marker-end="url(#ah-cg)"/>
+          <text class="t-cg halo-c" x="382" y="80">lwn.net → 173.255.236.65 · 5 ms，系统缓存命中</text>
+        </g>
+        <g class="st" data-s="2">
+          <path class="e-pd arw" d="M250 76.3 L756 128.8" marker-end="url(#ah-pd)"/><text class="t-pd halo-c" x="505" y="96" text-anchor="middle">SYN</text>
+          <path class="e-pd arw" d="M760 128.8 L254 181.4" marker-end="url(#ah-pd)"/><text class="t-pd halo-c" x="505" y="148" text-anchor="middle">SYN-ACK</text>
+          <path class="e-pd" d="M240 76.3 H234 V181.4 H240" style="stroke-width:1.6"/><text class="t-pd" x="228" y="133" text-anchor="end">TCP 1 RTT</text>
+          <text class="t-monos" x="16" y="185">239 ms</text>
+        </g>
+        <g class="st" data-s="3">
+          <path class="e-bk arw" d="M250 181.4 L756 235" marker-end="url(#ah-bk)"/><text class="t-bk halo-c" x="505" y="201" text-anchor="middle">ACK ＋ ClientHello（临时公钥 A）</text>
+          <path class="e-bk arw" d="M760 235 L254 288.7" marker-end="url(#ah-bk)"/><text class="t-bk halo-c" x="505" y="255" text-anchor="middle">ServerHello ＋ {证书, Finished}</text>
+          <path class="e-bk" d="M240 181.4 H234 V288.7 H240" style="stroke-width:1.6"/><text class="t-bk" x="228" y="239" text-anchor="end">TLS 1 RTT</text>
+          <text class="t-monos" x="16" y="292">477 ms</text>
+        </g>
+        <g class="st" data-s="4">
+          <path class="e-g2 arw" d="M250 288.7 L756 340.8" marker-end="url(#ah-g2)"/><text class="t-g2 halo-c" x="505" y="308" text-anchor="middle">{Finished} ＋ {GET / HTTP/1.1}</text>
+          <rect x="754" y="340.8" width="12" height="3" class="f-g2"/><text class="t-m" x="772" y="346">生成页面约 6 ms</text>
+          <path class="e-g2 arw" d="M760 343.5 L254 395.5" marker-end="url(#ah-g2)"/><text class="t-g2 halo-c" x="505" y="362" text-anchor="middle">第 1 批：10 个包 ≈ 14.6 KB（首字节）</text>
+          <path class="e-g2" d="M240 288.7 H234 V395.5 H240" style="stroke-width:1.6"/><text class="t-g2" x="228" y="343" text-anchor="end">首字节 1 RTT</text>
+          <text class="t-monos" x="16" y="399">715 ms</text>
+        </g>
+        <g class="st" data-s="5">
+          <path class="e-of arw" d="M250 395.5 L756 448.5" marker-end="url(#ah-of)"/><text class="t-of halo-c" x="505" y="415" text-anchor="middle">ACK：前面的收到了</text>
+          <text class="t-m" x="772" y="452">窗口翻倍</text>
+          <path class="e-of arw" d="M760 448.5 L254 501.4" marker-end="url(#ah-of)"/><text class="t-of halo-c" x="560" y="471" text-anchor="middle">第 2 批：剩下的 17 KB</text>
+          <path class="e-of" d="M240 395.5 H234 V501.4 H240" style="stroke-width:1.6"/><text class="t-of" x="228" y="452" text-anchor="end">下载 +1 RTT</text>
+          <text class="t-monos" x="16" y="505">950 ms</text>
+        </g>
+        <g class="st" data-s="6">
+          <text class="t-rn halo-c" x="262" y="458">边收边解析，读到 &lt;link /CSS/lwn&gt;</text>
+          <path class="e-rn arw" d="M250 501.4 L756 554.3" marker-end="url(#ah-rn)"/><text class="t-rn halo-c" x="505" y="521" text-anchor="middle">GET /CSS/lwn（等 HTML 下完，复用这条连接）</text>
+          <text class="t-m" x="772" y="558">静态文件</text>
+          <path class="e-rn arw" d="M760 554.3 L254 607.2" marker-end="url(#ah-rn)"/><text class="t-rn halo-c" x="505" y="574" text-anchor="middle">CSS 19 KB：窗口已经涨大，一批到齐</text>
+          <path class="e-rn" d="M240 501.4 H234 V607.2 H240" style="stroke-width:1.6"/><text class="t-rn" x="228" y="558" text-anchor="end">CSS 1 RTT</text>
+          <text class="t-monos" x="16" y="611">≈ 1185 ms</text>
+        </g>
+        <g class="st" data-s="7">
+          <rect x="176" y="609" width="148" height="24" rx="6" class="b-rn"/><text class="t-xs" x="250" y="625" text-anchor="middle">样式 → 布局 → 绘制 → 合成</text>
+          <text class="t-rn" x="338" y="638">首次绘制 ≈ 1.2 s（渲染按 30 ms 估）</text>
+          <text class="t-m" x="338" y="655">图片在 static.lwn.net：另一个域名，要重新 DNS + TCP + TLS，但不挡首次绘制</text>
+        </g>
+        <g id="seq-now"><path class="e-ofd" d="M240 0 H890"/><text class="t-of halo-c" x="890" y="-6" text-anchor="end" id="seq-now-t">t = 0</text></g>
+      </svg>
+    </div>
+  </div>
+
+  <div class="note-box"><b>自己算</b><span>RTT ≈ 235 ms：TCP 1 + TLS 1 + 首字节 1 + 下载 1 + CSS 1 = <b>5 个来回 ≈ 1.18 s</b>，再加 DNS 5 ms、服务器 6 ms、渲染约 30 ms，约 1.2 s。真正传字节（31 KB + 19 KB，按 100 Mbps）只要 4 ms 左右。如果 DNS 没缓存（冷查询实测 427～837 ms），或者用户敲的是 http://（先 301，再多 2 个来回），就到 2 秒了。</span></div>
+
+  <div class="sub" id="mini">
+    <h3>动手：MiniBrowser.java，把前五步真的走一遍<small>不用任何 HTTP 库</small></h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">代码</span><b>MiniBrowser.java</b>JDK 11+：<code>java MiniBrowser.java https://lwn.net/</code>　JDK 8：<code>javac MiniBrowser.java &amp;&amp; java MiniBrowser https://lwn.net/</code>　第二个参数可写 <code>TLSv1.2</code></div>
+<pre><code>import javax.net.ssl.*;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.*;
+
+<span class="cm">/** 不用任何 HTTP 库，把浏览器联网那半段自己走一遍。JDK 8 起都能编译运行。 */</span>
+public class MiniBrowser {
+    public static void main(String[] args) throws Exception {
+        URI url = URI.create(args.length &gt; 0 ? args[0] : "https://lwn.net/");
+        String tlsVer = args.length &gt; 1 ? args[1] : null;                 <span class="cm">// 可选：TLSv1.2 / TLSv1.3</span>
+        SSLSocketFactory factory = SSLContext.getDefault().getSocketFactory(); <span class="cm">// 加载信任库，不计时</span>
+        for (int round = 1; round &lt;= 2; round++) fetch(url, tlsVer, factory, round);
+    }
+
+    static void fetch(URI url, String tlsVer, SSLSocketFactory factory, int round) throws Exception {
+        String host = url.getHost();
+        int port = url.getPort() == -1 ? 443 : url.getPort();
+        String path = url.getRawPath().isEmpty() ? "/" : url.getRawPath();
+        long[] us = new long[5];                                          <span class="cm">// 每一段的耗时，单位微秒</span>
+        long t = System.nanoTime();
+
+        InetAddress ip = InetAddress.getByName(host);                     <span class="cm">// ① DNS：名字 → IP</span>
+        us[0] = lap(t); t = System.nanoTime();
+
+        Socket tcp = new Socket();
+        tcp.setTcpNoDelay(true);                                          <span class="cm">// 关掉 Nagle，浏览器也是这样（⑥ 坑 6）</span>
+        tcp.connect(new InetSocketAddress(ip, port), 5000);               <span class="cm">// ② TCP 三次握手</span>
+        us[1] = lap(t); t = System.nanoTime();
+
+        SSLSocket s = (SSLSocket) factory.createSocket(tcp, host, port, true); <span class="cm">// ③ TLS 握手，SNI = host</span>
+        if (tlsVer != null) s.setEnabledProtocols(new String[]{tlsVer});
+        s.startHandshake();
+        us[2] = lap(t); t = System.nanoTime();
+
+        OutputStream out = s.getOutputStream();                           <span class="cm">// ④ HTTP 请求就是几行文本</span>
+        out.write(("GET " + path + " HTTP/1.1\r\n"
+                + "Host: " + host + "\r\n"
+                + "User-Agent: MiniBrowser/1.0\r\n"
+                + "Accept: text/html\r\n"
+                + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+        out.flush();
+        InputStream in = s.getInputStream();
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(in.read());                                            <span class="cm">// 阻塞到第一个字节回来</span>
+        us[3] = lap(t); t = System.nanoTime();
+
+        byte[] buf = new byte[16384];                                     <span class="cm">// ⑤ 读到服务器关连接为止</span>
+        for (int n; (n = in.read(buf)) != -1; ) body.write(buf, 0, n);
+        us[4] = lap(t);
+        String proto = s.getSession().getProtocol();
+        s.close();
+
+        String[] name = {"DNS", "TCP", "TLS", "首字节", "下载完"};
+        StringBuilder line = new StringBuilder("第 " + round + " 次 ");
+        long sum = 0;
+        for (int i = 0; i &lt; 5; i++) {
+            sum += us[i];
+            line.append(String.format(" %s %.1f", name[i], us[i] / 1000.0));
+            if (i &gt; 0) line.append(String.format("(%.1f RTT)", (double) us[i] / us[1]));
+        }
+        System.out.println(line + String.format("  合计 %.1f ms", sum / 1000.0));
+        if (round == 2) report(host, ip, proto, body.toString("UTF-8"));
+    }
+
+    static long lap(long start) { return (System.nanoTime() - start) / 1000; }
+
+    static void report(String host, InetAddress ip, String proto, String resp) {
+        int split = resp.indexOf("\r\n\r\n");
+        String[] head = resp.substring(0, split).split("\r\n");
+        String html = resp.substring(split + 4);
+        System.out.println("\n" + host + " → " + ip.getHostAddress() + " · " + proto);
+        System.out.println(head[0] + " · 响应 " + resp.length() + " 字节");
+        for (String h : head)
+            if (h.matches("(?i)(content-type|cache-control|content-encoding|transfer-encoding):.*"))
+                System.out.println("  " + h);
+        System.out.println("HTML 里还引用了（浏览器接着要去下载）：");          <span class="cm">// ⑥ 读 HTML，发现子资源</span>
+        Matcher m = Pattern.compile("&lt;(link|script|img)\\b[^&gt;]*?\\b(?:href|src)=\"([^\"]+)\"",
+                Pattern.CASE_INSENSITIVE).matcher(html);
+        while (m.find()) System.out.println("  &lt;" + m.group(1) + "&gt; " + m.group(2));
+    }
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">输出</span><span class="tag-real">实测</span>OpenJDK 21.0.12 · 本机 → lwn.net</div>
+<pre class="console"><span class="w">第 1 次  DNS 5.1 TCP 239.8(1.0 RTT) TLS 478.0(2.0 RTT) 首字节 262.1(1.1 RTT) 下载完 234.1(1.0 RTT)  合计 1219.2 ms</span>
+<b>第 2 次  DNS 0.0 TCP 233.5(1.0 RTT) TLS 238.5(1.0 RTT) 首字节 237.4(1.0 RTT) 下载完 235.3(1.0 RTT)  合计 944.7 ms</b>
+
+<span class="w">lwn.net → 173.255.236.65 · TLSv1.3</span>
+<span class="w">HTTP/1.1 200 OK · 响应 32247 字节</span>
+<span class="w">  Cache-Control: max-age=0, no-cache</span>
+<span class="w">  Transfer-Encoding: chunked</span>
+<span class="w">  Content-Type: text/html; charset=utf-8</span>
+<span class="w">HTML 里还引用了（浏览器接着要去下载）：</span>
+<span class="w">  &lt;link&gt; https://static.lwn.net/images/favicon.png</span>
+<span class="w">  &lt;link&gt; https://lwn.net/headlines/rss</span>
+<span class="w">  &lt;link&gt; /CSS/lwn</span>
+<span class="w">  &lt;img&gt; https://static.lwn.net/images/logo/barepenguin-70.webp</span>
+<span class="w">  &lt;img&gt; https://static.lwn.net/images/lcorner-ss.png</span></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>第 2 次每一段都是 1.0 个 RTT：TCP、TLS 1.3、首字节、下载，和 ④ 的尺子一样。31 KB 下载那段多出来的 1 个来回就是慢启动（④ 机制 4）。</span></li>
+      <li><b>2</b><span>第 1 次的 TLS 是 2.0 个 RTT：不是协议多了一个来回，而是 JVM 第一次握手要加载、解释执行加密代码，多花了约 240 ms，第 2 次就没有了。服务刚启动时第一批 HTTPS 调用偏慢，一部分原因在这里。</span></li>
+      <li><b>3</b><span>第 2 次的 DNS 是 0.0 ms：JVM 自己缓存了解析结果，默认 30 秒（⑥ 坑 1）。第 1 次的 5 ms 是问操作系统，系统缓存命中。</span></li>
+      <li><b>4</b><span>响应头里 <code>Transfer-Encoding: chunked</code>：服务器边生成边发，没法提前给 <code>Content-Length</code>，程序把分块标记也算进了 32247 字节。<code>/CSS/lwn</code> 是 ⑥ 实验台 B 里那种“挡住首次绘制”的 CSS。</span></li>
+    </ul>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>同一份 class（<code>--release 8</code> 编译）</th><th>Temurin 8u512</th><th>Temurin 17.0.21</th><th>OpenJDK 21.0.12</th></tr></thead>
+        <tbody>
+          <tr><th>默认启用的客户端协议</th><td colspan="3"><code>TLSv1.3, TLSv1.2</code>，和 lwn.net 协商出 TLSv1.3<span class="tag-real">实测</span></td></tr>
+          <tr><th>第 1 次 TLS（JVM 冷）</th><td class="num">461 ms · 1.9 RTT</td><td class="num">422 ms · 1.7 RTT</td><td class="num">478 ms · 2.0 RTT</td></tr>
+          <tr><th>第 2 次 TCP / TLS / 首字节 / 下载</th><td class="num">253 / 273 / 260 / 256</td><td class="num">257 / 269 / 248 / 262</td><td class="num">234 / 239 / 237 / 235</td></tr>
+          <tr><th>第 2 次合计</th><td class="num">1043 ms</td><td class="num">1036 ms</td><td class="num">945 ms</td></tr>
+          <tr><th>JVM DNS 缓存默认值</th><td colspan="3">成功结果 30 秒、失败结果 10 秒（三个版本反射读 <code>sun.net.InetAddressCachePolicy</code> 都是这个值）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">三个版本的差别在线路抖动的范围之内（RTT 在 230～260 ms 之间跳）。OpenJDK 8 从 8u272 起带 TLS 1.3，但客户端默认关着；8u352 起默认打开（JDK-8245263），更老的 JDK 8 和这台服务器只能谈出 TLS 1.2，握手会是 2 个来回。</p>
+
+    <div class="done-box"><b>到这里已经能交差了：</b>面试时能按 12 站把过程讲完，并说清每一站要几个来回；线上“页面慢”时，能用 <code>curl -w</code> 或 Timing 面板把时间拆到 DNS、连接、TLS、TTFB、下载这几段，再判断是网络、协议还是后端的问题。</div>
+    <div class="todo">
+      <b>已知还没处理的细节</b>
+      <ul>
+        <li>MiniBrowser 每次都新建连接，没复用 → <a href="#loop">↺ 练习 1</a>、<a href="#c2">⑥ 规范</a></li>
+        <li>没处理 <code>http://</code> 的 301 跳转 → <a href="#pit-redirect">⑥ 坑 2</a></li>
+        <li>没要 gzip，也没解 chunked → <a href="#c2">⑥ 规范：开压缩</a></li>
+        <li>没有缓存，每次都要回服务器问 → <a href="#pit-cache">⑥ 坑 5</a></li>
+        <li>只会 HTTP/1.1 → <a href="#c3">⑥ 第三圈：HTTP/2、HTTP/3</a></li>
+        <li>不渲染，只把子资源列了出来 → <a href="#lab-b">⑥ 实验台 B</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>边界和变体：哪些地方会多跑来回，哪些地方会出事</h2>
+    <p class="lead">按三圈排：先是不知道就会出事故的坑，每条都标了根源在 ④ 的哪一条；再是团队里该怎么配；最后是协议和浏览器的深处，两个实验台都在第三圈。</p>
+  </div>
+
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-dns">
+        <b><em>坑 1</em>切了 DNS，Java 服务还连着旧 IP<a class="root" href="#m-dns">← ④ 机制 2 每层都缓存</a></b>
+        <dl>
+          <dt>现象</dt><dd>数据库主备切换或服务迁移后改了 DNS，别的客户端都切过去了，Java 进程还在连旧地址，过一阵才好，有的一直不好。</dd>
+          <dt>根源</dt><dd>JVM 自己也是一层 DNS 缓存：没装 SecurityManager 时，成功结果默认缓存 30 秒、失败结果 10 秒（JDK 8 / 17 / 21 实测相同）；装了 SecurityManager 又没配，就永久缓存。更常见的是连接池里的老连接：连接不断，就根本不会重新解析。</dd>
+          <dt>做法</dt><dd class="fix">启动参数 <code>-Dsun.net.inetaddr.ttl=60</code>，或在第一次解析之前 <code>Security.setProperty("networkaddress.cache.ttl", "60")</code>；连接池设最大寿命（HikariCP 的 <code>maxLifetime</code>），老连接到期重建。JDK 21 新增 <code>networkaddress.cache.stale.ttl</code>，DNS 服务器挂了时可以先用过期的结果顶一阵。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-redirect">
+        <b><em>坑 2</em>用户敲 lwn.net，先被 301 一趟<a class="root" href="#m-map">← ④ 机制 1 ① 解析输入</a></b>
+        <dl>
+          <dt>现象</dt><dd><code>curl -L http://lwn.net/</code> 实测：重定向那一跳花了 511 ms，正好 2 个来回（连 80 端口 + 请求拿到 301），之后才开始 https 的握手。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>浏览器不知道这个网站只支持 https，只能先用 http 试；301 本身就是一次完整的请求。</dd>
+          <dt>做法</dt><dd class="fix">响应加 <code>Strict-Transport-Security: max-age=31536000</code>（lwn.net 实测就带了），浏览器记住后直接走 https；想连第一次访问也省掉，就申请加入 HSTS preload 名单。页面和接口里的链接直接写 https。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-pkix">
+        <b><em>坑 3</em>Java 调 HTTPS 报 PKIX path building failed，浏览器却打得开<a class="root" href="#m-tls">← ④ 机制 3 证书链</a></b>
+        <dl>
+          <dt>现象</dt><dd><code>SSLHandshakeException: PKIX path building failed … unable to find valid certification path to requested target</code></dd>
+          <dt>根源</dt><dd>两种常见情况。一是服务器只发了叶子证书，漏了中间证书：浏览器常常会自己补（顺着证书里的 AIA 地址去下载，或者用缓存过的中间证书），JDK 默认不补（<code>com.sun.security.enableAIAcaIssuers</code> 默认 false，JDK 8 和 21 源码都是）。二是公司内网 CA 或自签证书，不在 JDK 的 cacerts 里。</dd>
+          <dt>做法</dt><dd class="fix">服务器配完整链（Nginx 的 <code>ssl_certificate</code> 指向 fullchain）；内网 CA 用 <code>keytool -importcert</code> 导入信任库。别写“信任所有证书”的 TrustManager 糊过去，那等于把 TLS 的身份验证关了。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-block">
+        <b><em>坑 4</em>白屏很久，接口明明很快<a class="root" href="#m-render">← ④ 机制 6 渲染阻塞</a></b>
+        <dl>
+          <dt>现象</dt><dd>TTFB 只有一两百毫秒，首次绘制却要两三秒；DevTools 的 Performance 面板里，开头一大段在等脚本下载或执行。</dd>
+          <dt>根源</dt><dd><code>&lt;head&gt;</code> 里的同步 <code>&lt;script&gt;</code> 叫停了解析，body 还没解析，就没东西可画；或者 CSS 很大、放在慢的域名上，CSSOM 迟迟不好。</dd>
+          <dt>做法</dt><dd class="fix">要等 DOM 的脚本加 <code>defer</code>，统计这类独立脚本用 <code>async</code>；首屏用不到的 CSS 拆出去，关键 CSS 尽量小。下面的实验台 B 可以对比四种写法。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-cache">
+        <b><em>坑 5</em>发版后，用户看到的还是旧页面、旧 JS<a class="root" href="#m-map">← ④ 机制 1 ② 查缓存</a></b>
+        <dl>
+          <dt>现象</dt><dd>后端发了新版本，部分用户页面报错或样式错乱，强制刷新就好了。</dd>
+          <dt>根源</dt><dd>强缓存（<code>Cache-Control: max-age=…</code>）有效期内，浏览器根本不发请求，连 304 都不问。HTML 被强缓存，或者 JS 改了内容、文件名没变，就会拿到旧的。</dd>
+          <dt>做法</dt><dd class="fix">JS、CSS 的文件名带内容 hash（<code>app.3f9c2a.js</code>），配 <code>Cache-Control: max-age=31536000, immutable</code>；HTML 用 <code>no-cache</code>，每次带 <code>If-None-Match</code> 回来问，没变就回 304。lwn.net 的首页就是 <code>no-cache</code>（⑤ 实测）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-nagle">
+        <b><em>坑 6</em>自己写的 Socket 客户端，每个请求都慢 1 个来回<a class="root" href="#m-tls">← ④ 机制 3 TCP</a></b>
+        <dl>
+          <dt>现象</dt><dd>把 ⑤ MiniBrowser 里的 <code>setTcpNoDelay(true)</code> 删掉再跑，第 2 次的首字节从 1.0 个 RTT 变成 2.2 个，连跑三遍都这样；curl 和浏览器没有这个问题。<span class="seen">实测 JDK 21</span></dd>
+          <dt>根源</dt><dd>Nagle 算法：前面发出的数据还没被确认时，新的小数据先攒着不发。TLS 1.3 客户端最后发的 Finished 还没被确认，紧接着写的 GET 就被攒住，要等服务器的 ACK 回来才发出去。</dd>
+          <dt>做法</dt><dd class="fix">自己用 Socket 写客户端或 RPC 时设 <code>setTcpNoDelay(true)</code>。JDK 的 <code>HttpURLConnection</code> 和 JDK 11+ 的 <code>HttpClient</code> 源码里已经设了，Netty 默认打开，Tomcat 连接器的 <code>tcpNoDelay</code> 默认也是 true。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-upstream">
+        <b><em>坑 7</em>Nginx 转给 Tomcat，每个请求都新建连接<a class="root" href="#m-tls">← ④ 机制 3 握手的代价</a></b>
+        <dl>
+          <dt>现象</dt><dd>压测时机器上一大片 TIME_WAIT，Nginx 日志偶尔报 <code>connect() failed (99: Cannot assign requested address)</code>（Nginx 本地端口用光）；后端 RT 里每次都多一次握手。</dd>
+          <dt>根源</dt><dd>nginx 1.29.7 之前，<code>proxy_http_version</code> 默认 1.0，upstream 也默认不缓存连接，每个请求都和后端握手、用完就断。TCP 断开时先关的一方要在 TIME_WAIT 里待 60 秒（Linux），先关的是 Nginx 时，它的本地端口就一个个被占住。</dd>
+          <dt>做法</dt><dd class="fix">老版本：<code>upstream app { server 10.0.0.5:8080; keepalive 32; }</code>，location 里加 <code>proxy_http_version 1.1;</code> 和 <code>proxy_set_header Connection "";</code>。nginx 1.29.7 起（1.30 稳定版）默认就是 HTTP/1.1 加 <code>keepalive 32</code>（官方文档）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-six">
+        <b><em>坑 8</em>请求一多，后面的全在排队<a class="root" href="#s3">← ③ HTTP/1.1 一问一答</a></b>
+        <dl>
+          <dt>现象</dt><dd>一个页面从同一个域名拉几十个小图标、接口，Timing 面板里后面的请求有一大段 Queueing / Stalled。</dd>
+          <dt>根源</dt><dd>HTTP/1.1 的一条连接同一时间只跑一个请求，浏览器对同一个域名最多开 6 条，第 7 个只能等前面谁空出来。每条新连接还要各自握手。</dd>
+          <dt>做法</dt><dd class="fix">入口（Nginx、CDN、负载均衡）开 HTTP/2，一条连接同时跑所有请求；或者合并请求、减少数量。别再用“拆好几个域名”绕开 6 条的限制，那在 HTTP/2 下反而多了握手。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>全站 https，加 HSTS</b><p><code>Strict-Transport-Security: max-age=31536000; includeSubDomains</code>，链接直接写 https。</p><p class="guard">每次先 301，多跑 2 个来回（坑 2）</p></div>
+      <div class="rl"><b>静态文件名带 hash、长缓存；HTML 用 no-cache</b><p>构建工具生成 <code>app.[hash].js</code>，Nginx 按路径配两种 <code>Cache-Control</code>。</p><p class="guard">发版后用户拿到旧文件（坑 5）</p></div>
+      <div class="rl"><b>入口开 TLS 1.3 和 HTTP/2</b><p>Nginx：<code>ssl_protocols TLSv1.2 TLSv1.3;</code>；1.25.1 起写 <code>http2 on;</code>，更老的版本写在 <code>listen 443 ssl http2;</code> 上。</p><p class="guard">新连接多 1 个来回、同域名请求排队（坑 8）</p></div>
+      <div class="rl"><b>文本响应开压缩</b><p>Spring Boot：<code>server.compression.enabled=true</code>，默认是关的，开了以后默认只压 2 KB 以上的 html、css、js、json、xml（3.5.16 配置元数据）；Nginx：<code>gzip on;</code>。</p><p class="guard">HTML 超出第一批，多等 1 个来回（HN 实测 34 KB → 5.6 KB，下载段 1 RTT → 0）</p></div>
+      <div class="rl"><b>服务间的 HTTP 客户端：单例 + 连接池</b><p>JDK <code>HttpClient</code>、OkHttp、Apache HttpClient 都是一个实例一个连接池，每次 new 一个就等于每次都握手。</p><p class="guard">每次调用多 2～3 个来回（curl 实测复用后 262 ms，新建 1048 ms）</p></div>
+      <div class="rl"><b>JVM 显式设置 DNS 缓存时间</b><p><code>-Dsun.net.inetaddr.ttl=60</code>，连接池配 <code>maxLifetime</code>。</p><p class="guard">切了 DNS 不生效（坑 1）</p></div>
+      <div class="rl"><b>证书部署完整链</b><p>部署 fullchain，上线后用 <code>openssl s_client -showcerts</code> 看服务器到底发了几张。</p><p class="guard">Java 客户端报 PKIX（坑 3）</p></div>
+      <div class="rl"><b>Nginx 到后端复用连接</b><p>nginx 1.29.7 之前手动配 <code>keepalive</code> + <code>proxy_http_version 1.1</code> + 清空 <code>Connection</code> 头。</p><p class="guard">TIME_WAIT 堆积、端口耗尽（坑 7）</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>深处：协议的代际、浏览器内部、两个实验台</h3></div>
+    <div class="deep">
+      <div class="dp" data-role="g2">
+        <h4>HTTP/1.1 → 2 → 3：队头阻塞挪了两次家</h4>
+        <ul>
+          <li><b>HTTP/1.1</b>：一条连接上请求一个接一个，前一个慢，后面全等（HTTP 层的队头阻塞），所以浏览器开 6 条。</li>
+          <li><b>HTTP/2</b>：请求切成帧，多个流在一条连接上交错，头部用 HPACK 压缩。但 TCP 只有一条字节流，丢一个包，所有流一起等重传（TCP 层的队头阻塞）。</li>
+          <li><b>HTTP/3</b>：QUIC 在 UDP 上自己做可靠传输和加密，每个流单独重传；传输和 TLS 1.3 的握手合成 1 个来回；Wi-Fi 切 4G 时连接不断，因为它用连接 ID 而不是“IP + 端口”认连接。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="of">
+        <h4>实测：HTTP/2 不一定更快<span class="tag-real">实测</span></h4>
+        <p>curl <code>--parallel --parallel-max 6</code>，本机到 haskell.org（RTT 约 232 ms），各跑 3 遍：</p>
+        <ul>
+          <li>18 个 11.5 KB 的响应：HTTP/1.1（6 条连接）1.41～1.50 s，HTTP/2（1 条连接）1.64～1.70 s</li>
+          <li>18 个 146 B 的响应：HTTP/2 1.15～1.17 s，HTTP/1.1 1.20～1.25 s</li>
+        </ul>
+        <p>冷启动时每条 TCP 连接各有一个 10 包的初始窗口，6 条就是 60 个包；HTTP/2 只有一条连接的 10 个包，要多翻几倍才追上（④ 机制 4）。响应很小时窗口不是瓶颈，HTTP/2 省下的握手占上风。curl 自己的调度方式也会影响结果，这组数字说明的是方向。</p>
+      </div>
+      <div class="dp" data-role="bk">
+        <h4>0-RTT 的代价：请求可能被重放</h4>
+        <p>TLS 1.3 和 QUIC 回访时，可以把请求跟第一个握手包一起发出去，少 1 个来回。可这份“早到的数据”能被人录下来再发一遍，服务器分不出来。所以它只能用于幂等的请求（GET 查询），下单、支付不能走 0-RTT。Nginx 的 <code>ssl_early_data</code> 默认是 off。</p>
+      </div>
+      <div class="dp" data-role="pd">
+        <h4>四次挥手和 TIME_WAIT</h4>
+        <p>断开时两个方向各关各的：FIN → ACK → FIN → ACK。先关的一方进 TIME_WAIT，等 2MSL（Linux 固定 60 秒）再真正释放，原因有两个：最后那个 ACK 丢了，对方会重发 FIN，得有人回；旧连接迟到的包要等它在网络里消失，免得串进用同一组 IP 和端口的新连接。谁先关谁背 TIME_WAIT，所以短连接多的一方要注意（坑 7）。</p>
+      </div>
+      <div class="dp" data-role="rn">
+        <h4>浏览器内部：几个进程分工</h4>
+        <ul>
+          <li>浏览器进程：地址栏、导航、权限、管理其他进程。</li>
+          <li>网络服务：DNS、连接池、HTTP 缓存（Chrome 里通常单独一个进程）。</li>
+          <li>渲染进程：一般每个站点一个，在沙箱里跑解析、JS、样式、布局、绘制。</li>
+          <li>GPU 进程：合成上屏。</li>
+        </ul>
+        <p>这样拆，一个页面崩了不拖垮别的；渲染进程跑的是不可信的网页代码，要关在沙箱里。</p>
+      </div>
+      <div class="dp" data-role="rn">
+        <h4>回流和重绘：改样式的代价不一样</h4>
+        <ul>
+          <li>改 <code>width</code>、<code>top</code>、字体：布局 + 绘制 + 合成都重来（回流）。</li>
+          <li>改 <code>color</code>、<code>background</code>：绘制 + 合成（重绘）。</li>
+          <li>改 <code>transform</code>、<code>opacity</code>（元素在单独的合成层上）：只合成，主线程不用动，动画首选。</li>
+          <li>读 <code>offsetWidth</code> 会逼浏览器马上算一次布局；循环里“写一次、读一次”最慢。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="g2">
+        <h4>SSR、CSR、SSG：首屏差几个来回</h4>
+        <ul>
+          <li><b>CSR</b>（单页应用）：空壳 HTML → 下载 JS → 执行 → 再调接口拿 JSON → 渲染。比 SSR 至少多两段串行的来回。</li>
+          <li><b>SSR</b>（Thymeleaf、JSP、Next.js 等）：HTML 里直接带内容，CSS 到了就能画。</li>
+          <li><b>SSG</b>：提前生成好放 CDN 边缘，RTT 最短，适合内容不常变的页面。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="of">
+        <h4>提前做：资源提示</h4>
+        <ul>
+          <li><code>&lt;link rel="preconnect" href="https://static.example.com"&gt;</code>：提前做完 DNS + TCP + TLS。</li>
+          <li><code>dns-prefetch</code>：只提前做 DNS，更省。</li>
+          <li><code>&lt;link rel="preload" as="style"&gt;</code>：提前下载后面才会被发现的关键资源。</li>
+          <li><code>103 Early Hints</code>：服务器生成页面的那几百毫秒里，先告诉浏览器去连、去下载。</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 id="ver" style="margin-top:12px">版本差异</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>东西</th><th>版本</th><th>和本页有关的变化</th></tr></thead>
+        <tbody>
+          <tr><th>TLS</th><td>1.2 → 1.3（2018，RFC 8446）</td><td>完整握手 2 个来回 → 1 个（本机实测 505 → 252 ms）；去掉了 RSA 密钥交换，只留有前向保密的 (EC)DHE；新增 0-RTT</td></tr>
+          <tr><th>HTTP</th><td>1.1 → 2（2015）→ 3（2022，RFC 9114）</td><td>多路复用、头部压缩；HTTP/3 换成 QUIC over UDP，握手合并、按流重传</td></tr>
+          <tr><th>JDK</th><td>8 / 17 / 21</td><td>JDK 8 只有 <code>HttpURLConnection</code>（HTTP/1.1）；JDK 11 加入 <code>java.net.http.HttpClient</code>，默认先试 HTTP/2，17、21 都有。TLS 1.3：JDK 11 起自带；OpenJDK 8 从 8u272 起有、8u352 起客户端默认打开。DNS 缓存默认值三个版本相同；JDK 21 新增 <code>networkaddress.cache.stale.ttl</code></td></tr>
+          <tr><th>nginx</th><td>1.25.1 / 1.29.7</td><td>1.25.1 起用 <code>http2 on;</code> 开 HTTP/2；1.29.7 起反代默认 HTTP/1.1，upstream 默认 <code>keepalive 32</code></td></tr>
+          <tr><th>Spring Boot</th><td>2 / 3</td><td><code>server.compression.enabled</code> 默认 false、阈值 2 KB；内嵌服务器的 HTTP/2 要配 <code>server.http2.enabled=true</code>（默认 false），通常还要配好 TLS</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="lab-a" style="margin-top:12px">实验台 A · 首访一个页面，时间花在哪<small style="font-family:var(--font-body);font-size:14px;color:var(--muted);margin-left:8px">先猜，再运行</small></h3>
+    <div class="lab" id="la">
+      <div class="presets" id="la-presets"></div>
+      <div class="guess" id="la-guess"></div>
+      <div class="ctl-grid" id="la-ctl">
+        <div class="ctl"><span class="lbl">RTT（往返时间）<output id="la-rtt-o">100 ms</output></span><input type="range" id="la-rtt" min="5" max="300" step="5" value="100" aria-label="RTT"></div>
+        <div class="ctl"><span class="lbl">服务器耗时<output id="la-srv-o">50 ms</output></span><input type="range" id="la-srv" min="0" max="500" step="5" value="50" aria-label="服务器耗时"></div>
+        <div class="ctl"><span class="lbl">带宽</span><span class="seg-btns" id="la-mbps" role="group" aria-label="带宽"><button type="button" data-v="2">2 Mbps</button><button type="button" data-v="10">10</button><button type="button" data-v="100">100</button><button type="button" data-v="1000">1000</button></span></div>
+        <div class="ctl"><span class="lbl">HTML 大小<output id="la-html-o">30 KB</output></span><input type="range" id="la-html" min="2" max="200" step="1" value="30" aria-label="HTML 大小"></div>
+        <div class="ctl"><span class="lbl">CSS 大小（0 = 没有外链 CSS）<output id="la-css-o">20 KB</output></span><input type="range" id="la-css" min="0" max="100" step="1" value="20" aria-label="CSS 大小"></div>
+        <div class="ctl"><span class="lbl">DNS · 入口</span><span style="display:flex;flex-wrap:wrap;gap:6px"><span class="seg-btns" id="la-dns" role="group" aria-label="DNS"><button type="button" data-v="hit">已缓存</button><button type="button" data-v="miss">没缓存</button></span><span class="seg-btns" id="la-entry" role="group" aria-label="入口"><button type="button" data-v="https">直达 https</button><button type="button" data-v="http">先 http:// 301</button></span></span></div>
+        <div class="ctl span"><span class="lbl">协议</span><span class="seg-btns" id="la-proto" role="group" aria-label="协议"><button type="button" data-v="h1-12">TLS 1.2 + HTTP/1.1</button><button type="button" data-v="h1-13">TLS 1.3 + HTTP/1.1</button><button type="button" data-v="h2-13">TLS 1.3 + HTTP/2</button><button type="button" data-v="h3">HTTP/3</button><button type="button" data-v="h3-0rtt">HTTP/3 回访 0-RTT</button></span></div>
+      </div>
+      <div class="run-row">
+        <button class="btn primary" type="button" id="la-run">运行这个改动</button>
+        <button class="btn" type="button" id="la-base">把现在的设置当基线</button>
+        <span class="tip" id="la-tip">先在上面选一个答案。运行后滑块随便拖，下面会一直和基线对比。</span>
+      </div>
+      <div class="tiles" id="la-tiles"></div>
+      <div class="wf ghost" id="la-wf-base"></div>
+      <div class="wf" id="la-wf-now"></div>
+      <div class="lg">
+        <span data-role="cg"><i></i>DNS</span><span data-role="bad"><i class="t"></i>http:// 先 301</span><span data-role="pd"><i class="t"></i>TCP</span><span data-role="bk"><i class="t"></i>TLS / QUIC</span><span data-role="g2"><i></i>请求 → 首字节</span><span data-role="g2"><i class="t"></i>下载</span><span data-role="done"><i class="mk" style="background:var(--good)"></i>首次绘制</span><span data-role="other"><i class="mk" style="background:var(--neutral)"></i>基线的首次绘制</span>
+      </div>
+      <div class="lab-res" id="la-res" data-role="other">先选一个答案，再点“运行这个改动”。</div>
+    </div>
+    <p class="tip">模型：每个握手按整数个 RTT 算；下载按慢启动算（初始窗口 10 个包，每个 RTT 翻倍，超过“带宽 × RTT”后按带宽算）；CSS 放在 <code>&lt;head&gt;</code>，首字节一到就被发现。HTTP/1.1 下 CSS 取“新开一条连接”和“等 HTML 下完复用”里先到的那个，复用时窗口已经涨大；HTTP/2、3 在同一条连接上并发，不算和 HTML 抢窗口。不算丢包、TCP 排队和浏览器自己的计算时间。参数按 ⑤ 的 lwn.net 设（第 3 题），算出首字节 755 ms、HTML 到齐 1006 ms，和实测的 1.0 s 对得上。同一套逻辑在 node 里随机测过 2 万组：首次绘制不早于首字节，带宽加大不会变慢，RTT 加大不会变快。</p>
+
+    <h3 id="lab-b" style="margin-top:12px">实验台 B · &lt;script&gt; 放哪儿<small style="font-family:var(--font-body);font-size:14px;color:var(--muted);margin-left:8px">先猜，再运行</small></h3>
+    <div class="lab" id="lb">
+      <div class="presets" id="lb-presets"></div>
+      <div class="guess" id="lb-guess"></div>
+      <div class="ctl-grid">
+        <div class="ctl"><span class="lbl">CSS 下载要多久<output id="lb-css-o">300 ms</output></span><input type="range" id="lb-css" min="0" max="2000" step="10" value="300" aria-label="CSS 下载时间"></div>
+        <div class="ctl"><span class="lbl">JS 下载要多久<output id="lb-js-o">800 ms</output></span><input type="range" id="lb-js" min="0" max="3000" step="10" value="800" aria-label="JS 下载时间"></div>
+        <div class="ctl"><span class="lbl">JS 执行要多久<output id="lb-exec-o">100 ms</output></span><input type="range" id="lb-exec" min="0" max="500" step="10" value="100" aria-label="JS 执行时间"></div>
+      </div>
+      <div class="run-row">
+        <button class="btn primary" type="button" id="lb-run">运行</button>
+        <span class="tip">HTML 在 0 ms 到齐；预加载扫描器让 CSS 和 JS 同时开始下载。解析 head 10 ms，解析 body 60 ms。</span>
+      </div>
+      <div class="sl" id="lb-board"></div>
+      <div class="lg">
+        <span data-role="of"><i class="t"></i>CSS 下载</span><span data-role="g2"><i class="t"></i>JS 下载</span><span data-role="rn"><i class="t"></i>解析 HTML</span><span data-role="warn"><i></i>执行 JS</span><span data-role="done"><i class="mk" style="background:var(--good)"></i>首次绘制</span><span data-role="pd"><i class="mk" style="background:var(--pd)"></i>DOMContentLoaded</span>
+      </div>
+      <div class="lab-res" id="lb-res" data-role="other">先选一个答案，再点“运行”。</div>
+    </div>
+    <p class="tip">模型按 HTML 规范的阻塞规则推：同步脚本叫停解析，执行前要等它前面的样式表；defer 在解析完以后、DOMContentLoaded 之前按顺序执行，也要等样式表；async 下完就执行，不等样式表；CSS 不到不画。不模拟真实浏览器的分段绘制。有了预加载扫描器，“head + defer”和“body 末尾同步”的时间基本一样，区别是 defer 不挡住它后面的内容。</p>
+
+    <h3 style="margin-top:12px">面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>为什么是三次握手，不是两次？</summary><p>双方都要确认“对方收到了我的起始序号”，两次握手只确认了客户端的；更要紧的是防旧的重复 SYN：两次握手下，迷路的旧 SYN 一到，服务器就会建立一个没人用的连接。三次握手里客户端会对不认识的 SYN-ACK 回 RST。服务器的 SYN 和 ACK 能合成一个包，所以不用四次。</p><p class="from">← ④ 设计取舍 A</p></details>
+      <details><summary>四次挥手为什么要 TIME_WAIT，为什么等 2MSL？</summary><p>TCP 是全双工，两个方向各自关闭，所以是 FIN/ACK 两对。先关的一方等 2MSL：一是最后一个 ACK 丢了时，还能回应对方重发的 FIN；二是让这条连接迟到的包在网络里消失，免得被同一组 IP 和端口的新连接收到。Linux 固定等 60 秒。</p><p class="from">← 第三圈 · 四次挥手</p></details>
+      <details><summary>HTTPS 的握手过程？对称加密和非对称加密各用在哪？</summary><p>TLS 1.3：ClientHello 带上支持的算法和临时公钥；ServerHello 回临时公钥，双方算出同一把会话密钥，服务器接着发证书、用私钥签名、Finished；客户端验证书链、回 Finished，同时发出请求，一共 1 个来回。非对称用在握手（密钥交换 + 身份证明），对称用在之后所有数据。TLS 1.2 要 2 个来回，而且允许不带前向保密的 RSA 密钥交换。</p><p class="from">← ④ 机制 3 + 设计取舍 B</p></details>
+      <details><summary>DNS 用 UDP 还是 TCP？</summary><p>默认 UDP 53 端口，一问一答各一个包，省掉握手。响应太大被截断（TC 位）时改用 TCP 重新问，区域传送也用 TCP。浏览器还可以用 DoH（DNS over HTTPS）把查询加密。</p><p class="from">← ④ 机制 2</p></details>
+      <details><summary>HTTP/1.1、HTTP/2、HTTP/3 有什么区别？</summary><p>1.1：文本格式，一条连接一次一个请求，浏览器开 6 条。2：二进制帧、多路复用、HPACK 头部压缩，但仍受 TCP 层的队头阻塞。3：基于 QUIC（UDP），握手更少、按流重传、换网络不断线。另外说明“不一定更快”：冷连接拉大量大文件时，6 条 HTTP/1.1 连接的初始窗口总和更大。</p><p class="from">← ③ + 第三圈实测</p></details>
+      <details><summary>强缓存和协商缓存？</summary><p>强缓存：<code>Cache-Control: max-age</code>（或老的 <code>Expires</code>）有效期内直接用本地的，不发请求。过期后走协商缓存：带上 <code>If-None-Match</code>（对应 <code>ETag</code>）或 <code>If-Modified-Since</code> 去问，没变就回 304、不带响应体，省的是下载，来回还是要跑一次。</p><p class="from">← ④ 机制 1 ② + 坑 5</p></details>
+      <details><summary>回流和重绘？怎么减少？</summary><p>改几何属性触发回流（重新布局，再绘制、合成）；只改颜色之类触发重绘。动画用 <code>transform</code> / <code>opacity</code> 只走合成；批量读、批量写，别在循环里交替读写布局属性。</p><p class="from">← 第三圈 · 回流和重绘</p></details>
+      <details><summary>defer 和 async 有什么区别？</summary><p>都不挡解析、都提前下载。defer：等解析完，按出现顺序执行，在 DOMContentLoaded 之前。async：谁先下完谁先执行，不保证顺序，可能在解析中途插进来，不等 CSS。依赖 DOM 或彼此有依赖的用 defer，独立的统计脚本用 async。</p><p class="from">← ④ 机制 6 + 实验台 B</p></details>
+    </div>
+
+    <h3 style="margin-top:12px">下一圈</h3>
+    <ul class="next">
+      <li>TCP 拥塞控制：Cubic 和 BBR，丢包、排队时窗口怎么变</li>
+      <li>QUIC 内部：连接 ID、0-RTT 防重放、为什么有的网络会限速 UDP</li>
+      <li>CDN：怎么选边缘节点、回源、缓存键怎么定</li>
+      <li>浏览器缓存全家：Service Worker、内存缓存、磁盘缓存、前进后退缓存</li>
+      <li>Web 性能指标：FCP、LCP、INP、CLS 怎么量、怎么优化</li>
+      <li>Java 服务端的 TLS：Tomcat 和 Netty 用 JSSE 还是 OpenSSL、会话复用、证书热更新</li>
+      <li>长连接：WebSocket、SSE，以及 HTTP/2 Server Push 为什么被浏览器放弃</li>
+      <li>抓包排查：tcpdump / Wireshark 看握手、重传和 RST</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 MiniBrowser</h2>
+    <p class="lead">每个练习都写了做对时会看到什么，数字是本机跑出来的，你那边的 RTT 不同，看“几个 RTT”就行。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="g2">
+      <h4>练习 1 · 加上 keep-alive</h4>
+      <p>去掉 <code>Connection: close</code>，在同一条连接上连发两次 <code>GET /</code>。难点是判断一个响应在哪结束：有 <code>Content-Length</code> 就读够字节数，<code>chunked</code> 就按“十六进制长度 + 数据”一块块读，读到长度 0 为止。</p>
+      <p><b>做对了会看到：</b>第 1 次 = 握手 2 个 RTT + 请求 2 个 RTT（首字节 1 个、慢启动 1 个）；第 2 次整个请求只要 1 个 RTT，连 31 KB 的下载都在里面，因为窗口已经涨大了。本机：握手 513 ms + 请求 513 ms，对 258 ms。</p>
+      <p class="uses">用到：③ 复用连接、④ 机制 4</p>
+    </div>
+    <div class="exc" data-role="bk">
+      <h4>练习 2 · 先猜，再用 TLSv1.2 跑</h4>
+      <p><code>java MiniBrowser.java https://lwn.net/ TLSv1.2</code>。先猜两次的 TLS 段各是几个 RTT。</p>
+      <p><b>做对了会看到：</b>第 1 次约 2.9 个 RTT：2 个来回的完整握手，加上 JVM 预热（TLS 1.3 时是 1.7～2.0 个）。第 2 次只有 1.0 个：JDK 自动复用了第 1 次的会话（会话恢复），TLS 1.2 的简短握手只要 1 个来回。连跑 3 遍都是这样。</p>
+      <p class="uses">用到：③ 几种思路、④ 机制 3</p>
+    </div>
+    <div class="exc" data-role="pd">
+      <h4>练习 3 · 删掉 setTcpNoDelay</h4>
+      <p>把 <code>tcp.setTcpNoDelay(true);</code> 那一行注释掉，用默认的 TLS 1.3 再跑三遍。</p>
+      <p><b>做对了会看到：</b>第 2 次的首字节从 1.0 个 RTT 变成约 2.2 个，TCP、TLS、下载三段不变。多出来的那 1 个多来回，是 GET 被 Nagle 攒着、等 Finished 的确认回来才发出去。</p>
+      <p class="uses">用到：坑 6</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出本页的精华。</summary><p>打开页面的时间，主要花在来回上：来回次数 × RTT；DNS、TCP、TLS、请求各要来回，协议升级和各层缓存都是在砍来回的次数。</p><p class="from">← ② 精华</p></details>
+    <details><summary>2. 用 Socket 写的朴素版浏览器，痛在哪？</summary><p>每次都重新握手、明文被 301 赶走、一问一答用完就关、只有文字没有画面。前三个都是多跑来回，第四个是缺了渲染引擎。</p><p class="from">← ②</p></details>
+    <details><summary>3. “切了 DNS，Java 服务还连旧 IP”，根源是 ④ 的哪一条？</summary><p>机制 2：DNS 结果在每一层都按 TTL 缓存，JVM 自己也是一层（默认 30 秒）；再加上连接池里的老连接不会重新解析。</p><p class="from">← ④ 机制 2 + 坑 1</p></details>
+    <details><summary>4. 预测：用户从同城（RTT 20 ms）换到海外（RTT 200 ms），首次绘制大约慢几倍？带宽翻 10 倍能救回来吗？</summary><p>按实验台 A 的默认参数（TLS 1.3 + HTTP/2、服务器 50 ms、HTML 30 KB、CSS 20 KB、10 Mbps）：从约 155 ms 变成约 1055 ms，慢 6～7 倍，因为 5 个来回全部放大了 10 倍，只有服务器那 50 ms 没变。带宽加 10 倍几乎不变，字节本来就只占几毫秒。</p><p class="from">← ④ 公式，用实验台 A 验证</p></details>
+    <details><summary>5. 预测：入口从 TLS 1.2 升级到 1.3，已经建立好的 keep-alive 连接上的请求会变快吗？</summary><p>不会。握手只在建连接时做一次，复用的连接上本来就没有握手。省下的那 1 个来回，只有新连接拿得到。</p><p class="from">← ④ 机制 3</p></details>
+    <details><summary>6. 预测：HTML 从 12 KB 长到 16 KB（模板里多了一段），从首字节到 HTML 下完会慢多少？</summary><p>不是“多 4 KB 除以带宽”那么一点点：12 KB 第一批就能装下，16 KB 超过了初始窗口的 14.6 KB（还没算响应头），要等第二批，下载段从约 0 跳到 1 个 RTT。</p><p class="from">← ④ 机制 4</p></details>
+    <details><summary>7. 预测：&lt;head&gt; 里一个同步脚本要 2 秒才下完，CSS 300 ms 就到了。body 里的文字什么时候能看到？改成 defer 呢？</summary><p>同步：要等脚本下完、执行完、再解析 body，2 秒以后才能看到。defer：解析不被叫停，CSS 一到就能画，约 300 ms；脚本 2 秒后再执行。实验台 B 把 JS 拖到 2000 ms 就能看到。</p><p class="from">← ④ 机制 6</p></details>
+    <details><summary>8. 预测：一个页面从同一个域名拉 18 个小图标，HTTP/1.1 下浏览器会怎么排？换成 HTTP/2 呢？</summary><p>HTTP/1.1：最多开 6 条连接、每条各握一次手，18 个分 3 轮跑完，Timing 里后面的请求有 Queueing。HTTP/2：1 条连接、1 次握手，18 个同时发出去。图标很小，窗口不是瓶颈，HTTP/2 会更快一点（第三圈实测 146 B 时 1.15 s 对 1.2 s）。</p><p class="from">← ③ + 坑 8</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>实测环境：2 核 ARM 云主机（新加坡），curl 7.81.0 + OpenSSL 3.0.2，dig 9.18，Temurin 8u512、Temurin 17.0.21、Ubuntu OpenJDK 21.0.12（同一份 <code>--release 8</code> 编译的 class）。远端是 lwn.net（RTT 约 230～260 ms）、news.ycombinator.com、haskell.org，数字随线路抖动，看“几个 RTT”比看毫秒更有意义。JDK 行为核对了 jdk8u、jdk17u、jdk21u 源码（<code>InetAddressCachePolicy</code>、<code>Builder.USE_AIA</code>、<code>HttpClient</code> 的 <code>setTcpNoDelay</code>）；nginx 默认值来自 nginx.org 官方文档；Spring Boot 默认值来自 3.5.16 的配置元数据。浏览器内部（第 ⑦～⑫ 站）本机无法实测，按 HTML 规范和 Chrome 公开文档描述。</p>
+  <p>相关：<a href="../spring/spring-mvc-flow.html">Spring MVC 请求流程</a> · <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a> · <a href="../redis/redis-threading-io.html">Redis 线程模型与 IO 多路复用</a> · <a href="../juc/threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../kafka/kafka-storage-zerocopy.html">Kafka 存储与零拷贝</a></p>
+</footer>
+</main>
+<script>
+/*SIM-START*/
+// ---------- 实验台 A：首访一个页面，时间花在哪 ----------
+var MSS = 1460, INITCWND = 10 * MSS;            // Linux 默认初始拥塞窗口 10 个包 ≈ 14.6 KB
+// 首字节到了之后，剩下的字节还要多久到齐。慢启动：每过 1 RTT 窗口翻倍；窗口超过“带宽×RTT”后按带宽算。
+function xferMs(bytes, rtt, mbps, cwnd0) {
+  if (bytes <= 0) return { ms: 0, rounds: 0, tail: 0, cwnd: cwnd0 || INITCWND };
+  var B = mbps * 1e6 / 8 / 1000;                // 字节 / 毫秒
+  var bdp = B * rtt, cwnd = cwnd0 || INITCWND, left = bytes, t = 0, rounds = 0;
+  for (;;) {
+    if (cwnd >= bdp || left <= cwnd) { var tail = left / B; return { ms: t + tail, rounds: rounds, tail: tail, cwnd: cwnd * 2 }; }
+    left -= cwnd; t += rtt; cwnd *= 2; rounds++;
+  }
+}
+var PROTOS = {
+  'h1-12':  { name: 'TLS 1.2 + HTTP/1.1', tcp: 1, tls: 2, mux: false, tlsLabel: 'TLS 1.2 握手' },
+  'h1-13':  { name: 'TLS 1.3 + HTTP/1.1', tcp: 1, tls: 1, mux: false, tlsLabel: 'TLS 1.3 握手' },
+  'h2-13':  { name: 'TLS 1.3 + HTTP/2',   tcp: 1, tls: 1, mux: true,  tlsLabel: 'TLS 1.3 握手' },
+  'h3':     { name: 'HTTP/3（QUIC）',     tcp: 0, tls: 1, mux: true,  tlsLabel: 'QUIC 握手（含 TLS 1.3）' },
+  'h3-0rtt':{ name: 'HTTP/3 回访 0-RTT',  tcp: 0, tls: 0, mux: true,  tlsLabel: '' }
+};
+function simulatePage(p) {
+  var P = PROTOS[p.proto], r = p.rtt, segs = [], t = 0;
+  function seg(lane, kind, label, start, end, rtts) { segs.push({ lane: lane, kind: kind, label: label, start: start, end: end, rtts: rtts }); }
+  function add(kind, label, ms, rtts) { seg('main', kind, label, t, t + ms, rtts); t += ms; }
+  if (p.dns === 'miss') add('dns', 'DNS 查询', r, 1);
+  if (p.entry === 'http') { add('redir', 'TCP :80', r, 1); add('redir', 'GET http:// → 301', r, 1); }
+  if (P.tcp) add('tcp', 'TCP 握手', P.tcp * r, P.tcp);
+  if (P.tls) add('tls', P.tlsLabel, P.tls * r, P.tls);
+  add('req', '请求 → 首字节', r + p.srv, 1);
+  var firstByte = t;
+  var h = xferMs(p.htmlKB * 1024, r, p.mbps);
+  add('dl', 'HTML 下载', h.ms, h.rounds);
+  var htmlDone = t, cssDone = htmlDone, cssPath = 'none', cssTail = 0, cssRtts = 0;
+  if (p.cssKB > 0) {
+    var cb = p.cssKB * 1024;
+    if (P.mux) {                                  // 同一条连接并发：首字节一到就发 CSS 请求（简化：不算和 HTML 抢窗口）
+      var c = xferMs(cb, r, p.mbps);
+      cssDone = firstByte + r + c.ms; cssPath = 'mux'; cssTail = c.tail;
+      seg('css', 'req', '同一条连接发 CSS 请求', firstByte, firstByte + r, 1);
+      seg('css', 'dl', 'CSS 下载', firstByte + r, cssDone, c.rounds);
+    } else {                                      // HTTP/1.1：连接正忙。要么新开一条，要么等 HTML 下完复用
+      var hs = (P.tcp + P.tls) * r;
+      var cNew = xferMs(cb, r, p.mbps);
+      var viaNew = firstByte + hs + r + cNew.ms;
+      var cRe = xferMs(cb, r, p.mbps, h.cwnd);    // 复用的连接，窗口已经涨上去了
+      var viaReuse = htmlDone + r + cRe.ms;
+      if (viaNew < viaReuse) {
+        cssDone = viaNew; cssPath = 'new'; cssTail = cNew.tail;
+        seg('css', 'tcp', '第 2 条连接 TCP', firstByte, firstByte + P.tcp * r, P.tcp);
+        seg('css', 'tls', 'TLS', firstByte + P.tcp * r, firstByte + hs, P.tls);
+        seg('css', 'req', 'CSS 请求', firstByte + hs, firstByte + hs + r, 1);
+        seg('css', 'dl', 'CSS 下载', firstByte + hs + r, viaNew, cNew.rounds);
+      } else {
+        cssDone = viaReuse; cssPath = 'reuse'; cssTail = cRe.tail;
+        seg('css', 'wait', '等 HTML 下完', firstByte, htmlDone, 0);
+        seg('css', 'req', '复用连接发 CSS 请求', htmlDone, htmlDone + r, 1);
+        seg('css', 'dl', 'CSS 下载', htmlDone + r, viaReuse, cRe.rounds);
+      }
+    }
+  }
+  var fcp = Math.max(htmlDone, cssDone);
+  var cssCritical = cssDone > htmlDone;
+  var bytesMs = cssCritical ? (cssPath === 'reuse' ? h.tail + cssTail : cssTail) : h.tail;
+  var waitMs = fcp - p.srv - bytesMs;
+  return { segs: segs, firstByte: firstByte, htmlDone: htmlDone, cssDone: cssDone, cssPath: cssPath, fcp: fcp,
+           cssCritical: cssCritical, bytesMs: bytesMs, waitMs: waitMs, rttUnits: waitMs / r, srv: p.srv };
+}
+
+// ---------- 实验台 B：<script> 放哪儿 ----------
+var HEAD_PARSE = 10, BODY_PARSE = 60;             // 解析 <head> 到 <script> 的时间、解析 <body> 的时间（毫秒）
+// 预加载扫描器让 CSS 和 JS 在 HTML 到达（t=0）时就开始下载。
+function simulateScript(mode, css, js, exec) {
+  var r = { mode: mode, parse: [], exec: null, fcp: 0, dcl: 0, sees: 'all' };
+  var parseEnd = HEAD_PARSE + BODY_PARSE, s;
+  if (mode === 'head') {                          // 同步脚本：解析停下；执行前还要等前面的 CSS
+    s = Math.max(HEAD_PARSE, js, css);
+    r.parse = [[0, HEAD_PARSE], [s + exec, s + exec + BODY_PARSE]];
+    r.exec = [s, s + exec]; r.dcl = s + exec + BODY_PARSE; r.fcp = Math.max(css, r.dcl); r.sees = 'none';
+  } else if (mode === 'defer' || mode === 'body') { // defer：解析完再按顺序执行；body 末尾的同步脚本前面已经没东西可解析
+    s = Math.max(parseEnd, js, css);
+    r.parse = [[0, parseEnd]]; r.exec = [s, s + exec]; r.dcl = s + exec; r.fcp = Math.max(css, parseEnd); r.sees = 'all';
+  } else {                                        // async：下完就执行，不等 CSS，也不等解析
+    if (js < parseEnd) {
+      s = Math.max(js, HEAD_PARSE);
+      r.parse = [[0, s], [s + exec, parseEnd + exec]]; r.exec = [s, s + exec];
+      r.dcl = parseEnd + exec; r.fcp = Math.max(css, r.dcl); r.sees = 'part';
+    } else {
+      r.parse = [[0, parseEnd]]; r.exec = [js, js + exec]; r.dcl = parseEnd; r.fcp = Math.max(css, parseEnd); r.sees = 'all';
+    }
+    r.noCssWait = js < css;                       // 执行时 CSS 还没到：读到的样式可能不对
+  }
+  return r;
+}
+/*SIM-END*/
+
+(function () {
+  'use strict';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  function fmt(ms) { return ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms'; }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // ================= ⑤ 时序图分步 =================
+  var STEPS = [
+    { y: 74, t: '0 ms', r: 0, s: '0 ms', b: '0 ms',
+      cap: '<b>回车。</b>浏览器进程先判断 <code>lwn.net</code> 像网址、不像搜索词，补成 <code>https://lwn.net/</code>；来过的浏览器记得它发过的 HSTS 头，直接用 https。再查 HTTP 缓存：首页是 <code>no-cache</code>，必须回服务器问。<span class="wl">按“下一步”看每一步花多少时间。淡色的箭头是还没发生的。</span>' },
+    { y: 80, t: '5 ms', r: 0, s: '0 ms', b: '0 ms',
+      cap: '<b>① DNS：5 ms。</b>浏览器问操作系统 lwn.net 的 IP，系统缓存里正好有：<code>173.255.236.65</code>。<span class="wl">没缓存会怎样：本机 dig 冷查询 795 ms、837 ms，④ 里 curl 那次 427 ms，比后面任何一次握手都贵。</span>' },
+    { y: 181.4, t: '239 ms', r: 1, s: '0 ms', b: '0 ms',
+      cap: '<b>② TCP：1 个来回，239 ms。</b>SYN 过去，SYN-ACK 回来。第三个包 ACK 不用单独等，下一步和 ClientHello 一起发。<span class="wl">实测 233.5 ms 一个来回，后面每一步都拿它当尺子。</span>' },
+    { y: 288.7, t: '477 ms', r: 2, s: '0 ms', b: '0 ms',
+      cap: '<b>③ TLS 1.3：又 1 个来回，477 ms。</b>ClientHello 带着临时公钥 A；服务器回 ServerHello（公钥 B）、证书、签名和 Finished。浏览器验完证书链，算出会话密钥。<span class="wl">实测 238.5 ms。换成 TLS 1.2，这里要 2 个来回（↺ 练习 2）。</span>' },
+    { y: 395.5, t: '715 ms', r: 3, s: '6 ms', b: '1.2 ms',
+      cap: '<b>④ 请求：又 1 个来回，715 ms 拿到首字节。</b>GET 跟着 Finished 一起发出去，服务器生成页面约 6 ms，第一批 10 个包（约 14.6 KB）回来。<span class="wl">这一段就是 TTFB，后端能优化的只有中间那 6 ms。</span>' },
+    { y: 501.4, t: '950 ms', r: 4, s: '6 ms', b: '2.5 ms',
+      cap: '<b>⑤ 下载：再 1 个来回，950 ms。</b>HTML 有 31 KB，第一批装不下。服务器要等浏览器确认、把窗口翻倍，才发剩下的 17 KB。<span class="wl">实测 235.3 ms。字节本身按 100 Mbps 只要 2.5 ms，这一个来回几乎全是慢启动在等。</span>' },
+    { y: 607.2, t: '≈ 1185 ms', r: 5, s: '6 ms', b: '≈ 4 ms',
+      cap: '<b>⑥ CSS：再 1 个来回，约 1185 ms（估算）。</b>第一批一到就开始解析，读到 <code>&lt;link href="/CSS/lwn"&gt;</code>（19 KB），没有它不能画。lwn.net 只支持 HTTP/1.1，这条连接正忙；等 HTML 下完复用它，比新开一条（TCP + TLS 两个来回）快。窗口已经涨大，19 KB 一批到齐。<span class="wl">这一步本机没实测，按 1 个 RTT 估。</span>' },
+    { y: 620.8, t: '≈ 1215 ms', r: 5, s: '6 ms', b: '≈ 4 ms',
+      cap: '<b>⑦ 渲染：首次绘制约 1.2 s。</b>CSSOM 好了，样式计算 → 布局 → 绘制 → 合成，第一帧上屏（按 30 ms 估）。图片在 static.lwn.net，另一个域名，又要 DNS + TCP + TLS，但不挡首次绘制。<span class="wl">合计：5 个来回 ≈ 1.18 s，服务器 6 ms，传字节约 4 ms。</span>' }
+  ];
+  var seq = $('#seq');
+  if (seq) {
+    var groups = $$('g.st', seq), cur = 0, timer = null, last = STEPS.length - 1;
+    var renderStep = function () {
+      groups.forEach(function (g) {
+        var s = +g.getAttribute('data-s');
+        g.classList.toggle('fut', s > cur);
+        g.classList.toggle('cur', s === cur);
+      });
+      var st = STEPS[cur];
+      $('#seq-now').setAttribute('transform', 'translate(0,' + st.y + ')');
+      $('#seq-now-t').textContent = 't = ' + st.t;
+      $('#wk-cap').innerHTML = st.cap;
+      $('#lg-t').textContent = st.t;
+      $('#lg-r').textContent = String(st.r);
+      $('#lg-s').textContent = st.s;
+      $('#lg-b').textContent = st.b;
+      $('#wk-pos').innerHTML = '第 <b>' + cur + '</b> / ' + last + ' 步';
+      $('#wk-prev').disabled = cur === 0;
+      $('#wk-next').disabled = cur === last;
+    };
+    var stop = function () { if (timer) { clearInterval(timer); timer = null; $('#wk-play').textContent = '自动播放'; } };
+    var go = function (d) { cur = Math.max(0, Math.min(last, cur + d)); renderStep(); };
+    $('#wk-prev').addEventListener('click', function () { stop(); go(-1); });
+    $('#wk-next').addEventListener('click', function () { stop(); go(1); });
+    $('#wk-reset').addEventListener('click', function () { stop(); cur = 0; renderStep(); });
+    $('#wk-play').addEventListener('click', function () {
+      if (timer) { stop(); return; }
+      if (cur === last) cur = 0;
+      renderStep();
+      $('#wk-play').textContent = '暂停';
+      timer = setInterval(function () { if (cur >= last) { stop(); return; } go(1); }, 2400);
+    });
+    $('#walk').addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight') { stop(); go(1); e.preventDefault(); }
+      if (e.key === 'ArrowLeft') { stop(); go(-1); e.preventDefault(); }
+    });
+    renderStep();
+  }
+
+  // ================= 实验台 A =================
+  var KIND_ROLE = { dns: ['cg', 'solid'], redir: ['bad', ''], tcp: ['pd', ''], tls: ['bk', ''], req: ['g2', 'solid'], dl: ['g2', ''], wait: ['other', 'wait'] };
+  var LA_PRESETS = [
+    { k: 'bw', title: '1 · 加带宽', sub: '10 → 100 Mbps',
+      base: { rtt: 100, mbps: 10, dns: 'hit', entry: 'https', proto: 'h2-13', srv: 50, htmlKB: 30, cssKB: 20 }, change: { mbps: 100 },
+      q: '带宽从 10 Mbps 加到 100 Mbps（贵了 10 倍），首次绘制能快多少？',
+      opts: ['快一半左右（35% 以上）', '快 10%～35%', '快不到 10%'],
+      judge: function (a, b) { var p = (a.fcp - b.fcp) / a.fcp; return p >= 0.35 ? 0 : (p >= 0.10 ? 1 : 2); },
+      why: function (a, b) { return '这一页关键路径上是 ' + a.rttUnits.toFixed(0) + ' 个来回，真正传字节只有 ' + a.bytesMs.toFixed(1) + ' ms，带宽只能压缩这几毫秒。来回的次数和 RTT 一点没变。'; } },
+    { k: 'proto', title: '2 · 升协议', sub: 'TLS 1.2 + HTTP/1.1 → TLS 1.3 + HTTP/2',
+      base: { rtt: 150, mbps: 100, dns: 'hit', entry: 'https', proto: 'h1-12', srv: 50, htmlKB: 30, cssKB: 20 }, change: { proto: 'h2-13' },
+      q: 'RTT 150 ms。入口从 TLS 1.2 + HTTP/1.1 升到 TLS 1.3 + HTTP/2，首次绘制能省几个来回？',
+      opts: ['1 个左右', '2～3 个', '一半以上的时间'],
+      judge: function (a, b, rtt) { var s = (a.fcp - b.fcp) / rtt, p = (a.fcp - b.fcp) / a.fcp; return p >= 0.5 ? 2 : (s >= 1.6 ? 1 : 0); },
+      why: function (a, b) { return 'TLS 1.3 少 1 个握手来回。HTTP/1.1 下 CSS ' + (a.cssPath === 'new' ? '新开了第 2 条连接' : '等 HTML 下完复用连接') + '；HTTP/2 在同一条连接上马上发 CSS 请求，但新连接的窗口还小，20 KB 的 CSS 也要多等一批，所以没再多省一个。'; } },
+    { k: 'detour', title: '3 · 少走冤枉路', sub: 'http:// + DNS 没缓存',
+      base: { rtt: 250, mbps: 100, dns: 'miss', entry: 'http', proto: 'h1-13', srv: 5, htmlKB: 31, cssKB: 19 }, change: { dns: 'hit', entry: 'https' },
+      q: '参数按 ⑤ 的 lwn.net 设。用户敲的是 http://，DNS 也没缓存。加上 HSTS、DNS 命中之后，能省多少？',
+      opts: ['1 个来回', '3 个来回', '一半以上'],
+      judge: function (a, b, rtt) { var s = (a.fcp - b.fcp) / rtt, p = (a.fcp - b.fcp) / a.fcp; return p >= 0.5 ? 2 : (s >= 2.5 ? 1 : 0); },
+      why: function () { return 'DNS 1 个来回，301 那一跳 2 个（连 80 端口 + 请求拿到 301）。HTML 到齐的时间正好是 ⑤ 实测的 1.0 s 左右。'; } },
+    { k: 'gzip', title: '4 · 开压缩', sub: 'HTML 60 → 12 KB，CSS 40 → 8 KB',
+      base: { rtt: 100, mbps: 10, dns: 'hit', entry: 'https', proto: 'h2-13', srv: 50, htmlKB: 60, cssKB: 40 }, change: { htmlKB: 12, cssKB: 8 },
+      q: 'HTML 和 CSS 都压到原来的 1/5，首次绘制能快多少？',
+      opts: ['几毫秒：只是少传了些字节', '1 个来回左右', '快一半以上'],
+      judge: function (a, b, rtt) { var s = (a.fcp - b.fcp) / rtt, p = (a.fcp - b.fcp) / a.fcp; return s < 0.4 ? 0 : (p >= 0.5 ? 2 : 1); },
+      why: function (a, b) { return '60 KB 的 HTML 要多等 2 批，12 KB 第一批就装下；可首次绘制还要等 CSS（40 KB 多 1 批，8 KB 不用），所以首次绘制省下的是 CSS 那 1 个来回。传字节本身只省了 ' + (a.bytesMs - b.bytesMs).toFixed(1) + ' ms。'; } }
+  ];
+  var la = $('#la');
+  if (la) {
+    var LA = { preset: 0, base: null, state: null, revealed: false, guess: null };
+    var copy = function (o) { var r = {}; for (var k in o) r[k] = o[k]; return r; };
+    var pickPreset = function (i) {
+      LA.preset = i; LA.base = copy(LA_PRESETS[i].base); LA.state = copy(LA.base); LA.revealed = false; LA.guess = null; laRender();
+    };
+    $('#la-presets').innerHTML = LA_PRESETS.map(function (p, i) { return '<button type="button" data-i="' + i + '" aria-pressed="false"><b>' + p.title + '</b><span>' + esc(p.sub) + '</span></button>'; }).join('');
+    $('#la-presets').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) pickPreset(+b.getAttribute('data-i')); });
+    $('#la-guess').addEventListener('click', function (e) { var b = e.target.closest('button[data-g]'); if (!b || LA.revealed) return; LA.guess = +b.getAttribute('data-g'); laRender(); });
+    var target = function () { return LA.revealed ? LA.state : LA.base; };
+    var bindRange = function (id, key, unit) {
+      var el = $('#' + id);
+      el.addEventListener('input', function () { target()[key] = +el.value; if (!LA.revealed) LA.state = copy(LA.base); laRender(); });
+    };
+    bindRange('la-rtt', 'rtt'); bindRange('la-srv', 'srv'); bindRange('la-html', 'htmlKB'); bindRange('la-css', 'cssKB');
+    var bindSeg = function (id, key, num) {
+      $('#' + id).addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        var v = b.getAttribute('data-v'); target()[key] = num ? +v : v; if (!LA.revealed) LA.state = copy(LA.base); laRender();
+      });
+    };
+    bindSeg('la-mbps', 'mbps', true); bindSeg('la-dns', 'dns'); bindSeg('la-entry', 'entry'); bindSeg('la-proto', 'proto');
+    $('#la-run').addEventListener('click', function () {
+      if (LA.revealed) return;
+      var ch = LA_PRESETS[LA.preset].change; LA.state = copy(LA.base);
+      for (var k in ch) LA.state[k] = ch[k];
+      LA.revealed = true; laRender();
+    });
+    $('#la-base').addEventListener('click', function () { LA.base = copy(target()); LA.state = copy(LA.base); laRender(); });
+
+    var niceStep = function (max) { var c = [20, 50, 100, 200, 250, 500, 1000, 2000]; for (var i = 0; i < c.length; i++) if (max / c[i] <= 6) return c[i]; return 5000; };
+    var drawWF = function (el, p, r, max, title, baseFcp) {
+      var pct = function (x) { return (x / max * 100).toFixed(3); };
+      var lane = function (name, label) {
+        var segs = r.segs.filter(function (s) { return s.lane === name; });
+        var h = '<div class="wf-row"><span>' + label + '</span><div class="wf-track">';
+        segs.forEach(function (s) {
+          var kr = KIND_ROLE[s.kind], w = (s.end - s.start) / max * 100;
+          h += '<div class="wf-seg ' + kr[1] + '" data-role="' + kr[0] + '" style="left:' + pct(s.start) + '%;width:' + Math.max(w, 0.4).toFixed(3) + '%" title="' + esc(s.label) + ' ' + fmt(s.end - s.start) + '">' + (w > 9 ? esc(s.label) : '') + '</div>';
+        });
+        if (baseFcp != null) h += '<div class="wf-mk base" style="left:' + pct(baseFcp) + '%" title="基线首次绘制 ' + fmt(baseFcp) + '"></div>';
+        h += '<div class="wf-mk" style="left:' + pct(r.fcp) + '%" title="首次绘制 ' + fmt(r.fcp) + '"></div>';
+        return h + '</div></div>';
+      };
+      var html = '<div class="wf-h"><b>' + title + '</b><span>' + esc(PROTOS[p.proto].name) + ' · RTT ' + p.rtt + ' ms · ' + p.mbps + ' Mbps · DNS ' + (p.dns === 'hit' ? '已缓存' : '没缓存') + (p.entry === 'http' ? ' · 先 301' : '') + '</span><span>首次绘制 <b>' + fmt(r.fcp) + '</b></span></div>';
+      html += lane('main', '主连接');
+      html += p.cssKB > 0 ? lane('css', 'CSS') : '<div class="wf-row"><span>CSS</span><span class="tip" style="text-align:left">没有外链 CSS</span></div>';
+      el.innerHTML = html;
+    };
+    var drawAxis = function (max) {
+      var step = niceStep(max), h = '';
+      for (var x = 0; x <= max; x += step) h += '<span style="left:' + (x / max * 100).toFixed(3) + '%">' + (x >= 1000 ? (x / 1000) + ' s' : x + ' ms') + '</span>';
+      return '<div class="wf-axis">' + h + '</div>';
+    };
+    var laRender = function () {
+      var P = LA_PRESETS[LA.preset], cur = target();
+      $$('#la-presets button').forEach(function (b, i) { b.setAttribute('aria-pressed', String(i === LA.preset)); });
+      $('#la-rtt').value = cur.rtt; $('#la-rtt-o').textContent = cur.rtt + ' ms';
+      $('#la-srv').value = cur.srv; $('#la-srv-o').textContent = cur.srv + ' ms';
+      $('#la-html').value = cur.htmlKB; $('#la-html-o').textContent = cur.htmlKB + ' KB';
+      $('#la-css').value = cur.cssKB; $('#la-css-o').textContent = cur.cssKB + ' KB';
+      [['la-mbps', 'mbps'], ['la-dns', 'dns'], ['la-entry', 'entry'], ['la-proto', 'proto']].forEach(function (x) {
+        $$('#' + x[0] + ' button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-v') === String(cur[x[1]]))); });
+      });
+      var a = simulatePage(LA.base), b = LA.revealed ? simulatePage(LA.state) : null;
+      var max = Math.max(a.fcp, b ? b.fcp : 0) * 1.04;
+      drawWF($('#la-wf-base'), LA.base, a, max, LA.revealed ? '基线' : '基线（改动之前）', null);
+      $('#la-wf-base').insertAdjacentHTML('beforeend', b ? '' : drawAxis(max));
+      if (b) { drawWF($('#la-wf-now'), LA.state, b, max, '现在', a.fcp); $('#la-wf-now').insertAdjacentHTML('beforeend', drawAxis(max)); }
+      else $('#la-wf-now').innerHTML = '<p class="tip">点“运行这个改动”，这里会出现改动之后的瀑布图，和上面的基线对比。</p>';
+
+      var shown = b || a, d = b ? a.fcp - b.fcp : 0;
+      $('#la-tiles').innerHTML =
+        '<div class="tile" data-role="of"><small>首次绘制</small><b>' + fmt(shown.fcp) + '</b><span>' + (b ? '现在' : '基线') + '</span></div>' +
+        '<div class="tile" data-role="' + (!b ? 'other' : (d >= 0 ? 'done' : 'bad')) + '"><small>比基线</small><b>' + (b ? (d >= 0 ? '−' : '+') + fmt(Math.abs(d)) : '—') + '</b><span>' + (b ? (Math.abs(d) / a.fcp * 100).toFixed(1) + '%' + (LA.base.rtt === LA.state.rtt ? ' · ' + (Math.abs(d) / LA.state.rtt).toFixed(1) + ' 个 RTT' : '') : '还没运行') + '</span></div>' +
+        '<div class="tile" data-role="of"><small>关键路径上的来回</small><b>' + shown.rttUnits.toFixed(1) + ' 个</b><span>' + fmt(shown.waitMs) + '</span></div>' +
+        '<div class="tile" data-role="g2"><small>服务器耗时</small><b>' + fmt(shown.srv) + '</b><span>TTFB 里归后端的</span></div>' +
+        '<div class="tile" data-role="done"><small>真正传字节</small><b>' + shown.bytesMs.toFixed(1) + ' ms</b><span>' + (shown.bytesMs / shown.fcp * 100).toFixed(1) + '% 的时间</span></div>';
+
+      var g = '<p><b>' + P.title + '</b>：' + esc(P.q) + '</p><div class="opts">';
+      var right = b ? P.judge(a, b, LA.base.rtt) : -1;
+      P.opts.forEach(function (o, i) {
+        var cls = b ? (i === right ? 'right' : (i === LA.guess ? 'wrong' : '')) : '';
+        g += '<button type="button" data-g="' + i + '" aria-pressed="' + (LA.guess === i) + '" class="' + cls + '"' + (b ? ' disabled' : '') + '>' + esc(o) + '</button>';
+      });
+      g += '</div>';
+      $('#la-guess').innerHTML = g;
+      $('#la-run').disabled = LA.revealed;
+      $('#la-tip').textContent = LA.revealed ? '现在可以随便拖滑块、点按钮，下面一直和基线对比；想换基线就点“把现在的设置当基线”。' : (LA.guess == null ? '先在上面选一个答案。' : '选好了，点“运行这个改动”。');
+
+      var res = $('#la-res'), lines = [];
+      var cp = function (r, p) {
+        var who = r.cssCritical ? 'CSS 最后到（' + ({ mux: '同一条连接并发', reuse: '等 HTML 下完复用连接', 'new': '新开了第 2 条连接' })[r.cssPath] + '）' : 'HTML 最后到';
+        return '关键路径：' + r.rttUnits.toFixed(1) + ' 个来回 × ' + p.rtt + ' ms = ' + fmt(r.waitMs) + '（' + (r.waitMs / r.fcp * 100).toFixed(0) + '%），服务器 ' + fmt(r.srv) + '，传字节 ' + r.bytesMs.toFixed(1) + ' ms；' + who + '。';
+      };
+      if (!b) {
+        res.setAttribute('data-role', 'other');
+        res.innerHTML = '基线：首次绘制 <b>' + fmt(a.fcp) + '</b>。' + esc(cp(a, LA.base)) + '<br>先选一个答案，再点“运行这个改动”。';
+        return;
+      }
+      if (LA.guess == null) lines.push('你没选答案。正确的是“' + esc(P.opts[right]) + '”。');
+      else if (LA.guess === right) lines.push('猜对了：“' + esc(P.opts[right]) + '”。');
+      else lines.push('你选的是“' + esc(P.opts[LA.guess]) + '”，实际是“' + esc(P.opts[right]) + '”。');
+      var sameAsPreset = (function () { var e = copy(P.base), ch = P.change, k; for (k in P.base) if (P.base[k] !== LA.base[k]) return false; for (k in ch) e[k] = ch[k]; for (k in e) if (e[k] !== LA.state[k]) return false; return true; })();
+      if (sameAsPreset) lines.push(esc(P.why(a, b)));
+      lines.push('首次绘制 ' + fmt(a.fcp) + ' → ' + fmt(b.fcp) + '（' + (d >= 0 ? '快了 ' : '慢了 ') + fmt(Math.abs(d)) + '，' + (Math.abs(d) / a.fcp * 100).toFixed(1) + '%）。');
+      lines.push(esc(cp(b, LA.state)));
+      var share = b.bytesMs / b.fcp;
+      lines.push(share < 0.1 ? '传字节只占 ' + (share * 100).toFixed(1) + '%：要变快，得砍来回或者缩短 RTT，加带宽没什么用。' : '传字节占了 ' + (share * 100).toFixed(0) + '%：这时候带宽和文件体积开始要紧了。');
+      res.setAttribute('data-role', LA.guess === right ? 'done' : (LA.guess == null ? 'other' : 'bad'));
+      res.innerHTML = '<b>' + lines[0] + '</b><ul>' + lines.slice(1).map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>';
+    };
+    pickPreset(0);
+  }
+
+  // ================= 实验台 B =================
+  var MODES = [['head', 'head 同步', '&lt;script src&gt;'], ['defer', 'head + defer', 'defer'], ['async', 'head + async', 'async'], ['body', 'body 末尾同步', '&lt;/body&gt; 前']];
+  var runAll = function (s) { var o = {}; MODES.forEach(function (m) { o[m[0]] = simulateScript(m[0], s.css, s.js, s.exec); }); return o; };
+  var LB_PRESETS = [
+    { title: '1 · 谁最慢', sub: 'JS 800 ms，CSS 300 ms', set: { css: 300, js: 800, exec: 100 },
+      q: '四种写法里，谁的首次绘制最晚？', opts: ['head 同步', 'head + defer', 'head + async', 'body 末尾同步'],
+      judge: function (R) { var best = 0, v = -1; MODES.forEach(function (m, i) { if (R[m[0]].fcp > v) { v = R[m[0]].fcp; best = i; } }); return best; },
+      why: function (R) { return 'head 里的同步脚本叫停了解析：要等它下完（800 ms）、执行完（100 ms），body 才开始解析，之前没有任何东西可画。其他三种写法，CSS 一到（300 ms）就能画。'; } },
+    { title: '2 · CSS 很慢', sub: 'CSS 1500 ms', set: { css: 1500, js: 800, exec: 100 },
+      q: 'CSS 要 1.5 秒。把 head 里的同步脚本改成 defer，首次绘制能快多少？', opts: ['快一半以上', '只快一点：首屏卡在 CSS 上', '完全一样'],
+      judge: function (R) { var d = R.head.fcp - R.defer.fcp; return d <= 0 ? 2 : (d / R.head.fcp < 0.3 ? 1 : 0); },
+      why: function (R) { return '同步脚本执行前也要等 CSS，所以两种写法都卡在 1.5 秒；defer 只省掉了脚本执行和解析 body 那 ' + (R.head.fcp - R.defer.fcp) + ' ms。这时候该优化的是 CSS。'; } },
+    { title: '3 · DOMContentLoaded', sub: 'async 对 defer', set: { css: 300, js: 800, exec: 100 },
+      q: 'async 和 defer，谁先触发 DOMContentLoaded？', opts: ['async', 'defer', '一样'],
+      judge: function (R) { return R.async.dcl < R.defer.dcl ? 0 : (R.async.dcl > R.defer.dcl ? 1 : 2); },
+      why: function () { return 'DOMContentLoaded 要等 defer 脚本执行完，不等 async 脚本。async 脚本 800 ms 才下完，那时 DOMContentLoaded 早就触发了。'; } },
+    { title: '4 · 脚本已缓存', sub: 'JS 30 ms 就到', set: { css: 300, js: 30, exec: 100 },
+      q: '脚本已经缓存（30 ms 就到），用的是 async。它执行时，能用 getElementById 找到 body 末尾的元素吗？', opts: ['能', '不能', '不一定，看解析到哪了'],
+      judge: function (R) { return R.async.sees === 'all' ? 0 : (R.async.sees === 'none' ? 1 : 2); },
+      why: function () { return 'async 下完就插队执行，这时解析器可能才走到一半，后面的元素还不存在；它也不等 CSS，读到的样式可能不对。要等 DOM 的脚本用 defer。'; } }
+  ];
+  var lbEl = $('#lb');
+  if (lbEl) {
+    var LB = { preset: 0, css: 300, js: 800, exec: 100, revealed: false, guess: null };
+    var lbPick = function (i) { var s = LB_PRESETS[i].set; LB.preset = i; LB.css = s.css; LB.js = s.js; LB.exec = s.exec; LB.revealed = false; LB.guess = null; lbRender(); };
+    $('#lb-presets').innerHTML = LB_PRESETS.map(function (p, i) { return '<button type="button" data-i="' + i + '" aria-pressed="false"><b>' + p.title + '</b><span>' + esc(p.sub) + '</span></button>'; }).join('');
+    $('#lb-presets').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) lbPick(+b.getAttribute('data-i')); });
+    $('#lb-guess').addEventListener('click', function (e) { var b = e.target.closest('button[data-g]'); if (!b || LB.revealed) return; LB.guess = +b.getAttribute('data-g'); lbRender(); });
+    [['lb-css', 'css'], ['lb-js', 'js'], ['lb-exec', 'exec']].forEach(function (x) {
+      var el = $('#' + x[0]); el.addEventListener('input', function () { LB[x[1]] = +el.value; lbRender(); });
+    });
+    $('#lb-run').addEventListener('click', function () { LB.revealed = true; lbRender(); });
+    var lbRender = function () {
+      var P = LB_PRESETS[LB.preset], R = runAll(LB);
+      $$('#lb-presets button').forEach(function (b, i) { b.setAttribute('aria-pressed', String(i === LB.preset)); });
+      $('#lb-css').value = LB.css; $('#lb-css-o').textContent = LB.css + ' ms';
+      $('#lb-js').value = LB.js; $('#lb-js-o').textContent = LB.js + ' ms';
+      $('#lb-exec').value = LB.exec; $('#lb-exec-o').textContent = LB.exec + ' ms';
+      var max = Math.max(200, LB.css, LB.js);
+      MODES.forEach(function (m) { var r = R[m[0]]; max = Math.max(max, r.fcp, r.dcl, r.exec[1]); });
+      max *= 1.05;
+      var pct = function (x) { return (x / max * 100).toFixed(3); };
+      var seg = function (cls, a, b, title) { return '<div class="sl-seg ' + cls + '" style="left:' + pct(a) + '%;width:' + Math.max((b - a) / max * 100, 0.4).toFixed(3) + '%" title="' + title + '"></div>'; };
+      var h = '';
+      h += '<div class="sl-row"><span>CSS 下载</span><div class="sl-track">' + seg('dl-css', 0, LB.css, 'CSS 下载 ' + LB.css + ' ms') + '</div><em>' + LB.css + ' ms 到齐</em></div>';
+      h += '<div class="sl-row"><span>JS 下载</span><div class="sl-track">' + seg('dl-js', 0, LB.js, 'JS 下载 ' + LB.js + ' ms') + '</div><em>' + LB.js + ' ms 到齐</em></div>';
+      var minF = Infinity; MODES.forEach(function (m) { minF = Math.min(minF, R[m[0]].fcp); });
+      MODES.forEach(function (m) {
+        var r = R[m[0]];
+        h += '<div class="sl-row' + (LB.revealed && r.fcp === minF ? ' win' : '') + '"><span>' + m[1] + '</span><div class="sl-track">';
+        if (LB.revealed) {
+          r.parse.forEach(function (p) { h += seg('parse', p[0], p[1], '解析 HTML ' + p[0] + '～' + p[1] + ' ms'); });
+          h += seg('exec', r.exec[0], r.exec[1], '执行 JS ' + r.exec[0] + '～' + r.exec[1] + ' ms');
+          h += '<div class="sl-mk dcl" style="left:' + pct(r.dcl) + '%" title="DOMContentLoaded ' + r.dcl + ' ms"></div>';
+          h += '<div class="sl-mk fcp" style="left:' + pct(r.fcp) + '%" title="首次绘制 ' + r.fcp + ' ms"></div>';
+        } else {
+          h += '<span class="tip" style="position:absolute;left:10px;top:5px">？先猜，再点运行</span>';
+        }
+        h += '</div><em>' + (LB.revealed ? '首绘 ' + r.fcp + ' · DCL ' + r.dcl : '') + '</em></div>';
+      });
+      $('#lb-board').innerHTML = h;
+
+      var right = P.judge(R);
+      var g = '<p><b>' + P.title + '</b>：' + esc(P.q) + '</p><div class="opts">';
+      P.opts.forEach(function (o, i) {
+        var cls = LB.revealed ? (i === right ? 'right' : (i === LB.guess ? 'wrong' : '')) : '';
+        g += '<button type="button" data-g="' + i + '" aria-pressed="' + (LB.guess === i) + '" class="' + cls + '"' + (LB.revealed ? ' disabled' : '') + '>' + esc(o) + '</button>';
+      });
+      $('#lb-guess').innerHTML = g + '</div>';
+      $('#lb-run').disabled = LB.revealed;
+
+      var res = $('#lb-res');
+      if (!LB.revealed) { res.setAttribute('data-role', 'other'); res.textContent = LB.guess == null ? '先选一个答案，再点“运行”。' : '选好了，点“运行”。运行之后可以继续拖滑块。'; return; }
+      var head;
+      if (LB.guess == null) head = '你没选答案。按现在的参数，正确的是“' + esc(P.opts[right]) + '”。';
+      else if (LB.guess === right) head = '猜对了：“' + esc(P.opts[right]) + '”。';
+      else head = '你选的是“' + esc(P.opts[LB.guess]) + '”，按现在的参数应该是“' + esc(P.opts[right]) + '”。';
+      var s = LB_PRESETS[LB.preset].set, same = s.css === LB.css && s.js === LB.js && s.exec === LB.exec;
+      var li = [];
+      if (same) li.push(esc(P.why(R)));
+      li.push('首次绘制：' + MODES.map(function (m) { return m[1] + ' ' + R[m[0]].fcp + ' ms'; }).join('，') + '。');
+      li.push('DOMContentLoaded：' + MODES.map(function (m) { return m[1] + ' ' + R[m[0]].dcl + ' ms'; }).join('，') + '。');
+      li.push('head 里的同步脚本执行时 body 还没解析，<code>getElementById</code> 拿到的是 null。');
+      if (R.async.sees === 'part') li.push('async 脚本插在解析中途执行，只能找到它前面已经解析过的元素。');
+      if (R.async.noCssWait) li.push('async 脚本在 CSS 到齐之前就执行了，这时读到的样式和尺寸可能还不对。');
+      res.setAttribute('data-role', LB.guess === right ? 'done' : (LB.guess == null ? 'other' : 'bad'));
+      res.innerHTML = '<b>' + head + '</b><ul>' + li.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>';
+    };
+    lbPick(0);
+  }
+})();
+</script>
+
+</body>
+</html>

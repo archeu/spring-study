@@ -75,3 +75,9 @@
 | 01 | [SynchronousQueue 与 LinkedTransferQueue](https://archeu.github.io/study-notes/juc/synchronous-transfer-queue.html) | 双重队列和双重栈、一次 CAS 完成交接、xfer 的四种模式、先自旋再 park、slack 与自链接、线程池里的后果、JDK 11 / 21 实测，分步演示和沙盘 |
 | 02 | [ThreadPoolExecutor.execute 源码](https://archeu.github.io/study-notes/juc/threadpool-execute.html) | execute 的三个 if、ctl 的位、Worker 和 getTask、放进队列后的复查和线程退出前的检查、几件只能靠源码解释的怪事、各版本差异，线程调度实验台 |
 | 03 | [AQS 源码](https://archeu.github.io/study-notes/juc/aqs.html) | state 加等待队列、独占和共享、Condition 的两条队、公平与非公平、JDK 8 和 17 / 21 两代源码对照、日常开发里哪些框架和 JDK 类用到了它，三个 JDK 实测和实验台 |
+
+## 网络
+
+| # | 页面 | 内容 |
+|---|------|------|
+| 01 | [从输入 URL 到页面展示](https://archeu.github.io/study-notes/network/url-to-page.html) | 12 站全景、往返次数尺子、DNS 层级缓存、TCP + TLS 1.3 时序、慢启动、渲染阻塞、三次握手等设计取舍、Java 迷你浏览器实测（JDK 8 / 17 / 21）、往返计算器和 script 位置实验台 |
