@@ -118,6 +118,7 @@ a.card:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
     <h2>Java 并发<small>JDK 8 / 11 / 17 / 21</small></h2>
     <ol>
       <li><a class="card" href="juc/synchronous-transfer-queue.html"><span class="no">01</span><span class="t">SynchronousQueue 与 LinkedTransferQueue</span><span class="d">双重队列和双重栈、一次 CAS 完成交接、xfer 的四种模式、先自旋再 park、slack 与自链接、线程池里的后果、JDK 11 / 21 实测，分步演示和沙盘</span></a></li>
+      <li><a class="card" href="juc/threadpool-execute.html"><span class="no">02</span><span class="t">ThreadPoolExecutor.execute 源码</span><span class="d">execute 的三个 if、ctl 的位、Worker 和 getTask、放进队列后的复查和线程退出前的检查、几件只能靠源码解释的怪事、各版本差异，线程调度实验台</span></a></li>
     </ol>
   </section>
 </main>

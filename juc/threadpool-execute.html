@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>ThreadPoolExecutor.execute 源码</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes; a "next round" page on top of spring-async-pool, walked through the six-step method for a mechanism topic (① 为什么需要 ② 没有它会怎样 ③ 相邻方案 ④ 原理 ⑤ 亲眼看到 ⑥ 细节 ↺), with ①–⑤ kept short and ⑥ carrying the source. Colors: ctl (run state + worker count) teal (bk), the work queue amber (of), worker threads blue (pd), submitting threads brown (g2), mainLock / shutdown purple (cg), rechecks orange (warn), rejected / wrong red, right green, old ways grey. Interactives: a "you are the scheduler" interleaving lab over execute / addWorker / getTask / processWorkerExit / shutdown with guess-first presets (⑥), driven by a pure simulator fuzzed in node. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:640px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-on{font-size:11.5px;font-weight:700;fill:var(--on-accent)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)}
+.f-oft{fill:var(--of-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-card{fill:var(--card)} .f-paper{fill:var(--code-bg)}
+.c-empty{fill:var(--card);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-bkd{stroke:var(--bk);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-pdd{stroke:var(--pd);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+.mk{fill:var(--of)}
+.mk-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+.dot-q{fill:var(--of)}
+.dot-s{fill:var(--bk)}
+.dot-t{fill:var(--warn)}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.need{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need b i{font-style:normal;font-family:var(--font-display);color:var(--of);margin-right:6px}
+.need p{font-size:14px;color:var(--muted)}
+.need .to{font-size:12.5px;align-self:flex-start;padding:2px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev{color:var(--ink)}
+.mj dd.ev b{color:var(--bad)}
+.mj .go{font-size:12.5px;align-self:flex-start;color:var(--muted)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- ③ route ---------- */
+.qflow{display:flex;flex-direction:column;gap:0}
+.qstep{display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;align-items:start}
+.qstep .qn{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-display);font-size:20px;background:var(--ink);color:var(--paper);position:relative;z-index:1}
+.qstep .qbody{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.qstep .qbody > b{font-size:17px}
+.qstep .qbody > p{font-size:14px;color:var(--muted)}
+.qstep .qbody > p code{color:var(--ink);overflow-wrap:anywhere}
+.qline{width:2px;height:22px;background:var(--line-strong);margin-left:21px}
+.ans{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.an{border:1.5px solid var(--rc);background:var(--rt);border-radius:12px;padding:8px 12px;font-size:14px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.an > span{font-size:12.5px;color:var(--muted)}
+.an > b{font-weight:700}
+.an a{font-size:12.5px}
+.an code{overflow-wrap:anywhere}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.exp-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.exp-h .n{font-family:var(--font-display);font-size:22px;color:var(--of)}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.fact .to6{margin-top:auto;font-size:12.5px;color:var(--muted)}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:21px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way .cfg{font-family:var(--font-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.way svg{display:block;width:100%;height:auto}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b code{font-size:.9em}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:4.6em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--bad)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:620px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+.ctl.off{opacity:.45}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg-btns button:disabled{opacity:.4;cursor:not-allowed}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:18px;height:3px;border-radius:2px;display:inline-block}
+.lg i.d{height:0;border-top:2px dashed}
+.notes{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.notes li{font-size:14.5px;padding:8px 12px;border-radius:10px;background:var(--rt);border-left:4px solid var(--rc)}
+
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+
+/* ---------- bag board (stepper + lab) ---------- */
+.board{display:flex;flex-direction:column;gap:12px}
+.bd-top{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,.7fr) minmax(0,1.2fr);gap:10px}
+.pane{border:2px solid var(--rc);background:var(--rt);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.pane > small{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}
+.pane > small code{color:var(--ink)}
+.pane .row{display:flex;flex-wrap:wrap;gap:6px;min-height:30px;align-items:center}
+.pane .big{font-family:var(--font-display);font-size:28px;line-height:1}
+.ent{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:12.5px;padding:3px 8px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card)}
+.ent i{font-style:normal;font-size:11px;padding:0 5px;border-radius:5px}
+.ent[data-st="0"]{border-color:var(--bk)}
+.ent[data-st="0"] i{background:var(--bk);color:var(--on-accent)}
+.ent[data-st="1"] i{background:var(--ink);color:var(--paper)}
+.ent.flash{box-shadow:0 0 0 3px var(--of)}
+.ent.stale{opacity:.55;border-style:dashed}
+.pl{font-family:var(--font-mono);font-size:12.5px;padding:3px 9px;border-radius:999px;background:var(--card);border:1.5px solid var(--cg)}
+.empty-note{font-size:12.5px;color:var(--muted)}
+.thr-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.thr{border:1.5px solid var(--line-strong);background:var(--card);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.thr.act{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.thr-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.thr-h b{font-family:var(--font-display);font-weight:400;font-size:20px}
+.stt{font-size:11.5px;padding:1px 8px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+.stt.parked{background:var(--cg-tint);border:1px solid var(--cg)}
+.stt.done{background:var(--good-tint)}
+.thr .kv{display:grid;grid-template-columns:3.2em minmax(0,1fr);gap:4px 8px;font-size:12.5px;align-items:center}
+.thr .kv > span{color:var(--muted)}
+.thr .kv > div{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.thr .nxt{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;min-height:2.6em}
+.thr .btns{display:flex;gap:6px;flex-wrap:wrap}
+.pk{font-family:var(--font-mono);font-size:12px;padding:1px 7px;border-radius:6px;border:1.5px solid var(--of);background:var(--of-tint)}
+.logbox{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;background:var(--code-bg)}
+.logbox li{font-size:13px;display:grid;grid-template-columns:2em 1.6em minmax(0,1fr);gap:6px;align-items:baseline}
+.logbox li .ln{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.logbox li b{font-family:var(--font-display);font-weight:400}
+.logbox li.k-steal,.logbox li.k-robbed{color:var(--warn)}
+.logbox li.k-xset,.logbox li.k-xread{color:var(--bad)}
+.logbox li.k-pocket,.logbox li.k-topocket{color:var(--of)}
+.logbox li.k-offer,.logbox li.k-hand{color:var(--cg)}
+.logbox li.new{font-weight:700}
+.vs{display:inline-flex}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+/* ---------- source ---------- */
+pre.src{padding:12px 0}
+pre.src code{display:inline-block;min-width:100%}
+pre.src .l{display:block;padding:0 16px 0 0}
+pre.src .l .no{display:inline-block;width:3.4em;padding-right:.9em;text-align:right;color:var(--muted);user-select:none}
+pre.src .l.hl{background:var(--of-tint)}
+pre.src .l .tag{font-family:var(--font-display);color:var(--of);margin-left:.6em}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+.bar{display:inline-block;height:9px;border-radius:3px;background:var(--rc);vertical-align:middle;margin-right:6px}
+.how{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.how .need b i{color:var(--bk)}
+.states{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.sc{border:2px solid var(--rc);background:var(--card);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.sc b{font-family:var(--font-mono);font-size:14px}
+.sc span{font-size:13px;color:var(--muted)}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts,.metaphor,.states{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bd-top{grid-template-columns:1fr 1fr}
+  .bd-top .pane:first-child{grid-column:1 / -1}
+  .thr-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .how{grid-template-columns:1fr}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ledger{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras,.ex{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+}
+@media (max-width:520px){
+  .facts,.metaphor,.presets,.ctl-grid,.states,.thr-grid,.bd-top{grid-template-columns:1fr}
+  .tiles,.ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+  .qstep{grid-template-columns:34px minmax(0,1fr);gap:10px}
+  .qstep .qn{width:34px;height:34px;font-size:17px}
+  .qline{margin-left:16px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-pd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-pd" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-cg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-cg" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Java 并发</span><span aria-hidden="true">/</span><span class="tb-here">ThreadPoolExecutor.execute 源码</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">JDK 21 · THREADPOOLEXECUTOR · CTL · ADDWORKER · RUNWORKER · GETTASK · WORKER · MAINLOCK</p>
+  <h1>三个 if、一个 int、一把不可重入的锁</h1>
+  <p class="lead"><code>execute</code> 只有三个分支：核心名额没满，就开线程，把任务<b>直接交给它</b>；否则放进队列，放完<b>再看一眼</b>池子还开着没有、还有没有线程；放不进就开临时线程，开不了就拒绝。池子的运行状态和线程数挤在<b>一个 int</b>（<code>ctl</code>）里，所以“看状态、占名额”一次 CAS 就能做完。线程要退出时，也会回头看一眼队列。两边各查一次，任务就不会卡在没人取的队列里。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>为什么需要</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>没有它会怎样</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>相邻方案</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>原理</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>亲眼看到</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>这是下一圈</b><span>线程池“先补核心、再排队、再加临时线程、最后拒绝”的四步规则，在 <a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a> 讲过，还有模拟器。这一页接着往下：<code>execute</code> 的源码为什么是这三个 if，线程怎么被造出来、怎么取任务、怎么退出。所以 ①～⑤ 都很短，篇幅给 ⑥ 的源码和实验台。假设场景是面试被追问“讲讲 execute 的源码”，以及线上遇到几件只有看源码才说得清的怪事。源码以 <b>JDK 21u</b> 为准，标“实测”的在本机跑过：JDK 11.0.32 和 21.0.12。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>为什么需要：四步规则背不出来的几件事</h2>
+    <p class="lead">只记四步规则，下面这几件事都解释不了。它们都是本页 ⑥ 实测过的：</p>
+  </div>
+  <div class="misj">
+    <div class="mj"><b><i>?</i>核心数设成 0、最大数 10、无界队列</b><p>10 个任务进来，自始至终只有 1 个线程在干活。第 1 步跳过、第 3 步走不到，那这 1 个线程是谁建的？</p></div>
+    <div class="mj"><b><i>?</i>任务里抛了个异常</b><p>线程名从 <code>pool-1-thread-1</code> 变成了 <code>pool-1-thread-2</code>。换成 <code>submit</code> 提交，异常却连日志都没有。</p></div>
+    <div class="mj"><b><i>?</i>配了 CallerRunsPolicy，说好“满了让调用方自己跑”</b><p>关池以后提交的 100 个任务，一个都没跑，也没有异常。</p></div>
+    <div class="mj"><b><i>?</i>“核心线程”不会被回收</b><p>可实测里先建的那个线程被回收了，留下来的是后建的“临时线程”。</p></div>
+  </div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>没有它会怎样：每个任务一个新线程</h2>
+    <p class="lead">不用线程池，每来一个任务就 <code>new Thread(task).start()</code>：建线程、销毁线程都要进内核，突发流量时线程数没有上限。线程池的四步规则就是在“复用线程”和“限住总数”之间找平衡，<a href="../spring/spring-async-pool.html">旧页</a>有完整的图和模拟器，这里不重讲。</p>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>相邻方案：JDK 里还有哪些执行器</h2>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>执行器</th><th>线程从哪来</th><th>任务放哪</th><th>适合</th></tr></thead>
+      <tbody>
+        <tr class="hl"><th><code>ThreadPoolExecutor</code></th><td>按核心数、最大数造，闲久了回收</td><td>你给的 <code>BlockingQueue</code></td><td>一般的业务异步、IO 任务</td></tr>
+        <tr><th><code>ForkJoinPool</code></th><td>固定并行度，每个线程一个双端队列，空闲的去偷别人的</td><td>各线程自己的队列</td><td>能拆分的计算任务；<code>parallelStream</code>、<code>CompletableFuture</code> 默认用它</td></tr>
+        <tr><th><code>Executors.newVirtualThreadPerTaskExecutor()</code></th><td>每个任务一个虚拟线程，不复用</td><td>不排队</td><td>JDK 21 起，大量阻塞 IO 的任务</td></tr>
+        <tr><th>Spring <code>ThreadPoolTaskExecutor</code></th><td>里面就是一个 <code>ThreadPoolExecutor</code></td><td>同左</td><td>Spring 里配置更方便，规则完全一样</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="pick-line"><b>本页学 ThreadPoolExecutor：</b>Spring 的线程池、<code>Executors.newFixedThreadPool</code>、<code>newCachedThreadPool</code> 背后都是它，<code>execute</code> 是所有任务的入口。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>原理：四步规则落到源码里是什么样</h2>
+    <p class="lead">四步规则在 <a href="../spring/spring-async-pool.html">旧页</a>讲过：先补满核心线程，再排队，队列满了加临时线程，再不行就拒绝。这一圈先认识源码里撑起这四步的几样东西，再看三个 if 怎么排。</p>
+  </div>
+
+  <div class="sub">
+    <h3>这一圈要用到的四样东西</h3>
+    <div class="facts">
+      <div class="fact" data-role="bk"><h4><code>ctl</code></h4><p>一个 <code>AtomicInteger</code>，高 3 位是池子的运行状态，低 29 位是线程数。看状态、改线程数都是对它做 CAS。</p></div>
+      <div class="fact" data-role="pd"><h4><code>Worker</code></h4><p>一个工作线程的“外壳”：里面有真正的 <code>Thread</code>、一个 <code>firstTask</code>（建它时顺手带来的第一个任务），自己还是一把锁。</p></div>
+      <div class="fact" data-role="cg"><h4><code>workers</code> + <code>mainLock</code></h4><p>所有 Worker 放在一个普通的 <code>HashSet</code> 里，进出都要先拿 <code>mainLock</code>（一把 <code>ReentrantLock</code>）。</p></div>
+      <div class="fact" data-role="of"><h4><code>workQueue</code></h4><p>你给的阻塞队列。工作线程空闲时停在它的 <code>take()</code> 或 <code>poll(keepAlive)</code> 上等任务。</p></div>
+    </div>
+  </div>
+
+  <figure id="m-exec">
+    <h3><span class="sn">机制 1</span>execute 的三个 if</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 330" role="img" aria-label="execute 的三个分支：核心没满就 addWorker 带上任务；否则放进队列并复查；放不进就 addWorker 临时线程，失败就拒绝">
+        <rect x="20" y="20" width="160" height="44" rx="10" class="b-g2"/><text class="t-h" x="100" y="48" text-anchor="middle">execute(task)</text>
+        <path class="e-ink" d="M180 42 H226" marker-end="url(#ah-ink)"/>
+        <rect x="230" y="20" width="250" height="44" rx="10" class="b-bk"/><text class="t-b" x="355" y="40" text-anchor="middle">① 读 ctl：线程数 &lt; corePoolSize？</text><text class="t-m" x="355" y="56" text-anchor="middle">第 1363 行</text>
+        <path class="e-bk" d="M480 42 H526" marker-end="url(#ah-bk)"/><text class="t-bk" x="503" y="34" text-anchor="middle">是</text>
+        <rect x="530" y="20" width="350" height="44" rx="10" class="b-pd"/><text class="t-b" x="705" y="40" text-anchor="middle">addWorker(task, true)：开线程，task 直接交给它</text><text class="t-m" x="705" y="56" text-anchor="middle">成功就返回；失败（被别人抢了名额、池子关了）往下走</text>
+        <path class="e-ink" d="M355 64 V100" marker-end="url(#ah-ink)"/><text class="t-m" x="365" y="86">否 / 失败</text>
+        <rect x="230" y="104" width="250" height="44" rx="10" class="b-of"/><text class="t-b" x="355" y="124" text-anchor="middle">② 还在 RUNNING 且 offer 成功？</text><text class="t-m" x="355" y="140" text-anchor="middle">第 1368 行</text>
+        <path class="e-of" d="M480 126 H526" marker-end="url(#ah-of)"/><text class="t-of" x="503" y="118" text-anchor="middle">是</text>
+        <rect x="530" y="96" width="350" height="96" rx="10" class="b-warn"/>
+        <text class="t-b" x="546" y="118">放进去之后，再读一次 ctl（复查）</text>
+        <text class="t-s" x="546" y="142">池子已经不在 RUNNING → 把 task 撤回，拒绝</text>
+        <text class="t-s" x="546" y="164">线程数是 0 → addWorker(null, false) 补一个线程</text>
+        <text class="t-m" x="546" y="184">都不是 → 返回，等工作线程从队列里取</text>
+        <path class="e-ink" d="M355 148 V196" marker-end="url(#ah-ink)"/><text class="t-m" x="365" y="178">否（队列满了 / 关了）</text>
+        <rect x="230" y="200" width="250" height="44" rx="10" class="b-pd"/><text class="t-b" x="355" y="220" text-anchor="middle">③ addWorker(task, false)</text><text class="t-m" x="355" y="236" text-anchor="middle">开临时线程，task 直接交给它</text>
+        <path class="e-bad" d="M355 244 V280" marker-end="url(#ah-bad)"/><text class="t-m" x="365" y="266">失败</text>
+        <rect x="230" y="284" width="250" height="36" rx="10" class="b-bad"/><text class="t-b" x="355" y="307" text-anchor="middle">reject(task)：交给拒绝策略</text>
+        <text class="t-s" x="546" y="232">“临时线程插队”就是这里来的：</text>
+        <text class="t-s" x="546" y="252">新线程的第一个任务是刚来的 task，</text>
+        <text class="t-s" x="546" y="272">不经过队列，比队列里排着的先跑。</text>
+      </svg>
+    </div>
+    <figcaption>四步规则只有三个 if，因为“队列满了才加临时线程”和“临时线程也加不了就拒绝”合在第 ③ 个分支里。容易忽略的是第 ② 步里的<b>复查</b>：它在第 1 次读 ctl 和真正放进队列之间，池子可能被关了，最后一个线程也可能刚好退出了。核心数为 0 的池子全靠它建出第一个线程，见 <a href="#pit-zero">⑥ 坑 1</a>。</figcaption>
+  </figure>
+
+  <figure id="m-ctl">
+    <h3><span class="sn">机制 2</span>一个 int 装两样东西</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 200" role="img" aria-label="ctl 的 32 位：高 3 位是运行状态，低 29 位是线程数">
+        <g transform="translate(20,30)">
+          <rect x="0" y="0" width="120" height="44" rx="8" class="b-bk"/><text class="t-mono" x="60" y="20" text-anchor="middle">111</text><text class="t-m" x="60" y="36" text-anchor="middle">高 3 位：runState</text>
+          <rect x="124" y="0" width="736" height="44" rx="8" class="b-pd"/><text class="t-mono" x="492" y="20" text-anchor="middle">00000000000000000000000000100</text><text class="t-m" x="492" y="36" text-anchor="middle">低 29 位：workerCount（最多 2^29 − 1，约 5.4 亿）</text>
+        </g>
+        <text class="t-s" x="20" y="102">上面这个值是 ⑤ 实测打印的：RUNNING，4 个线程。状态按数值从小到大：</text>
+        <g transform="translate(20,116)">
+          <rect x="0" y="0" width="160" height="56" rx="10" class="b-bk"/><text class="t-b" x="80" y="22" text-anchor="middle">RUNNING</text><text class="t-mono" x="80" y="42" text-anchor="middle">111（负数）</text>
+          <rect x="176" y="0" width="160" height="56" rx="10" class="b-card"/><text class="t-b" x="256" y="22" text-anchor="middle">SHUTDOWN</text><text class="t-mono" x="256" y="42" text-anchor="middle">000</text>
+          <rect x="352" y="0" width="160" height="56" rx="10" class="b-card"/><text class="t-b" x="432" y="22" text-anchor="middle">STOP</text><text class="t-mono" x="432" y="42" text-anchor="middle">001</text>
+          <rect x="528" y="0" width="160" height="56" rx="10" class="b-card"/><text class="t-b" x="608" y="22" text-anchor="middle">TIDYING</text><text class="t-mono" x="608" y="42" text-anchor="middle">010</text>
+          <rect x="704" y="0" width="156" height="56" rx="10" class="b-card"/><text class="t-b" x="782" y="22" text-anchor="middle">TERMINATED</text><text class="t-mono" x="782" y="42" text-anchor="middle">011</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>RUNNING 是 <code>-1 &lt;&lt; 29</code>，是负数，其余状态依次变大，所以“还在跑吗”就是 <code>c &lt; SHUTDOWN</code>，“至少停到哪一步”也是一次整数比较。shutdown() 把状态改成 SHUTDOWN（不再收新任务，队列里的照跑），shutdownNow() 改成 STOP（还要打断正在跑的、退回队列里的）；线程数归零、队列也空了，经过 TIDYING 到 TERMINATED。</figcaption>
+  </figure>
+
+  <figure id="m-life">
+    <h3><span class="sn">机制 3</span>一个工作线程的一生</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 272" role="img" aria-label="addWorker 先 CAS 占名额再建线程；线程循环 getTask 取任务执行；getTask 返回 null 时退出，退出前看要不要补一个">
+        <rect x="20" y="20" width="200" height="64" rx="12" class="b-bk"/><text class="t-b" x="120" y="44" text-anchor="middle">addWorker</text><text class="t-m" x="120" y="62" text-anchor="middle">CAS ctl 先占名额</text><text class="t-m" x="120" y="76" text-anchor="middle">再拿 mainLock 建 Worker、启动</text>
+        <path class="e-ink" d="M220 52 H266" marker-end="url(#ah-ink)"/>
+        <rect x="270" y="20" width="180" height="64" rx="12" class="b-pd"/><text class="t-b" x="360" y="44" text-anchor="middle">runWorker</text><text class="t-m" x="360" y="62" text-anchor="middle">先跑 firstTask</text><text class="t-m" x="360" y="76" text-anchor="middle">每个任务前后锁住自己</text>
+        <path class="e-ink" d="M450 52 H496" marker-end="url(#ah-ink)"/>
+        <rect x="500" y="20" width="200" height="64" rx="12" class="b-of"/><text class="t-b" x="600" y="44" text-anchor="middle">getTask</text><text class="t-m" x="600" y="62" text-anchor="middle">线程数 ≤ 核心数：take() 一直等</text><text class="t-m" x="600" y="76" text-anchor="middle">否则 poll(keepAlive) 限时等</text>
+        <path class="e-of" d="M600 84 C 600 130, 360 130, 360 88" marker-end="url(#ah-of)"/><text class="t-of" x="480" y="134" text-anchor="middle">取到任务 → 跑完 → 再取</text>
+        <path class="e-ink" d="M700 52 H736" marker-end="url(#ah-ink)"/><text class="t-m" x="718" y="44" text-anchor="middle">null</text>
+        <rect x="740" y="20" width="140" height="64" rx="12" class="b-cg"/><text class="t-b" x="810" y="44" text-anchor="middle">processWorker</text><text class="t-b" x="810" y="60" text-anchor="middle">Exit</text><text class="t-m" x="810" y="76" text-anchor="middle">离开 workers</text>
+        <rect x="20" y="152" width="860" height="108" rx="12" class="b-card"/>
+        <text class="t-b" x="36" y="176">getTask 什么时候返回 null（线程退出）：</text>
+        <text class="t-s" x="36" y="198">· 池子 SHUTDOWN 了而且队列空了，或者已经 STOP；</text>
+        <text class="t-s" x="36" y="218">· 等满 keepAlive 没等到任务，而且当时线程数 &gt; 核心数（或允许核心线程超时），并且自己不是最后一个线程、或者队列是空的。</text>
+        <text class="t-s" x="36" y="242">退出前（processWorkerExit）再看一眼：队列不空却没线程了，就再 addWorker 一个。</text>
+      </svg>
+    </div>
+    <figcaption>注意“线程数 &gt; 核心数”是每次进 getTask 时现算的：池子里没有哪个线程被标成“核心线程”，谁先闲满 keepAlive 谁就走，剩下的就算核心。任务抛异常时，异常一路抛出 runWorker，线程照样走 processWorkerExit，然后被换掉。</figcaption>
+  </figure>
+
+  <figure id="m-recheck">
+    <h3><span class="sn">机制 4</span>两边各查一次：任务不会卡在没人取的队列里</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 230" role="img" aria-label="提交者先放进队列再读线程数；退出的线程先把线程数减一再看队列；至少一边能看到对方">
+        <text class="t-b" x="20" y="34">提交的线程</text>
+        <text class="t-b" x="20" y="124">最后一个要退出的线程</text>
+        <line class="e-axis" x1="160" y1="28" x2="880" y2="28"/>
+        <line class="e-axis" x1="160" y1="118" x2="880" y2="118"/>
+        <rect x="200" y="14" width="210" height="28" rx="6" class="b-of"/><text class="t-s" x="305" y="33" text-anchor="middle">① workQueue.offer(task)</text>
+        <rect x="430" y="14" width="300" height="28" rx="6" class="b-warn"/><text class="t-s" x="580" y="33" text-anchor="middle">② 复查 ctl：线程数 0 → 补一个</text>
+        <rect x="200" y="104" width="210" height="28" rx="6" class="b-bk"/><text class="t-s" x="305" y="123" text-anchor="middle">① CAS 线程数 −1</text>
+        <rect x="430" y="104" width="300" height="28" rx="6" class="b-warn"/><text class="t-s" x="580" y="123" text-anchor="middle">② 看队列：不空却没线程 → 补一个</text>
+        <rect x="20" y="158" width="860" height="60" rx="12" class="b-card"/>
+        <text class="t-b" x="36" y="182">为什么够了：</text>
+        <text class="t-s" x="130" y="182">两边都是“先改自己那一边，再读对方那一边”。不管怎么交错，至少有一边能读到对方改过的值：</text>
+        <text class="t-s" x="130" y="202">提交者看到线程数已经是 0，或者退出的线程看到队列里有任务。任何一边看到了，就会补一个线程。</text>
+      </svg>
+    </div>
+    <figcaption>这和 <a href="../database/hikari-concurrentbag.html#m-order">ConcurrentBag</a>、<a href="synchronous-transfer-queue.html#k-wait">SynchronousQueue</a> 里“先写自己的、再读对方的”是同一个套路，第三次见到了。getTask 里还有一道：最后一个线程看到队列不空时根本不退出（<code>wc &gt; 1 || workQueue.isEmpty()</code>）。⑥ 的实验台和随机测试会拆掉其中一边看看会怎样。</figcaption>
+  </figure>
+
+  <div class="sub" id="m-design">
+    <h3>为什么这样设计：状态和线程数必须一起 CAS</h3>
+    <div class="design">
+      <div class="way" data-role="other">
+        <h4>被放弃的：两个变量<small>runState 一个、workerCount 一个</small></h4>
+        <ul class="pains">
+          <li>addWorker 要做的是“还在 RUNNING、名额没满，才 +1”；tryTerminate 要做的是“已经关了、线程数是 0，才进 TIDYING”。两件事都是“看两个值，再改其中一个”</li>
+          <li>两个变量各自 CAS，挡不住这样的交错：一边刚判定可以终止，另一边同时把线程数 +1，后面只能靠别处再补救</li>
+          <li>想不交错，就得每次都拿一把锁，提交任务、线程退出都要排队</li>
+        </ul>
+      </div>
+      <div class="way" data-role="bk">
+        <h4>JDK：一个 ctl，一次 CAS<small>compareAndIncrementWorkerCount(c)</small></h4>
+        <ul class="pains">
+          <li class="ok">CAS 的期望值 c 里同时带着状态和线程数：状态一变，+1 就失败；线程数一变，进 TIDYING 的 CAS 也失败。两件事最多成功一件</li>
+          <li class="ok">失败了就重读 ctl 再判断，不用拿锁</li>
+          <li>代价：线程数上限从 2^31 − 1 降到 2^29 − 1。源码注释说真不够用时改成 AtomicLong 就行，现在用 int 更快更简单</li>
+        </ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="bk"><b>决定胜负的约束：</b>“加线程”和“关池子”必须互斥，又不想让每次提交、每次线程退出都去抢锁。把两样东西塞进一个 int，一次 CAS 就同时检查了两样。这个 CAS 只管名额；真正建线程、放进 workers，是之后在 <code>mainLock</code> 里做的，锁里还会再查一次状态，算第二道保险。</p>
+  </div>
+
+  <div class="sub" id="m-api">
+    <h3>最少的 API</h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">API</span><b>ThreadPoolExecutor</b>七个参数和常用方法</div>
+<pre><code>var pool = new ThreadPoolExecutor(
+    2, 4,                         <span class="cm">// corePoolSize, maximumPoolSize</span>
+    60, TimeUnit.SECONDS,         <span class="cm">// keepAliveTime：线程数超过核心数时，闲多久回收</span>
+    new ArrayBlockingQueue&lt;&gt;(100),<span class="cm">// workQueue：有界</span>
+    Executors.defaultThreadFactory(),
+    new ThreadPoolExecutor.CallerRunsPolicy());
+pool.execute(task);               <span class="cm">// 没有返回值，异常会让线程退出</span>
+Future&lt;?&gt; f = pool.submit(task);   <span class="cm">// 包成 FutureTask 再 execute，异常装进 Future</span>
+pool.shutdown();                  <span class="cm">// 不收新任务，队列里的照跑</span>
+pool.awaitTermination(30, TimeUnit.SECONDS);
+pool.close();                     <span class="cm">// JDK 19 起：shutdown + 一直等到结束</span></code></pre>
+    </div>
+    <p class="tip">异常怎么传、拒绝策略在关池后怎么表现、怎么监控、各版本改了什么，放到 <a href="#s6">第⑥步</a>。</p>
+  </div>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>亲眼看到：三个 if、插队、ctl 的位</h2>
+    <p class="lead">核心 2、最大 4、队列容量 2，连续提交 8 个各跑 300 ms 的任务。每次提交后打印线程数和队列长度，再用反射读出 <code>ctl</code> 的 32 位。最后顺带验证 ① 里“核心数 0 只有 1 个线程”。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">1</span><b>TpePeek.java</b>单文件，JDK 11+；读私有字段 <code>ctl</code> 要加 <code>--add-opens</code></div>
+<pre><code>import java.lang.reflect.Field;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+<span class="cm">// 看 execute 的三步判断、任务的实际执行顺序、ctl 的位</span>
+<span class="cm">// 运行：java --add-opens java.base/java.util.concurrent=ALL-UNNAMED TpePeek.java</span>
+public class TpePeek {
+  static Field CTL;
+  static String ctl(ThreadPoolExecutor p) throws Exception {
+    int c = ((AtomicInteger) CTL.get(p)).get();
+    String[] names = {"RUNNING", "SHUTDOWN", "STOP", "TIDYING", "TERMINATED"};
+    int rs = c &gt;&gt; 29;                                   <span class="cm">// 高 3 位</span>
+    String bits = String.format("%32s", Integer.toBinaryString(c)).replace(' ', '0');
+    return bits.substring(0, 3) + " " + bits.substring(3) + "  →  " + names[rs + 1] + "，线程数 " + (c &amp; ((1 &lt;&lt; 29) - 1));
+  }
+  public static void main(String[] a) throws Exception {
+    CTL = ThreadPoolExecutor.class.getDeclaredField("ctl"); CTL.setAccessible(true);
+    var started = Collections.synchronizedList(new ArrayList&lt;String&gt;());
+    var pool = new ThreadPoolExecutor(2, 4, 60, TimeUnit.SECONDS, new ArrayBlockingQueue&lt;&gt;(2));
+    System.out.println("新建：        " + ctl(pool));
+    for (int i = 1; i &lt;= 8; i++) {
+      final int id = i;
+      String how;
+      try {
+        pool.execute(() -&gt; { started.add("#" + id); sleep(300); });
+        how = "线程 " + pool.getPoolSize() + "，队列 " + pool.getQueue().size();
+      } catch (RejectedExecutionException e) { how = "被拒绝"; }
+      System.out.printf("execute(#%d) → %s%n", i, how);
+    }
+    System.out.println("此刻：        " + ctl(pool));
+    sleep(1000);
+    System.out.println("开跑顺序：" + started);
+    pool.shutdown();
+    System.out.println("shutdown 后： " + ctl(pool));
+    pool.awaitTermination(5, TimeUnit.SECONDS);
+    System.out.println("全部结束：    " + ctl(pool));
+
+    <span class="cm">// core = 0 + 无界队列：只会有 1 个线程</span>
+    var zero = new ThreadPoolExecutor(0, 10, 60, TimeUnit.SECONDS, new LinkedBlockingQueue&lt;&gt;());
+    long t0 = System.nanoTime();
+    for (int i = 0; i &lt; 10; i++) zero.execute(() -&gt; sleep(100));
+    zero.shutdown(); zero.awaitTermination(10, TimeUnit.SECONDS);
+    System.out.printf("core=0、max=10、无界队列：最多同时 %d 个线程，10 个 100 ms 的任务用了 %d ms%n", zero.getLargestPoolSize(), (System.nanoTime() - t0) / 1_000_000);
+  }
+  static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException e) { } }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">2</span><b>运行</b>JDK 21.0.12；JDK 11.0.32 只有“开跑顺序”里 #2 的位置不同</div>
+<pre class="console"><code><span class="w">$ java --add-opens java.base/java.util.concurrent=ALL-UNNAMED TpePeek.java</span>
+新建：        111 00000000000000000000000000000  →  RUNNING，线程数 0
+execute(#1) → 线程 1，队列 0        <span class="cm">← 第 ① 个 if：开核心线程</span>
+execute(#2) → 线程 2，队列 0
+execute(#3) → 线程 2，队列 1        <span class="cm">← 第 ② 个 if：排队</span>
+execute(#4) → 线程 2，队列 2
+execute(#5) → 线程 3，队列 2        <span class="cm">← 第 ③ 个 if：队列满了，开临时线程</span>
+execute(#6) → 线程 4，队列 2
+execute(#7) → 被拒绝                <span class="cm">← 第 ③ 个 if 也失败：拒绝</span>
+execute(#8) → 被拒绝
+此刻：        111 00000000000000000000000000100  →  RUNNING，线程数 4
+<b>开跑顺序：[#1, #2, #5, #6, #3, #4]</b>     <span class="cm">← JDK 11 这次是 [#1, #5, #6, #2, #3, #4]</span>
+shutdown 后： <b>000</b> 00000000000000000000000000100  →  SHUTDOWN，线程数 4
+全部结束：    <b>011</b> 00000000000000000000000000000  →  TERMINATED，线程数 0
+<b>core=0、max=10、无界队列：最多同时 1 个线程，10 个 100 ms 的任务用了 1003 ms</b></code></pre>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>看到了什么</th><th>对应 ④</th></tr></thead>
+      <tbody>
+        <tr><td>#5、#6 比早就在排队的 #3、#4 先开跑：临时线程的第一个任务不经过队列。#1、#2、#5、#6 之间谁先谁后，看线程启动快慢</td><td><a href="#m-exec">机制 1</a> 第 ③ 个 if</td></tr>
+        <tr><td>高 3 位从 <code>111</code>（RUNNING）变成 <code>000</code>（SHUTDOWN）、<code>011</code>（TERMINATED），低 29 位就是线程数</td><td><a href="#m-ctl">机制 2</a></td></tr>
+        <tr><td>核心数 0、无界队列：10 个任务排队一个个跑，1 秒多</td><td><a href="#m-exec">机制 1</a> 第 ② 个 if 的复查</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="done-box"><b>到这里已经能交差了：</b>能画出 execute 的三个 if，说清临时线程为什么插队、ctl 的高 3 位和低 29 位各是什么，面试里“讲讲 execute 源码”这一问答得上。</div>
+  <div class="todo">
+    <b>已知还没处理的细节</b>
+    <ul>
+      <li>核心数 0 时，那 1 个线程是谁建的：<a href="#pit-zero">⑥ 坑 1</a></li>
+      <li>任务抛异常、关池以后的拒绝策略、shutdown 和 shutdownNow：<a href="#pit-throw">⑥ 坑 2～4</a></li>
+      <li>addWorker、runWorker、getTask 逐行，以及自己当一回调度器：<a href="#c3">⑥ 第三圈</a></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>细节：几件怪事的源码根据，和一行行读</h2>
+    <p class="lead">旧页的“常踩的坑”讲的是配置（无界队列让最大线程数失效、拒绝了怎么办等），这里只放旧页没讲、要看源码才说得清的。</p>
+  </div>
+
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-zero">
+        <b><em>坑 1</em>核心数 0 + 无界队列：永远只有 1 个线程<a class="root" href="#m-exec">← ④ 第 ② 个 if 的复查</a></b>
+        <dl>
+          <dt>现象</dt><dd>核心 0、最大 10、<code>LinkedBlockingQueue</code>：10 个 100 ms 的任务排着队一个个跑，用了 1003 ms，最多同时 1 个线程。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>第 ① 个 if 永远不成立（线程数不会 &lt; 0），第 ② 个 if 永远能放进去，第 ③ 个 if 永远走不到。唯一建线程的地方是放进队列后的复查：“线程数是 0 就补一个”。补了 1 个之后，复查看到的就是 1，再也不补。</dd>
+          <dt>做法</dt><dd class="fix">想“空闲时缩到 0、忙时开到 10”，写成核心 10 + <code>allowCoreThreadTimeOut(true)</code>：实测 10 个任务 117 ms 跑完，闲 1.5 秒后线程数回到 0。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-throw">
+        <b><em>坑 2</em>execute 的任务抛异常：线程被换掉；submit 的：异常悄悄没了<a class="root" href="#m-life">← ④ 工作线程的一生</a></b>
+        <dl>
+          <dt>现象</dt><dd>单线程池里一个任务抛异常，控制台打一行 <code>Exception in thread "pool-1-thread-1"</code>，下一个任务跑在 <code>pool-1-thread-2</code> 上。换成 <code>submit</code>：线程名不变，什么也不打印，只有调 <code>get()</code> 才抛 <code>ExecutionException</code>。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>runWorker 不吞异常：调完 <code>afterExecute</code> 就原样抛出，线程走到 processWorkerExit，因为是异常退出，一定会补一个新线程。<code>submit</code> 先把任务包成 <code>FutureTask</code>，它自己 catch 住异常存起来，所以对线程池来说任务“正常结束”。</dd>
+          <dt>做法</dt><dd class="fix">任务里自己 try / catch；用 <code>submit</code> 就一定要处理返回的 Future；统一记日志可以覆写 <code>afterExecute</code>（submit 的任务在这里拿到的 Throwable 是 null，要从 Future 里取）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-callerruns">
+        <b><em>坑 3</em>CallerRunsPolicy 在池子关了以后，直接丢任务<a class="root env" href="#c3">源码细节</a></b>
+        <dl>
+          <dt>现象</dt><dd>关池后提交 100 个任务：一个没跑，没有异常，没有日志。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>它的源码只有一句：<code>if (!e.isShutdown()) r.run();</code>。关了就什么也不做。默认的 <code>AbortPolicy</code> 关池后仍会抛 <code>RejectedExecutionException</code>。</dd>
+          <dt>做法</dt><dd class="fix">停机流程里先停止提交、再关池；或者自己写一个拒绝策略，关池时至少打日志。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-shutdown">
+        <b><em>坑 4</em>shutdown 不停正在跑的，shutdownNow 也只是“打招呼”<a class="root" href="#m-life">← ④ 工作线程的一生</a></b>
+        <dl>
+          <dt>现象</dt><dd>1 个线程、队列里 5 个任务：<code>shutdown</code> 后 6 个全跑完；<code>shutdownNow</code> 后正在 sleep 的那个被打断，退回 5 个没跑的。一个不看中断标志的忙循环，<code>shutdownNow</code> 之后 1 秒也没结束。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>shutdown 只中断“空闲”的线程（能 <code>tryLock</code> 到 Worker 的，就是没在跑任务的）；shutdownNow 中断所有已启动的线程，可中断只是设一个标志，任务自己不检查就停不下来。</dd>
+          <dt>做法</dt><dd class="fix">任务里响应中断；关闭按 <code>shutdown</code> → <code>awaitTermination</code> → 超时再 <code>shutdownNow</code> 的顺序来。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-forget">
+        <b><em>坑 5</em>忘了 shutdown：JVM 退不出，池子也不会被回收<a class="root" href="#m-life">← ④ 核心线程停在 take 上</a></b>
+        <dl>
+          <dt>现象</dt><dd><code>main</code> 里用 <code>newFixedThreadPool(2)</code> 跑一个任务就返回：进程不退出，6 秒后被 <code>timeout</code> 强行杀掉。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>核心线程空闲时停在 <code>take()</code> 上一直等，它们是非守护线程，JVM 不会退出；Worker 是内部类，持有池子的引用，活着的线程又是 GC Root，所以池子也回收不了。JDK 8 的 <code>finalize()</code> 会调 shutdown，但根本轮不到它执行；JDK 11 起它是空方法，JDK 27 删掉了。</dd>
+          <dt>做法</dt><dd class="fix">在 finally 里关；Spring 管理的池子交给容器关；JDK 19 起 <code>ExecutorService</code> 是 <code>AutoCloseable</code>，可以写 try-with-resources。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-coreid">
+        <b><em>坑 6</em>“核心线程”不是固定的那几个<a class="root" href="#m-life">← ④ timed 是现算的</a></b>
+        <dl>
+          <dt>现象</dt><dd>核心 1、最大 2：先建的 T1 的任务先跑完时，10 次里留下的都是后建的 T2，T1 被回收了。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>getTask 每次都现算 <code>timed = wc &gt; corePoolSize</code>：两个线程时谁进 getTask 都是“要限时”，谁先闲满 keepAlive 谁走。没有哪个 Worker 被标成核心。</dd>
+          <dt>做法</dt><dd class="fix">别在 ThreadLocal 里缓存“只给核心线程用”的东西，也别按线程名判断它是不是核心线程。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-monitor">
+        <b><em>坑 7</em>监控接口都要拿 mainLock<a class="root" href="#s4">← ④ workers + mainLock</a></b>
+        <dl>
+          <dt>现象</dt><dd>在请求路径上调 <code>getActiveCount()</code> 打日志，或者每 100 ms 采一次各种计数，高峰期提交变慢。</dd>
+          <dt>根源</dt><dd><code>getPoolSize</code>、<code>getActiveCount</code>、<code>getLargestPoolSize</code>、<code>getTaskCount</code>、<code>getCompletedTaskCount</code> 都先拿 <code>mainLock</code> 再遍历 workers，和建线程、线程退出抢同一把锁。</dd>
+          <dt>做法</dt><dd class="fix">低频采样（比如 10 秒一次），别放在热路径上；队列长度 <code>getQueue().size()</code> 走的是队列自己的实现，不碰 mainLock。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>自己 new ThreadPoolExecutor：有界队列 + 明确的拒绝策略</b><p>不用 <code>Executors.newFixedThreadPool</code>（无界队列）和 <code>newCachedThreadPool</code>（线程无上限）。</p><p class="guard">任务无限堆积、线程无限增长</p></div>
+      <div class="rl"><b>核心数按真实并发设；要缩到 0 用 allowCoreThreadTimeOut</b><p>不要用“核心 0 + 无界队列”来省线程。</p><p class="guard">只剩 1 个线程干活（坑 1）</p></div>
+      <div class="rl"><b>异常在任务里处理，或者 submit 后一定看 Future</b><p>统一兜底可以覆写 <code>afterExecute</code>。</p><p class="guard">线程被反复换掉、异常悄悄消失（坑 2）</p></div>
+      <div class="rl"><b>给线程起名字</b><p>自定义 <code>ThreadFactory</code>，名字带上业务，如 <code>order-notify-3</code>。</p><p class="guard">jstack 里一堆 pool-7-thread-12，分不清是谁的</p></div>
+      <div class="rl"><b>关闭三连，任务响应中断</b><p><code>shutdown</code> → <code>awaitTermination</code> → <code>shutdownNow</code>；JDK 19 起可以 try-with-resources。</p><p class="guard">停机丢任务、进程退不出（坑 4、坑 5）</p></div>
+      <div class="rl"><b>监控低频采样，别放热路径</b><p>线程数、活跃数、队列长度、拒绝次数，10 秒一次足够。</p><p class="guard">和建线程、线程退出抢 mainLock（坑 7）</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>读源码：execute → addWorker → runWorker → getTask → processWorkerExit</h3></div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">execute</span><b>ThreadPoolExecutor.java</b>JDK 21u，行号和源码一致（OpenJDK 里按 GPLv2 分发；原作者 Doug Lea 把最初版本放入了公有领域）</div>
+<pre class="src"><code><span class="l"><span class="no">1362</span>        int c = ctl.get();</span><span class="l hl"><span class="no">1363</span>        if (workerCountOf(c) &lt; corePoolSize) {<span class="tag">❶</span></span><span class="l hl"><span class="no">1364</span>            if (addWorker(command, true))<span class="tag">❷</span></span><span class="l"><span class="no">1365</span>                return;</span><span class="l hl"><span class="no">1366</span>            c = ctl.get();<span class="tag">❸</span></span><span class="l"><span class="no">1367</span>        }</span><span class="l hl"><span class="no">1368</span>        if (isRunning(c) &amp;&amp; workQueue.offer(command)) {<span class="tag">❹</span></span><span class="l hl"><span class="no">1369</span>            int recheck = ctl.get();<span class="tag">❺</span></span><span class="l hl"><span class="no">1370</span>            if (! isRunning(recheck) &amp;&amp; remove(command))<span class="tag">❻</span></span><span class="l"><span class="no">1371</span>                reject(command);</span><span class="l hl"><span class="no">1372</span>            else if (workerCountOf(recheck) == 0)<span class="tag">❼</span></span><span class="l"><span class="no">1373</span>                addWorker(null, false);</span><span class="l"><span class="no">1374</span>        }</span><span class="l hl"><span class="no">1375</span>        else if (!addWorker(command, false))<span class="tag">❽</span></span><span class="l"><span class="no">1376</span>            reject(command);</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>只读一次 ctl，拿到的是当时的快照，后面所有判断都可能已经过时，所以才有后面的重读和复查。</span></li>
+      <li><b>2</b><span>核心名额没满：把 command 当作新线程的 <code>firstTask</code>，成功就直接返回，任务根本不进队列。</span></li>
+      <li><b>3</b><span>addWorker 失败（名额被别人抢了，或者池子关了），重新读 ctl 再往下走。</span></li>
+      <li><b>4</b><span>还在 RUNNING 才放队列。<code>offer</code> 不阻塞，满了就返回 false。</span></li>
+      <li><b>5</b><span>放进去之后，再读一次 ctl：这就是“复查”。</span></li>
+      <li><b>6</b><span>这期间池子被关了：把任务撤回来再拒绝。<code>remove</code> 失败（已经被线程取走了）就不拒绝，任务照样会跑。</span></li>
+      <li><b>7</b><span>线程数是 0：补一个不带任务的线程，它会去队列里取。核心数 0 的池子，所有线程都是从这里来的。</span></li>
+      <li><b>8</b><span>队列放不进：按最大线程数再开一个，带上这个任务，这就是“插队”；开不了就拒绝。</span></li>
+    </ul>
+
+    <div class="codebox">
+      <div class="code-bar"><span class="n">addWorker</span><b>先 CAS 占名额，再在锁里建线程</b></div>
+<pre class="src"><code><span class="l"><span class="no">901</span>    private boolean addWorker(Runnable firstTask, boolean core) {</span><span class="l"><span class="no">902</span>        retry:</span><span class="l"><span class="no">903</span>        for (int c = ctl.get();;) {</span><span class="l"><span class="no">904</span>            <span class="cm">// Check if queue empty only if necessary.</span></span><span class="l hl"><span class="no">905</span>            if (runStateAtLeast(c, SHUTDOWN)<span class="tag">❶</span></span><span class="l"><span class="no">906</span>                &amp;&amp; (runStateAtLeast(c, STOP)</span><span class="l"><span class="no">907</span>                    || firstTask != null</span><span class="l"><span class="no">908</span>                    || workQueue.isEmpty()))</span><span class="l"><span class="no">909</span>                return false;</span><span class="l"><span class="no">910</span></span><span class="l"><span class="no">911</span>            for (;;) {</span><span class="l hl"><span class="no">912</span>                if (workerCountOf(c)<span class="tag">❷</span></span><span class="l"><span class="no">913</span>                    &gt;= ((core ? corePoolSize : maximumPoolSize) &amp; COUNT_MASK))</span><span class="l"><span class="no">914</span>                    return false;</span><span class="l hl"><span class="no">915</span>                if (compareAndIncrementWorkerCount(c))<span class="tag">❸</span></span><span class="l"><span class="no">916</span>                    break retry;</span><span class="l hl"><span class="no">917</span>                c = ctl.get();  <span class="cm">// Re-read ctl</span><span class="tag">❹</span></span><span class="l"><span class="no">918</span>                if (runStateAtLeast(c, SHUTDOWN))</span><span class="l"><span class="no">919</span>                    continue retry;</span><span class="l"><span class="no">920</span>                <span class="cm">// else CAS failed due to workerCount change; retry inner loop</span></span><span class="l"><span class="no">921</span>            }</span><span class="l"><span class="no">922</span>        }</span><span class="l"><span class="no">923</span></span><span class="l"><span class="no">924</span>        boolean workerStarted = false;</span><span class="l"><span class="no">925</span>        boolean workerAdded = false;</span><span class="l"><span class="no">926</span>        Worker w = null;</span><span class="l"><span class="no">927</span>        try {</span><span class="l hl"><span class="no">928</span>            w = new Worker(firstTask);<span class="tag">❺</span></span><span class="l"><span class="no">929</span>            final Thread t = w.thread;</span><span class="l"><span class="no">930</span>            if (t != null) {</span><span class="l"><span class="no">931</span>                final ReentrantLock mainLock = this.mainLock;</span><span class="l hl"><span class="no">932</span>                mainLock.lock();<span class="tag">❻</span></span><span class="l"><span class="no">933</span>                try {</span><span class="l"><span class="no">934</span>                    <span class="cm">// Recheck while holding lock.</span></span><span class="l"><span class="no">935</span>                    <span class="cm">// Back out on ThreadFactory failure or if</span></span><span class="l"><span class="no">936</span>                    <span class="cm">// shut down before lock acquired.</span></span><span class="l"><span class="no">937</span>                    int c = ctl.get();</span><span class="l"><span class="no">938</span></span><span class="l hl"><span class="no">939</span>                    if (isRunning(c) ||<span class="tag">❼</span></span><span class="l"><span class="no">940</span>                        (runStateLessThan(c, STOP) &amp;&amp; firstTask == null)) {</span><span class="l"><span class="no">941</span>                        if (t.getState() != Thread.State.NEW)</span><span class="l"><span class="no">942</span>                            throw new IllegalThreadStateException();</span><span class="l hl"><span class="no">943</span>                        workers.add(w);<span class="tag">❽</span></span><span class="l"><span class="no">944</span>                        workerAdded = true;</span><span class="l"><span class="no">945</span>                        int s = workers.size();</span><span class="l"><span class="no">946</span>                        if (s &gt; largestPoolSize)</span><span class="l"><span class="no">947</span>                            largestPoolSize = s;</span><span class="l"><span class="no">948</span>                    }</span><span class="l"><span class="no">949</span>                } finally {</span><span class="l"><span class="no">950</span>                    mainLock.unlock();</span><span class="l"><span class="no">951</span>                }</span><span class="l"><span class="no">952</span>                if (workerAdded) {</span><span class="l hl"><span class="no">953</span>                    container.start(t);<span class="tag">❾</span></span><span class="l"><span class="no">954</span>                    workerStarted = true;</span><span class="l"><span class="no">955</span>                }</span><span class="l"><span class="no">956</span>            }</span><span class="l"><span class="no">957</span>        } finally {</span><span class="l"><span class="no">958</span>            if (! workerStarted)</span><span class="l hl"><span class="no">959</span>                addWorkerFailed(w);<span class="tag">❿</span></span><span class="l"><span class="no">960</span>        }</span><span class="l"><span class="no">961</span>        return workerStarted;</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>池子关了就不许加线程。唯一的例外：SHUTDOWN 时、不带任务、队列又不空，允许补一个线程把队列里剩下的跑完。</span></li>
+      <li><b>2</b><span>名额按 <code>core</code> 参数选核心数还是最大数。<code>&amp; COUNT_MASK</code> 防止有人把它们设得比 2^29 − 1 还大。</span></li>
+      <li><b>3</b><span>CAS 把线程数 +1：期望值 c 里带着状态，状态变了也会失败。</span></li>
+      <li><b>4</b><span>失败了重读。状态变了回到最外层重新判断能不能加；只是线程数被别人改了，就在内层循环里重比名额。</span></li>
+      <li><b>5</b><span>名额占住了，才 new Worker；构造函数里用 ThreadFactory 建线程，可能失败（返回 null，或者内存不够抛异常）。</span></li>
+      <li><b>6</b><span>拿 mainLock，因为要动 workers 这个普通 HashSet。</span></li>
+      <li><b>7</b><span>锁里再查一次状态：拿锁的这段时间里池子可能被关了。</span></li>
+      <li><b>8</b><span>放进 workers，顺手更新 <code>largestPoolSize</code>。</span></li>
+      <li><b>9</b><span>出锁以后才启动线程。JDK 19 起通过 <code>container.start(t)</code> 启动，线程转储会按池子分组（见版本差异）。</span></li>
+      <li><b>10</b><span>没启动成功：<code>addWorkerFailed</code> 把 Worker 移出 workers、线程数 −1，再试着推进终止流程。</span></li>
+    </ul>
+
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">runWorker</span><b>每跑一个任务，锁一次自己</b></div>
+<pre class="src"><code><span class="l"><span class="no">1123</span>    final void runWorker(Worker w) {</span><span class="l"><span class="no">1124</span>        Thread wt = Thread.currentThread();</span><span class="l"><span class="no">1125</span>        Runnable task = w.firstTask;</span><span class="l hl"><span class="no">1126</span>        w.firstTask = null;<span class="tag">❶</span></span><span class="l hl"><span class="no">1127</span>        w.unlock(); <span class="cm">// allow interrupts</span><span class="tag">❷</span></span><span class="l"><span class="no">1128</span>        boolean completedAbruptly = true;</span><span class="l"><span class="no">1129</span>        try {</span><span class="l hl"><span class="no">1130</span>            while (task != null || (task = getTask()) != null) {<span class="tag">❸</span></span><span class="l hl"><span class="no">1131</span>                w.lock();<span class="tag">❹</span></span><span class="l"><span class="no">1132</span>                <span class="cm">// If pool is stopping, ensure thread is interrupted;</span></span><span class="l"><span class="no">1133</span>                <span class="cm">// if not, ensure thread is not interrupted.  This</span></span><span class="l"><span class="no">1134</span>                <span class="cm">// requires a recheck in second case to deal with</span></span><span class="l"><span class="no">1135</span>                <span class="cm">// shutdownNow race while clearing interrupt</span></span><span class="l hl"><span class="no">1136</span>                if ((runStateAtLeast(ctl.get(), STOP) ||<span class="tag">❺</span></span><span class="l"><span class="no">1137</span>                     (Thread.interrupted() &amp;&amp;</span><span class="l"><span class="no">1138</span>                      runStateAtLeast(ctl.get(), STOP))) &amp;&amp;</span><span class="l"><span class="no">1139</span>                    !wt.isInterrupted())</span><span class="l"><span class="no">1140</span>                    wt.interrupt();</span><span class="l"><span class="no">1141</span>                try {</span><span class="l hl"><span class="no">1142</span>                    beforeExecute(wt, task);<span class="tag">❻</span></span><span class="l"><span class="no">1143</span>                    try {</span><span class="l"><span class="no">1144</span>                        task.run();</span><span class="l"><span class="no">1145</span>                        afterExecute(task, null);</span><span class="l"><span class="no">1146</span>                    } catch (Throwable ex) {</span><span class="l"><span class="no">1147</span>                        afterExecute(task, ex);</span><span class="l hl"><span class="no">1148</span>                        throw ex;<span class="tag">❼</span></span><span class="l"><span class="no">1149</span>                    }</span><span class="l"><span class="no">1150</span>                } finally {</span><span class="l"><span class="no">1151</span>                    task = null;</span><span class="l hl"><span class="no">1152</span>                    w.completedTasks++;<span class="tag">❽</span></span><span class="l"><span class="no">1153</span>                    w.unlock();</span><span class="l"><span class="no">1154</span>                }</span><span class="l"><span class="no">1155</span>            }</span><span class="l hl"><span class="no">1156</span>            completedAbruptly = false;<span class="tag">❾</span></span><span class="l"><span class="no">1157</span>        } finally {</span><span class="l"><span class="no">1158</span>            processWorkerExit(w, completedAbruptly);</span><span class="l"><span class="no">1159</span>        }</span><span class="l"><span class="no">1160</span>    }</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">getTask</span><b>取任务，顺便决定要不要退出</b></div>
+<pre class="src"><code><span class="l"><span class="no">1042</span>    private Runnable getTask() {</span><span class="l"><span class="no">1043</span>        boolean timedOut = false; <span class="cm">// Did the last poll() time out?</span></span><span class="l"><span class="no">1044</span></span><span class="l"><span class="no">1045</span>        for (;;) {</span><span class="l"><span class="no">1046</span>            int c = ctl.get();</span><span class="l"><span class="no">1047</span></span><span class="l"><span class="no">1048</span>            <span class="cm">// Check if queue empty only if necessary.</span></span><span class="l hl"><span class="no">1049</span>            if (runStateAtLeast(c, SHUTDOWN)<span class="tag">❶</span></span><span class="l"><span class="no">1050</span>                &amp;&amp; (runStateAtLeast(c, STOP) || workQueue.isEmpty())) {</span><span class="l"><span class="no">1051</span>                decrementWorkerCount();</span><span class="l"><span class="no">1052</span>                return null;</span><span class="l"><span class="no">1053</span>            }</span><span class="l"><span class="no">1054</span></span><span class="l"><span class="no">1055</span>            int wc = workerCountOf(c);</span><span class="l"><span class="no">1056</span></span><span class="l"><span class="no">1057</span>            <span class="cm">// Are workers subject to culling?</span></span><span class="l hl"><span class="no">1058</span>            boolean timed = allowCoreThreadTimeOut || wc &gt; corePoolSize;<span class="tag">❷</span></span><span class="l"><span class="no">1059</span></span><span class="l hl"><span class="no">1060</span>            if ((wc &gt; maximumPoolSize || (timed &amp;&amp; timedOut))<span class="tag">❸</span></span><span class="l"><span class="no">1061</span>                &amp;&amp; (wc &gt; 1 || workQueue.isEmpty())) {</span><span class="l hl"><span class="no">1062</span>                if (compareAndDecrementWorkerCount(c))<span class="tag">❹</span></span><span class="l"><span class="no">1063</span>                    return null;</span><span class="l"><span class="no">1064</span>                continue;</span><span class="l"><span class="no">1065</span>            }</span><span class="l"><span class="no">1066</span></span><span class="l"><span class="no">1067</span>            try {</span><span class="l hl"><span class="no">1068</span>                Runnable r = timed ?<span class="tag">❺</span></span><span class="l"><span class="no">1069</span>                    workQueue.poll(keepAliveTime, TimeUnit.NANOSECONDS) :</span><span class="l"><span class="no">1070</span>                    workQueue.take();</span><span class="l"><span class="no">1071</span>                if (r != null)</span><span class="l"><span class="no">1072</span>                    return r;</span><span class="l hl"><span class="no">1073</span>                timedOut = true;<span class="tag">❻</span></span><span class="l"><span class="no">1074</span>            } catch (InterruptedException retry) {</span><span class="l hl"><span class="no">1075</span>                timedOut = false;<span class="tag">❼</span></span><span class="l"><span class="no">1076</span>            }</span><span class="l"><span class="no">1077</span>        }</span><span class="l"><span class="no">1078</span>    }</span></code></pre>
+      </div>
+    </div>
+    <div class="two">
+      <ul class="callouts">
+        <li><b>1</b><span>先拿走 firstTask，并把字段清空，免得一直引用着跑完的任务。</span></li>
+        <li><b>2</b><span>Worker 构造时 state 是 −1，这里 unlock 把它改成 0：从这一刻起才允许被中断。</span></li>
+        <li><b>3</b><span>主循环：手上有任务就跑，没有就去 getTask 取，取到 null 就退出循环。</span></li>
+        <li><b>4</b><span>跑任务前锁住自己。shutdown 用 <code>tryLock</code> 判断谁空闲，锁着的就不打断。</span></li>
+        <li><b>5</b><span>池子到了 STOP，确保线程被中断；否则清掉残留的中断标志，免得上一个任务的中断影响下一个。</span></li>
+        <li><b>6</b><span><code>beforeExecute</code> / <code>afterExecute</code> 是留给子类的钩子。</span></li>
+        <li><b>7</b><span>任务抛异常：调完 afterExecute 就原样抛出去，循环结束。</span></li>
+        <li><b>8</b><span>不管成败，完成数 +1、解锁。</span></li>
+        <li><b>9</b><span>正常取到 null 退出时 <code>completedAbruptly</code> 是 false；因为异常退出时还是 true，processWorkerExit 就知道要补一个线程。</span></li>
+      </ul>
+      <ul class="callouts">
+        <li><b>1</b><span>SHUTDOWN 且队列空、或者已经 STOP：线程数 −1，返回 null。</span></li>
+        <li><b>2</b><span>这次要不要限时等：允许核心超时，或者此刻线程数比核心数多。每次现算，所以没有“固定的核心线程”。</span></li>
+        <li><b>3</b><span>该退了（线程数超过最大数，或者限时等过一轮没等到），但如果自己是最后一个线程、队列又不空，就不退。</span></li>
+        <li><b>4</b><span>CAS 线程数 −1；失败说明 ctl 变了，回到循环开头重新判断。</span></li>
+        <li><b>5</b><span>限时就 <code>poll(keepAliveTime)</code>，不限时就 <code>take()</code> 一直等。</span></li>
+        <li><b>6</b><span>poll 等满了还是 null：记下 timedOut，下一圈循环决定退不退。</span></li>
+        <li><b>7</b><span>被中断（shutdown、调小核心数时会中断空闲线程）：不算超时，回去重新判断状态。</span></li>
+      </ul>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">processWorkerExit</span><b>退出前再看一眼要不要补人</b></div>
+<pre class="src"><code><span class="l"><span class="no">997</span>    private void processWorkerExit(Worker w, boolean completedAbruptly) {</span><span class="l hl"><span class="no">998</span>        if (completedAbruptly) <span class="cm">// If abrupt, then workerCount wasn't adjusted</span><span class="tag">❶</span></span><span class="l"><span class="no">999</span>            decrementWorkerCount();</span><span class="l"><span class="no">1000</span></span><span class="l"><span class="no">1001</span>        final ReentrantLock mainLock = this.mainLock;</span><span class="l"><span class="no">1002</span>        mainLock.lock();</span><span class="l"><span class="no">1003</span>        try {</span><span class="l"><span class="no">1004</span>            completedTaskCount += w.completedTasks;</span><span class="l hl"><span class="no">1005</span>            workers.remove(w);<span class="tag">❷</span></span><span class="l"><span class="no">1006</span>        } finally {</span><span class="l"><span class="no">1007</span>            mainLock.unlock();</span><span class="l"><span class="no">1008</span>        }</span><span class="l"><span class="no">1009</span></span><span class="l hl"><span class="no">1010</span>        tryTerminate();<span class="tag">❸</span></span><span class="l"><span class="no">1011</span></span><span class="l"><span class="no">1012</span>        int c = ctl.get();</span><span class="l"><span class="no">1013</span>        if (runStateLessThan(c, STOP)) {</span><span class="l"><span class="no">1014</span>            if (!completedAbruptly) {</span><span class="l hl"><span class="no">1015</span>                int min = allowCoreThreadTimeOut ? 0 : corePoolSize;<span class="tag">❹</span></span><span class="l hl"><span class="no">1016</span>                if (min == 0 &amp;&amp; ! workQueue.isEmpty())<span class="tag">❺</span></span><span class="l"><span class="no">1017</span>                    min = 1;</span><span class="l hl"><span class="no">1018</span>                if (workerCountOf(c) &gt;= min)<span class="tag">❻</span></span><span class="l"><span class="no">1019</span>                    return; <span class="cm">// replacement not needed</span></span><span class="l"><span class="no">1020</span>            }</span><span class="l hl"><span class="no">1021</span>            addWorker(null, false);<span class="tag">❼</span></span><span class="l"><span class="no">1022</span>        }</span><span class="l"><span class="no">1023</span>    }</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>异常退出时 getTask 没来得及减线程数，这里补减。</span></li>
+      <li><b>2</b><span>拿 mainLock，把自己的完成数加到池子的总数里，再离开 workers。</span></li>
+      <li><b>3</b><span>每个线程退出都试着推进终止：如果池子关了、队列空了、自己是最后一个，就由它把状态推到 TERMINATED。</span></li>
+      <li><b>4</b><span>还该留几个线程：允许核心超时就是 0，否则是核心数。</span></li>
+      <li><b>5</b><span>就算该留 0 个，只要队列不空，至少留 1 个。这就是 ④ 机制 4 里“退出的一边”的那次检查。</span></li>
+      <li><b>6</b><span>线程数够了就不补。</span></li>
+      <li><b>7</b><span>否则补一个不带任务的线程。异常退出时一律补，所以抛异常的线程会被“换掉”。</span></li>
+    </ul>
+  </div>
+
+  <div class="sub" id="lab-wrap">
+    <h3>实验台：你来当线程调度器 <small>先猜，再一步步点</small></h3>
+    <p class="tip">提交线程（S）、工作线程（W）、调用 shutdown 的线程（X）都按上面的源码拆成原子步骤，谁先走由你决定。日志前的行号对应源码。停在 <code>poll(keepAlive)</code> 上的线程可以点“等满 keepAlive”让它超时。</p>
+    <div class="lab" id="lab">
+      <div class="presets" id="lab-presets">
+        <button type="button" data-k="zero" aria-pressed="true"><b>1 · 核心数 0</b><span>第一个任务谁来跑</span></button>
+        <button type="button" data-k="norecheck" aria-pressed="false"><b>2 · 去掉复查</b><span>被放弃的写法，同样的池子</span></button>
+        <button type="button" data-k="exit" aria-pressed="false"><b>3 · 最后一个线程正要走</b><span>这时来了一个任务</span></button>
+        <button type="button" data-k="race" aria-pressed="false"><b>4 · 抢最后一个名额</b><span>两个提交者同时看到“还有名额”</span></button>
+        <button type="button" data-k="shutdown" aria-pressed="false"><b>5 · 提交到一半关池</b><span>放进队列和复查之间</span></button>
+        <button type="button" data-k="noexit" aria-pressed="false"><b>6 · 去掉退出前的检查</b><span>被放弃的写法，同第 3 个剧本</span></button>
+      </div>
+      <div class="guess" id="lab-guess"></div>
+      <div class="run-row">
+        <button class="btn primary" type="button" id="lab-step">按剧本走一步</button>
+        <button class="btn" type="button" id="lab-run">跑完剧本</button>
+        <button class="btn" type="button" id="lab-reset">从头来</button>
+        <span class="tip" id="lab-pos"></span>
+      </div>
+      <div class="board" id="lab-board"></div>
+      <div class="lab-res" id="lab-res" data-role="other">先在上面选一个猜测，再开始点。</div>
+    </div>
+    <p class="tip">同一套模拟逻辑在 node 里随机交错测过：JDK 的写法随机 3 万次、专门针对“最后一个线程正要走”的 5 万次，没有一次任务卡在没人取的队列里；去掉复查，核心数 0 时 5 万次全部卡住；只去掉退出前的检查，5 万次里卡住 2 次。概率很小，但会发生。</p>
+  </div>
+
+  <div class="sub" id="ver">
+    <h3>版本差异</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>JDK</th><th>改了什么</th><th>影响</th></tr></thead>
+        <tbody>
+          <tr><th>8</th><td><code>finalize()</code> 会调 <code>shutdown()</code>；常量叫 <code>CAPACITY</code></td><td>有线程活着时池子根本不会被回收，这个 finalize 基本派不上用场</td></tr>
+          <tr><th>11</th><td><code>finalize()</code> 变成空方法（JDK-8190324）；<code>CAPACITY</code> 改名 <code>COUNT_MASK</code>，addWorker 的条件改写成更易读的形式</td><td>行为不变；更不能指望“没人引用就自动关”</td></tr>
+          <tr><th>13</th><td>addWorker 检查线程能不能启动，从 <code>t.isAlive()</code> 改成 <code>t.getState() != NEW</code>（JDK-8221892）</td><td>ThreadFactory 返回了已经启动过的线程时，报错更准确</td></tr>
+          <tr><th>19</th><td>线程通过 <code>SharedThreadContainer</code> 启动（虚拟线程那批改动，JDK-8284161）；<code>ExecutorService</code> 加了 <code>close()</code>、成了 <code>AutoCloseable</code></td><td><code>jcmd &lt;pid&gt; Thread.dump_to_file -format=json</code> 里，池子的线程归在名为 <code>java.util.concurrent.ThreadPoolExecutor@…</code> 的容器下（本机 JDK 21 实测）；可以 try-with-resources</td></tr>
+          <tr><th>24</th><td>Security Manager 永久禁用（JEP 486），shutdown 里的权限检查删掉</td><td>无</td></tr>
+          <tr><th>25</th><td>构造参数不合法时，<code>IllegalArgumentException</code> 带上了说明（JDK-8347491）</td><td>报错更好懂</td></tr>
+          <tr><th>27</th><td>删除空的 <code>finalize()</code>（JDK-8371748）</td><td>子类里重写 finalize 并调 super 的代码要改</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">对照了 jdk8u、jdk11u、jdk17u、jdk21u、jdk25u 和主线的源码；每条改动属于哪个版本，是用 GitHub 上主线的提交和各版本的 GA 标签比出来的。从 JDK 8 到主线，<code>execute</code> 的三个 if 一个字没变。</p>
+  </div>
+
+  <div class="sub">
+    <h3>再往深一点</h3>
+    <div class="deep">
+      <div class="dp" data-role="pd">
+        <h4>Worker 为什么自己写一把不可重入的锁</h4>
+        <ul>
+          <li>源码注释：锁住正在跑任务的线程，是为了让“叫醒空闲线程”的中断不会打到正在跑的任务上。shutdown、调小核心数都会 <code>tryLock</code> 每个 Worker，锁得上的才中断。</li>
+          <li>不用 <code>ReentrantLock</code>：任务里如果调了 <code>setCorePoolSize</code>，它会去中断空闲线程，可重入的锁会让当前线程 tryLock 到自己，把自己中断掉。</li>
+          <li>初始 state 是 −1：线程还没真正开始跑任务前，谁也 tryLock 不到它，也就不会被中断。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="cg">
+        <h4>workers 为什么用 HashSet + 锁，不用并发集合</h4>
+        <ul>
+          <li>源码注释给的头号理由：锁让 <code>interruptIdleWorkers</code> 串行执行，避免关池时一大批正在退出的线程同时去中断别人，形成“中断风暴”。</li>
+          <li><code>largestPoolSize</code>、<code>completedTaskCount</code> 这类统计也顺便有了锁保护。</li>
+          <li>代价就是坑 7：监控接口也要拿这把锁。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="bk">
+        <h4>终止是“一个传一个”完成的</h4>
+        <ul>
+          <li>tryTerminate 发现还有线程，只中断<b>一个</b>空闲线程（<code>ONLY_ONE</code>）。那个线程醒来、退出，又调 tryTerminate，再中断下一个。</li>
+          <li>最后一个线程退出时线程数是 0，它用 CAS 把状态从 SHUTDOWN 推到 TIDYING，调 <code>terminated()</code> 钩子，再设成 TERMINATED，唤醒 <code>awaitTermination</code>。</li>
+          <li>这个 CAS 和 addWorker 的 +1 互斥：要么终止成功，要么加线程成功。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="of">
+        <h4>先占名额，后建线程</h4>
+        <ul>
+          <li>addWorker 先 CAS 线程数 +1，再 new Worker、建线程、启动。顺序反过来的话，几个提交者可能同时建出线程，再发现名额不够，白建一场。</li>
+          <li>建线程可能失败（ThreadFactory 返回 null，或者 <code>unable to create native thread</code>），所以要有 <code>addWorkerFailed</code> 回滚这个名额。</li>
+          <li>名额的检查和占用一次 CAS 完成，不拿锁；只有改 workers 才拿 mainLock。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>讲讲 execute 的源码。</summary><p>读一次 ctl：线程数小于核心数就 addWorker(command, true)，任务作为新线程的第一个任务直接跑。否则如果池子在跑，就 offer 进队列；放进去后复查：池子关了就撤回并拒绝，线程数为 0 就补一个不带任务的线程。放不进队列就 addWorker(command, false) 开临时线程，再失败就拒绝。</p></details>
+      <details><summary>ctl 是什么？为什么把两个值放一起？</summary><p>一个 AtomicInteger，高 3 位是运行状态，低 29 位是线程数。放在一起，“状态还允许、名额也够才 +1”和“已经关闭、线程数为 0 才进入 TIDYING”都能用一次 CAS 完成，两者天然互斥，不用拿锁。</p></details>
+      <details><summary>放进队列后为什么还要再检查一次？</summary><p>两种情况：一是放进去前后池子被关了，要撤回任务；二是这期间最后一个线程退出了，或者核心数本来就是 0，队列里的任务没人取，所以线程数为 0 时补一个。线程退出时也会检查“队列不空却没线程”，两边各查一次，保证任务不会卡在队列里。</p></details>
+      <details><summary>线程池里的线程怎么复用、怎么回收？</summary><p>每个 Worker 的线程跑 runWorker 循环：先跑 firstTask，然后不断 getTask。线程数不超过核心数时用 take() 一直等，超过时用 poll(keepAliveTime) 限时等；限时等没等到、线程数仍超过核心数（或允许核心超时），就 CAS 减线程数并退出。所以“核心线程”不是固定的哪几个。</p></details>
+      <details><summary>任务抛异常会怎样？execute 和 submit 有什么区别？</summary><p>execute：异常从 runWorker 抛出，线程退出，processWorkerExit 补一个新线程，默认的未捕获异常处理器会打印堆栈。submit：任务被包成 FutureTask，异常存在 Future 里，线程不退出，不调 get() 就永远看不到。</p></details>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>AQS：Worker、<code>ReentrantLock</code>、<code>CountDownLatch</code> 共用的那套 state + CLH 队列</li>
+      <li><code>FutureTask</code> 的状态机：<code>cancel(true)</code> 怎么中断、<code>get()</code> 的等待链表</li>
+      <li><code>ScheduledThreadPoolExecutor</code>：延迟队列 <code>DelayedWorkQueue</code> 和固定频率任务的“漂移”</li>
+      <li><code>ForkJoinPool</code>：工作窃取、<code>ManagedBlocker</code> 补偿线程，和 <code>CompletableFuture</code> 的默认池</li>
+      <li>动态调参：运行中改 <code>setCorePoolSize</code>、<code>setMaximumPoolSize</code> 时，源码里发生了什么</li>
+      <li>虚拟线程：为什么不该把虚拟线程放进池子，<code>newVirtualThreadPerTaskExecutor</code> 怎么限流</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 TpePeek</h2>
+    <p class="lead">每个练习都写了做对时会看到什么。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="pd">
+      <h4>练习 1 · 换掉核心数 0 的写法</h4>
+      <p>把 TpePeek 末尾那个池子改成核心 10、最大 10、<code>keepAlive</code> 1 秒，再调 <code>allowCoreThreadTimeOut(true)</code>，跑完任务后等 1.5 秒看 <code>getPoolSize()</code>。</p>
+      <p><b>做对了会看到：</b>10 个 100 ms 的任务一百多毫秒就跑完（本机 113～117 ms），1.5 秒后线程数回到 0；再提交一个任务，又从 0 建出 1 个线程。</p>
+      <p class="uses">用到：坑 1，getTask 的 timed</p>
+    </div>
+    <div class="exc" data-role="bad">
+      <h4>练习 2 · 让异常现形</h4>
+      <p>继承 ThreadPoolExecutor 覆写 <code>afterExecute(r, t)</code> 打印 t；分别用 execute 和 submit 提交一个抛异常的任务，打印每个任务所在的线程名。</p>
+      <p><b>做对了会看到：</b>execute 时 t 是那个异常，下一个任务换到了新线程；submit 时 t 是 null，线程名不变，要从 <code>((Future&lt;?&gt;) r).get()</code> 里才拿得到异常。</p>
+      <p class="uses">用到：坑 2，runWorker 第 7、9 条</p>
+    </div>
+    <div class="exc" data-role="cg">
+      <h4>练习 3 · 看看线程转储里的池子</h4>
+      <p>JDK 21 上让 TpePeek 的池子跑着长任务，另开终端执行 <code>jcmd &lt;pid&gt; Thread.dump_to_file -format=json dump.json</code>，找 <code>threadContainers</code>。</p>
+      <p><b>做对了会看到：</b>一个名为 <code>java.util.concurrent.ThreadPoolExecutor@…</code> 的容器，里面正好是池子的几个线程；JDK 17 上没有这个命令。</p>
+      <p class="uses">用到：版本差异 JDK 19</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出 execute 的精华。</summary><p>三个 if：没满核心就开线程直接跑，否则放队列并复查，放不进就开临时线程或拒绝；状态和线程数在一个 int 里，一次 CAS 同时检查两样。</p><p class="from">← 开头一段</p></details>
+    <details><summary>2. 不用线程池、每个任务 new Thread，痛在哪？</summary><p>建、销毁线程都进内核，每次都付这笔钱；突发流量时线程数没有上限，内存和调度都会被拖垮。</p><p class="from">← ②</p></details>
+    <details><summary>3. 核心数 0 + 无界队列只有 1 个线程，根源是哪条？</summary><p>execute 第 ② 个 if 的复查：只有线程数为 0 时才补线程。第 ① 个 if 不成立，第 ③ 个 if 永远走不到。</p><p class="from">← ④ 机制 1</p></details>
+    <details><summary>4. 预测：核心 2、最大 4、SynchronousQueue，连续提交 3 个长任务，会有几个线程？</summary><p>3 个。前 2 个走第 ① 个 if；第 3 个时 SynchronousQueue 的 offer 只有在有线程正停在 poll 上才成功，两个核心线程都在忙，offer 失败，走第 ③ 个 if 开临时线程。</p><p class="from">← ④ 机制 1；SynchronousQueue 见<a href="synchronous-transfer-queue.html">上一页</a></p></details>
+    <details><summary>5. 预测：核心 2，线程 A 在跑一个很长的任务，线程 B 空闲停在 take() 上。这时提交第 3 个任务，它怎么到 B 手里？</summary><p>线程数 2 不小于核心数，第 ① 个 if 不成立；任务被 offer 进队列，正停在 take() 上的 B 被唤醒取走。不会“直接交给空闲线程”，一定经过队列。</p><p class="from">← ④ 机制 1 + 机制 3</p></details>
+    <details><summary>6. 预测：allowCoreThreadTimeOut(true)，池子闲到线程数 0 以后，再提交一个任务，走的是哪个 if？</summary><p>第 ① 个：线程数 0 小于核心数，直接 addWorker(task, true)，任务作为第一个任务跑。本机练习 1 里正是从 0 建回 1 个线程。</p><p class="from">← ④ 机制 1</p></details>
+    <details><summary>7. 预测：如果 runWorker 把任务的异常 catch 住、不往外抛，会有什么变化？</summary><p>线程不会因为异常退出，也就不会被换掉，ThreadLocal 里的东西保得住；但默认的未捕获异常处理器也不再打印堆栈，execute 提交的任务出错就和 submit 一样悄无声息，除非 afterExecute 里记日志。</p><p class="from">← ④ 机制 3 + 坑 2</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>源码以 JDK 21u 的 <code>ThreadPoolExecutor</code> 为准，版本差异对照了 jdk8u、jdk11u、jdk17u、jdk21u、jdk25u 和主线。标“实测”的在 2 核 ARM 虚拟机上用 JDK 11.0.32 和 21.0.12 跑过，两个版本结果一致（除了线程启动先后带来的顺序差别）。</p>
+  <p>相关：<a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a> · <a href="synchronous-transfer-queue.html">SynchronousQueue 与 LinkedTransferQueue</a> · <a href="../database/hikari-concurrentbag.html">HikariCP ConcurrentBag 源码</a> · <a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a></p>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+// ThreadPoolExecutor 交错模拟：execute / addWorker / getTask / processWorkerExit / shutdown 按源码拆成原子步骤，
+// 谁先走由调用方决定。variant: 'jdk' = JDK 21u；'norecheck' = 去掉 execute 里放进队列后的复查；'noexitcheck' = 去掉线程退出前的“队列不空就补一个”
+var TP = (function(){
+  var RS = ['RUNNING', 'SHUTDOWN', 'STOP', 'TIDYING', 'TERMINATED'];
+  function lvl(rs){ return RS.indexOf(rs); }
+  function clone(s){ return JSON.parse(JSON.stringify(s)); }
+  function make(cfg){
+    var s = {variant: cfg.variant || 'jdk', core: cfg.core, max: cfg.max, cap: cfg.cap == null ? 1e9 : cfg.cap, act: !!cfg.allowCoreTimeout,
+      rs: 'RUNNING', wc: 0, ver: 0, queue: [], workers: [], threads: {}, order: [], tasks: {}, log: [], wseq: 0, parkSeq: 0};
+    (cfg.submitters || []).forEach(function(sb){ addThread(s, sb.id, 'sub', {todo: sb.tasks.slice(), pc: 'e.read'}); sb.tasks.forEach(function(t){ s.tasks[t] = {st: 'new', by: null, runs: 0}; }); });
+    if (cfg.admin) addThread(s, cfg.admin, 'adm', {pc: 's.adv'});
+    return s;
+  }
+  function addThread(s, id, kind, extra){
+    var t = {id: id, kind: kind, status: 'ready', pc: 'e.read', snap: null, add: null, task: null, timedOut: false, timed: false, park: 0, done: 0};
+    for (var k in extra) t[k] = extra[k];
+    s.threads[id] = t; s.order.push(id); return t;
+  }
+  function say(s, t, line, text, kind){ s.log.push({t: t.id, line: line, text: text, kind: kind || ''}); }
+  function snap(s){ return {rs: s.rs, wc: s.wc, ver: s.ver}; }
+  function same(a, s){ return a.ver === s.ver; }
+  function setCtl(s, rs, wc){ s.rs = rs; s.wc = wc; s.ver++; }
+  function cur(s, t){ return t.kind === 'sub' ? t.todo[0] : null; }
+  function wakeOne(s){                                        // offer 唤醒一个停在 take / poll 上的工作线程
+    var best = null;
+    s.order.forEach(function(id){ var w = s.threads[id]; if (w.kind === 'wrk' && w.status === 'parked' && (!best || w.park < best.park)) best = w; });
+    if (best){ best.status = 'ready'; best.pc = 'g.poll'; }
+    return best;
+  }
+  function tryTerminate(s, t){
+    if (s.rs === 'RUNNING' || lvl(s.rs) >= lvl('TIDYING') || (lvl(s.rs) < lvl('STOP') && s.queue.length)) return;
+    if (s.wc !== 0){                                          // interruptIdleWorkers(ONLY_ONE)
+      for (var i = 0; i < s.order.length; i++){ var w = s.threads[s.order[i]];
+        if (w.kind === 'wrk' && w.status === 'parked'){ w.status = 'ready'; w.pc = 'g.check'; w.timedOut = false; say(s, t, 723, 'tryTerminate：还有线程，中断一个空闲的 ' + w.id + '，让它把消息传下去', 'intr'); break; } }
+      return;
+    }
+    setCtl(s, 'TERMINATED', 0); say(s, t, 730, 'tryTerminate：线程数 0、队列空，池子进入 TERMINATED', 'term');
+  }
+  // ---- addWorker：返回 true / false 后跳到 t.add.ret ----
+  function addRet(s, t, ok){
+    var a = t.add; t.add = null;
+    if (a.ret === 'done'){ finishOp(s, t); return; }
+    if (ok){ finishOp(s, t); return; }
+    t.pc = a.ret;
+  }
+  function finishOp(s, t){
+    if (t.kind === 'sub'){ t.todo.shift(); t.snap = null; if (t.todo.length){ t.pc = 'e.read'; } else { t.status = 'done'; t.pc = 'end'; } }
+    else { t.status = 'done'; t.pc = 'end'; }
+  }
+  function spawn(s, first){
+    var id = 'W' + (++s.wseq);
+    var w = addThread(s, id, 'wrk', {pc: 'w.begin', task: first});
+    s.workers.push(id); return w;
+  }
+  function step(s0, id){
+    var s = clone(s0), t = s.threads[id], c, task;
+    if (!t || t.status !== 'ready') return s0;
+    switch (t.pc){
+      // ---------- execute ----------
+      case 'e.read':
+        task = cur(s, t); t.snap = snap(s);
+        if (s.tasks[task].st === 'new') s.tasks[task].st = 'submitting';
+        if (t.snap.wc < s.core){ say(s, t, 1363, 'execute(' + task + ')：读 ctl，线程数 ' + t.snap.wc + ' < 核心数 ' + s.core + ' → addWorker(' + task + ', true)', 'read'); t.add = {core: true, first: task, ret: 'e.reread'}; t.pc = 'a.check'; }
+        else { say(s, t, 1362, 'execute(' + task + ')：读 ctl，线程数 ' + t.snap.wc + '，核心名额满了 → 去放队列', 'read'); t.pc = 'e.offer'; }
+        break;
+      case 'e.reread':
+        t.snap = snap(s); say(s, t, 1366, 'addWorker 失败了，重新读 ctl（线程数 ' + s.wc + '）→ 去放队列', 'read'); t.pc = 'e.offer'; break;
+      case 'e.offer':
+        task = cur(s, t);
+        if (t.snap.rs === 'RUNNING' && s.queue.length < s.cap){
+          s.queue.push(task); s.tasks[task].st = 'queued';
+          var w = wakeOne(s);
+          say(s, t, 1368, 'offer(' + task + ') 成功，队列里有 ' + s.queue.length + ' 个' + (w ? '，唤醒停在队列上的 ' + w.id : ''), 'offer');
+          if (s.variant === 'norecheck'){ say(s, t, 0, '【被放弃的写法】放进队列就返回，不再看一眼 ctl', 'x'); finishOp(s, t); }
+          else t.pc = 'e.recheck';
+        } else {
+          say(s, t, 1375, t.snap.rs !== 'RUNNING' ? '池子不在 RUNNING，不放队列 → addWorker(' + task + ', false)' : '队列满了 → addWorker(' + task + ', false)，试着开临时线程', 'read');
+          t.add = {core: false, first: task, ret: 'e.reject'}; t.pc = 'a.check';
+        }
+        break;
+      case 'e.recheck':
+        task = cur(s, t); c = snap(s);
+        if (c.rs !== 'RUNNING' && s.queue.indexOf(task) >= 0){
+          s.queue.splice(s.queue.indexOf(task), 1); s.tasks[task].st = 'rejected';
+          say(s, t, 1370, '复查：池子已经关了，把 ' + task + ' 从队列里撤回 → 拒绝', 'reject'); finishOp(s, t);
+        } else if (c.wc === 0){
+          say(s, t, 1372, '复查：线程数是 0！没人会来取 → addWorker(null, false) 补一个线程', 'recheck');
+          t.add = {core: false, first: null, ret: 'done'}; t.pc = 'a.check';
+        } else { say(s, t, 1372, '复查：池子还在跑，线程数 ' + c.wc + '，有人会来取，返回', 'read'); finishOp(s, t); }
+        break;
+      case 'e.reject':
+        task = cur(s, t); s.tasks[task].st = 'rejected'; say(s, t, 1376, 'addWorker 也失败 → reject(' + task + ')，交给拒绝策略', 'reject'); finishOp(s, t); break;
+      // ---------- addWorker ----------
+      case 'a.check':
+        c = snap(s); t.asnap = c;
+        var bound = t.add.core ? s.core : s.max;
+        if (lvl(c.rs) >= lvl('SHUTDOWN') && (lvl(c.rs) >= lvl('STOP') || t.add.first !== null || s.queue.length === 0)){ say(s, t, 909, 'addWorker：池子已经关了，不许加线程 → false', 'fail'); addRet(s, t, false); break; }
+        if (c.wc >= bound){ say(s, t, 914, 'addWorker：线程数 ' + c.wc + ' ≥ ' + (t.add.core ? '核心数 ' : '最大数 ') + bound + ' → false', 'fail'); addRet(s, t, false); break; }
+        say(s, t, 912, 'addWorker：读到线程数 ' + c.wc + ' < ' + bound + '，准备 CAS 把它 +1', 'read'); t.pc = 'a.cas'; break;
+      case 'a.cas':
+        if (same(t.asnap, s)){ setCtl(s, s.rs, s.wc + 1); say(s, t, 915, 'CAS ctl 成功：线程数 ' + (s.wc - 1) + ' → ' + s.wc + '（名额先占住，线程还没建）', 'cas'); t.pc = 'a.start'; }
+        else { say(s, t, 917, 'CAS ctl 失败：别人先改了 ctl，重新读，再判断一次', 'casfail'); t.pc = 'a.check'; }
+        break;
+      case 'a.start':
+        if (s.rs === 'RUNNING' || (lvl(s.rs) < lvl('STOP') && t.add.first === null)){
+          var nw = spawn(s, t.add.first);
+          if (t.add.first) s.tasks[t.add.first].st = 'assigned';
+          say(s, t, 943, '拿 mainLock，new Worker，放进 workers，启动线程 ' + nw.id + (t.add.first ? '，它的第一个任务就是 ' + t.add.first : '（没带任务，去队列取）'), 'spawn');
+          addRet(s, t, true);
+        } else {
+          setCtl(s, s.rs, s.wc - 1); say(s, t, 977, '拿到 mainLock 时池子已经关了：撤销刚占的名额（addWorkerFailed）', 'fail'); tryTerminate(s, t); addRet(s, t, false);
+        }
+        break;
+      // ---------- runWorker / getTask ----------
+      case 'w.begin':
+        if (t.task){ say(s, t, 1125, '线程启动，先跑自己带来的 ' + t.task + '（不经过队列）', 'run'); t.pc = 'w.run'; }
+        else { say(s, t, 1130, '线程启动，没带任务，去 getTask()', 'read'); t.pc = 'g.check'; }
+        break;
+      case 'w.run':
+        s.tasks[t.task].st = 'running'; s.tasks[t.task].runs++; s.tasks[t.task].by = t.id;
+        say(s, t, 1144, '开始跑 ' + t.task, 'run'); t.pc = 'w.done'; break;
+      case 'w.done':
+        s.tasks[t.task].st = 'done'; t.done++; say(s, t, 1153, t.task + ' 跑完，回到 getTask() 取下一个', 'run'); t.task = null; t.pc = 'g.check'; break;
+      case 'g.check':
+        c = snap(s);
+        if (lvl(c.rs) >= lvl('SHUTDOWN') && (lvl(c.rs) >= lvl('STOP') || s.queue.length === 0)){
+          setCtl(s, s.rs, s.wc - 1); say(s, t, 1051, 'getTask：池子关了、队列也空了 → 线程数 -1，返回 null，线程准备退出', 'exit'); t.pc = 'x.exit'; break;
+        }
+        t.timed = s.act || c.wc > s.core;
+        if ((c.wc > s.max || (t.timed && t.timedOut)) && (c.wc > 1 || s.queue.length === 0)){
+          t.gsnap = c; say(s, t, 1062, 'getTask：等满 keepAlive 了，线程数 ' + c.wc + (c.wc > 1 ? ' > 1' : '，队列也是空的') + ' → 准备 CAS 把线程数 -1', 'read'); t.pc = 'g.dec'; break;
+        }
+        say(s, t, 1068, 'getTask：' + (t.timed ? '线程数 ' + c.wc + ' > 核心数，用 poll(keepAlive) 限时取' : '自己是核心线程，用 take() 一直等'), 'read'); t.pc = 'g.poll'; break;
+      case 'g.dec':
+        if (same(t.gsnap, s)){ setCtl(s, s.rs, s.wc - 1); say(s, t, 1063, 'CAS 成功：线程数 → ' + s.wc + '，返回 null，线程准备退出', 'exit'); t.pc = 'x.exit'; }
+        else { say(s, t, 1064, 'CAS 失败：ctl 变了，回到 getTask 开头重新判断', 'casfail'); t.pc = 'g.check'; }
+        break;
+      case 'g.poll':
+        if (s.queue.length){ task = s.queue.shift(); s.tasks[task].st = 'assigned'; t.task = task; t.timedOut = false; say(s, t, 1071, '从队列取到 ' + task, 'take'); t.pc = 'w.run'; }
+        else { t.status = 'parked'; t.park = ++s.parkSeq; say(s, t, 1069, '队列是空的，' + (t.timed ? '停在 poll(keepAlive) 上' : '停在 take() 上') + '等任务', 'park'); }
+        break;
+      // ---------- processWorkerExit ----------
+      case 'x.exit':
+        s.workers.splice(s.workers.indexOf(t.id), 1);
+        say(s, t, 1005, 'processWorkerExit：从 workers 里移除自己', 'exit'); tryTerminate(s, t); t.pc = 'x.check'; break;
+      case 'x.check':
+        c = snap(s);
+        if (lvl(c.rs) < lvl('STOP')){
+          var min = s.act ? 0 : s.core;
+          if (min === 0 && s.queue.length && s.variant !== 'noexitcheck') min = 1;
+          if (c.wc >= min){ say(s, t, 1018, '退出前再看一眼：线程数 ' + c.wc + ' ≥ 需要的 ' + min + (s.queue.length ? '' : '（队列是空的）') + '，不用补，线程结束', 'exit'); finishOp(s, t); break; }
+          say(s, t, 1021, '退出前再看一眼：队列里还有 ' + s.queue.length + ' 个、线程数 ' + c.wc + ' < ' + min + ' → addWorker(null, false) 补一个', 'recheck');
+          t.add = {core: false, first: null, ret: 'done'}; t.pc = 'a.check'; break;
+        }
+        finishOp(s, t); break;
+      // ---------- shutdown ----------
+      case 's.adv':
+        if (s.rs === 'RUNNING') setCtl(s, 'SHUTDOWN', s.wc);
+        var n = 0; s.order.forEach(function(wid){ var w = s.threads[wid]; if (w.kind === 'wrk' && w.status === 'parked'){ w.status = 'ready'; w.pc = 'g.check'; w.timedOut = false; n++; } });
+        say(s, t, 1395, 'shutdown()：ctl 改成 SHUTDOWN，中断 ' + n + ' 个空闲线程（正在跑任务的不打断）', 'shut'); t.pc = 's.term'; break;
+      case 's.term':
+        tryTerminate(s, t); say(s, t, 1401, 'shutdown() 返回', 'shut'); finishOp(s, t); break;
+    }
+    return s;
+  }
+  function timeout(s0, id){                                    // keepAlive 到了：poll 返回 null
+    var s = clone(s0), t = s.threads[id];
+    if (!t || t.status !== 'parked' || !t.timed) return s0;
+    t.status = 'ready'; t.pc = 'g.check'; t.timedOut = true;
+    say(s, t, 1073, 'poll 等满 keepAlive，返回 null（timedOut = true）', 'timeout');
+    return s;
+  }
+  function ready(s){ return s.order.filter(function(id){ return s.threads[id].status === 'ready'; }); }
+  function canTimeout(s){ return s.order.filter(function(id){ var t = s.threads[id]; return t.status === 'parked' && t.timed; }); }
+  function live(s){ return s.order.filter(function(id){ var t = s.threads[id]; return t.kind === 'wrk' && t.status !== 'done'; }); }
+  function verdict(s){
+    var quiet = ready(s).length === 0;
+    var stranded = quiet && lvl(s.rs) < lvl('STOP') && s.queue.length > 0 && live(s).length === 0;
+    var twice = Object.keys(s.tasks).filter(function(k){ return s.tasks[k].runs > 1; });
+    return {quiet: quiet, stranded: stranded, twice: twice, wcOk: !quiet || s.wc === live(s).length, overMax: s.wc > s.max};
+  }
+  function lineText(s, t){
+    if (t.status === 'done') return '结束了';
+    if (t.status === 'parked') return t.timed ? '停在 poll(keepAlive) 上' : '停在 take() 上';
+    var m = {'e.read': 'execute：c = ctl.get(); 线程数 < 核心数？', 'e.reread': 'execute：c = ctl.get()（addWorker 失败后重读）', 'e.offer': 'execute：isRunning(c) && workQueue.offer(task)',
+      'e.recheck': 'execute：recheck = ctl.get(); 关了就撤回，0 个线程就补一个', 'e.reject': 'execute：reject(task)',
+      'a.check': 'addWorker：读 ctl，状态和名额够不够', 'a.cas': 'addWorker：compareAndIncrementWorkerCount(c)', 'a.start': 'addWorker：mainLock 里 workers.add，t.start()',
+      'w.begin': 'runWorker：task = firstTask', 'w.run': 'runWorker：task.run()', 'w.done': 'runWorker：任务跑完',
+      'g.check': 'getTask：读 ctl，要不要退出、限不限时', 'g.dec': 'getTask：compareAndDecrementWorkerCount(c)', 'g.poll': 'getTask：poll(keepAlive) / take()',
+      'x.exit': 'processWorkerExit：workers.remove(w); tryTerminate()', 'x.check': 'processWorkerExit：队列不空却没线程？补一个',
+      's.adv': 'shutdown：advanceRunState(SHUTDOWN); interruptIdleWorkers()', 's.term': 'shutdown：tryTerminate()'};
+    return m[t.pc] || t.pc;
+  }
+  return {make: make, step: step, timeout: timeout, ready: ready, canTimeout: canTimeout, live: live, verdict: verdict, lineText: lineText};
+})();
+/*SIM-END*/
+// 实验台剧本：setup 静默执行，script 是读者点的步骤（'to:W1' 表示 W1 等满 keepAlive）
+var PRESETS = {
+  zero: {cfg: {core: 0, max: 2, cap: null, submitters: [{id: 'S', tasks: ['t1']}]}, setup: [],
+    script: ['S', 'S', 'S', 'S', 'S', 'S', 'W1', 'W1', 'W1', 'W1', 'W1'],
+    q: '核心数 0、最大数 2、无界队列。S 提交 t1。谁来跑 t1？', opts: [['none', '没人，t1 一直躺在队列里'], ['w', 'execute 自己补了一个线程'], ['s', 'S 自己跑']], answer: 'w'},
+  norecheck: {variant: 'norecheck', cfg: {core: 0, max: 2, cap: null, submitters: [{id: 'S', tasks: ['t1']}]}, setup: [],
+    script: ['S', 'S'],
+    q: '被放弃的写法：放进队列后不再复查。同样是核心数 0，S 提交 t1。谁来跑 t1？', opts: [['none', '没人，t1 一直躺在队列里'], ['w', '会有线程来跑'], ['s', 'S 自己跑']], answer: 'none'},
+  exit: {cfg: {core: 0, max: 2, cap: null, submitters: [{id: 'S', tasks: ['t1', 't2']}]},
+    setup: ['S', 'S', 'S', 'S', 'S', 'S', 'W1', 'W1', 'W1', 'W1', 'W1', 'W1', 'W1', 'to:W1'],
+    script: ['W1', 'S', 'S', 'S', 'W1', 'W1', 'W1', 'W1', 'W1', 'W1', 'W2', 'W2', 'W2', 'W2', 'W2'],
+    q: 'W1 闲满 keepAlive，刚决定退出（还没把线程数减 1）。这时 S 把 t2 放进队列，复查看到“还有 1 个线程”就走了。t2 会怎样？', opts: [['stuck', '卡在队列里，没人跑'], ['w2', '有新线程来跑'], ['w1', 'W1 改主意，留下来跑']], answer: 'w2'},
+  race: {cfg: {core: 1, max: 1, cap: 1, submitters: [{id: 'S1', tasks: ['a']}, {id: 'S2', tasks: ['b']}]}, setup: [],
+    script: ['S1', 'S2', 'S1', 'S2', 'S1', 'S2', 'S2', 'S2', 'S2', 'S2', 'S1', 'W1', 'W1', 'W1', 'W1', 'W1', 'W1', 'W1'],
+    q: '核心数 1、最大数 1、队列容量 1。S1 和 S2 同时读到线程数 0 < 1，都去 addWorker。b 最后怎样？', opts: [['core2', '也开一个线程，池里有 2 个'], ['queue', '进队列，等 W1 跑完 a 再跑'], ['reject', '被拒绝']], answer: 'queue'},
+  shutdown: {cfg: {core: 1, max: 1, cap: null, submitters: [{id: 'S', tasks: ['t1', 't2']}], admin: 'X'}, setup: ['S', 'S', 'S', 'S', 'W1', 'W1'],
+    script: ['S', 'S', 'X', 'S', 'X', 'W1', 'W1', 'W1', 'W1'],
+    q: 'W1 正在跑 t1。S 刚把 t2 放进队列，另一个线程 X 调了 shutdown()，然后 S 才复查。t2 会怎样？', opts: [['reject', '被撤回，交给拒绝策略'], ['run', '照样被执行（shutdown 会跑完队列里的）'], ['stuck', '留在队列里没人跑']], answer: 'reject'},
+  noexit: {variant: 'noexitcheck', cfg: {core: 0, max: 2, cap: null, submitters: [{id: 'S', tasks: ['t1', 't2']}]},
+    setup: ['S', 'S', 'S', 'S', 'S', 'S', 'W1', 'W1', 'W1', 'W1', 'W1', 'W1', 'W1', 'to:W1'],
+    script: ['W1', 'S', 'S', 'S', 'W1', 'W1', 'W1'],
+    q: '被放弃的写法：线程退出前不再看队列。和第 3 个剧本同样的顺序，t2 会怎样？', opts: [['stuck', '卡在队列里，没人跑'], ['w2', '有新线程来跑'], ['w1', 'W1 留下来跑']], answer: 'stuck'}
+};
+function outcome(k, s){
+  var T = s.tasks, v = TP.verdict(s);
+  switch (k){
+    case 'zero': case 'norecheck': return T.t1.st === 'done' || T.t1.st === 'running' ? (T.t1.by && T.t1.by[0] === 'W' ? 'w' : 's') : (v.quiet && T.t1.st === 'queued' ? 'none' : null);
+    case 'exit': case 'noexit': if (T.t2.st === 'done' || T.t2.st === 'running') return T.t2.by === 'W1' ? 'w1' : 'w2'; return v.quiet && T.t2.st === 'queued' ? 'stuck' : null;
+    case 'race': if (s.wc > 1 || TP.live(s).length > 1) return 'core2'; if (T.b.st === 'rejected') return 'reject'; return (T.b.st === 'done' || T.b.st === 'running') ? 'queue' : null;
+    case 'shutdown': if (T.t2.st === 'rejected') return 'reject'; if (T.t2.st === 'done') return 'run'; return v.quiet && T.t2.st === 'queued' ? 'stuck' : null;
+  }
+}
+
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var BITS = {RUNNING: '111', SHUTDOWN: '000', STOP: '001', TIDYING: '010', TERMINATED: '011'};
+  var TST = {'new': '还没提交', submitting: '提交中', queued: '在队列里', assigned: '交给线程了', running: '在跑', done: '跑完', rejected: '被拒绝'};
+  var KIND = {sub: '提交任务', wrk: '工作线程', adm: '调 shutdown'};
+  function board(el, s, locked){
+    var last = s.log.length ? s.log[s.log.length - 1] : null;
+    var h = '<div class="bd-top">';
+    h += '<div class="pane" data-role="bk"><small><span><code>ctl</code></span><span>' + BITS[s.rs] + ' + 线程数</span></small><div class="row"><span class="big">' + s.rs + '</span><span class="ent" data-st="0">线程数 <i>' + s.wc + '</i></span></div></div>';
+    h += '<div class="pane" data-role="of"><small><span><code>workQueue</code></span><span>' + (s.cap >= 1e9 ? '无界' : '容量 ' + s.cap) + '</span></small><div class="row">' + (s.queue.length ? s.queue.map(function(t){ return '<span class="pk">' + t + '</span>'; }).join('') : '<span class="empty-note">空</span>') + '</div></div>';
+    h += '<div class="pane" data-role="pd"><small><span><code>workers</code></span><span>核心 ' + s.core + ' · 最大 ' + s.max + '</span></small><div class="row">' + (s.workers.length ? s.workers.map(function(w){ return '<span class="pl">' + w + '</span>'; }).join('') : '<span class="empty-note">没有线程</span>') + '</div></div>';
+    h += '</div><div class="thr-grid">';
+    s.order.forEach(function(id){
+      var t = s.threads[id];
+      var stt = t.status === 'parked' ? '<span class="stt parked">' + (t.timed ? '停在 poll(keepAlive)' : '停在 take()') + '</span>' : t.status === 'done' ? '<span class="stt done">结束了</span>' : '<span class="stt">可以走</span>';
+      var info = t.kind === 'sub' ? '待提交：' + (t.todo.length ? t.todo.join('、') : '无') : t.kind === 'wrk' ? '手里：' + (t.task || '无') + ' · 跑完 ' + t.done + ' 个' : '';
+      h += '<div class="thr' + (last && last.t === id ? ' act' : '') + '"><div class="thr-h"><b>' + id + '</b><span class="stt">' + KIND[t.kind] + '</span>' + stt + '</div>';
+      if (info) h += '<div style="font-size:12.5px">' + esc(info) + '</div>';
+      h += '<div class="nxt">下一步：' + esc(TP.lineText(s, t)) + '</div><div class="btns">';
+      h += '<button class="btn" type="button" data-go="' + id + '"' + (t.status === 'ready' && !locked ? '' : ' disabled') + '>让 ' + id + ' 走一步</button>';
+      if (t.status === 'parked' && t.timed) h += '<button class="btn" type="button" data-to="' + id + '"' + (locked ? ' disabled' : '') + '>等满 keepAlive</button>';
+      h += '</div></div>';
+    });
+    h += '</div><div class="row" style="display:flex;flex-wrap:wrap;gap:6px;font-size:12.5px">任务：' + Object.keys(s.tasks).map(function(k){ var x = s.tasks[k]; return '<span class="ent" data-st="' + (x.st === 'done' ? 0 : 1) + '">' + k + ' <i>' + TST[x.st] + (x.by ? ' · ' + x.by : '') + '</i></span>'; }).join('') + '</div>';
+    h += '<ol class="logbox" aria-live="polite">';
+    if (!s.log.length) h += '<li><span class="ln"></span><b></b><span class="empty-note">还没开始</span></li>';
+    s.log.forEach(function(l, i){
+      var k = {recheck: 'steal', casfail: 'robbed', reject: 'xset', x: 'xset', spawn: 'offer', offer: 'pocket', take: 'pocket', timeout: 'robbed', exit: 'hand'}[l.kind] || '';
+      h += '<li class="k-' + k + (i === s.log.length - 1 ? ' new' : '') + '"><span class="ln">' + (l.line ? 'L' + l.line : '改') + '</span><b>' + l.t + '</b><span>' + esc(l.text) + '</span></li>';
+    });
+    el.innerHTML = h + '</ol>';
+    var lb = el.querySelector('.logbox'); if (lb) lb.scrollTop = lb.scrollHeight;
+  }
+  var lab = {k: 'zero', s: null, pos: 0, guess: null, off: false};
+  function apply(s, tok){ return tok.indexOf('to:') === 0 ? TP.timeout(s, tok.slice(3)) : TP.step(s, tok); }
+  function reset(){
+    var p = PRESETS[lab.k], cfg = JSON.parse(JSON.stringify(p.cfg)); cfg.variant = p.variant || 'jdk';
+    var s = TP.make(cfg);
+    p.setup.forEach(function(tok){ s = apply(s, tok); });
+    s.log.forEach(function(l){ l.text = '（开场）' + l.text; });
+    lab.s = s; lab.pos = 0; lab.off = false; paint();
+  }
+  function guessUI(){
+    var p = PRESETS[lab.k], h = '<p><b>先猜：</b>' + esc(p.q) + '</p><div class="opts">';
+    p.opts.forEach(function(o){ h += '<button type="button" data-g="' + o[0] + '" aria-pressed="' + (lab.guess === o[0]) + '">' + esc(o[1]) + '</button>'; });
+    $('lab-guess').innerHTML = h + '</div>';
+  }
+  var WHY = {
+    zero: '第 ① 个 if 不成立（0 个线程不小于核心数 0），任务进了队列；复查时读到线程数是 0，于是 addWorker(null, false) 补了 W1，W1 从队列里取到 t1。核心数 0 的池子，第一个线程就是这么来的。',
+    norecheck: '没有复查，就没有任何地方会建线程：第 ① 个 if 不成立，队列又放得进去，第 ③ 个 if 走不到。t1 永远躺在队列里。这就是 execute 非要多读一次 ctl 的原因。',
+    exit: 'S 复查时 W1 还没把线程数减下去，S 以为有人会来取；可 W1 退出前在 processWorkerExit 里又看了一眼：队列不空、线程数却是 0，于是补了 W2。两边各查一次，至少有一边能发现问题。',
+    race: 'S1 的 CAS 先成功，线程数变成 1；S2 的 CAS 期望值还是旧的，失败，重读后发现名额满了，addWorker 返回 false，S2 转去放队列。W1 跑完 a 之后从队列取到 b。名额靠一次 CAS 争，不会多建。',
+    shutdown: 'S 放进队列后复查，读到池子已经 SHUTDOWN，就把 t2 从队列里撤回并交给拒绝策略。如果复查发生在 shutdown 之前，t2 就会留在队列里，并且会被跑完（SHUTDOWN 状态仍然跑完队列里的任务）。两种结果都不会让 t2 无人理会。',
+    noexit: '和第 3 个剧本同样的顺序：S 复查时 W1 还在，W1 退出前又不再看队列，t2 就卡住了。只拆掉一边，就留下了一条缝。随机测试里这条缝 5 万次撞上 2 次：很少，但会发生。'
+  };
+  function paint(){
+    var p = PRESETS[lab.k], locked = !lab.guess, done = lab.pos >= p.script.length;
+    board($('lab-board'), lab.s, locked);
+    $('lab-step').disabled = locked || done || lab.off;
+    $('lab-run').disabled = locked || done || lab.off;
+    var nx = done ? '' : p.script[lab.pos];
+    $('lab-pos').textContent = lab.off ? '你走了自己的顺序，剧本按钮已停用，点“从头来”恢复' : '剧本 ' + lab.pos + ' / ' + p.script.length + ' 步' + (done ? '' : '，下一步：' + (nx.indexOf('to:') === 0 ? nx.slice(3) + ' 等满 keepAlive' : nx + ' 走一步'));
+    var res = $('lab-res');
+    if (locked){ res.dataset.role = 'other'; res.innerHTML = '先在上面选一个猜测，再开始点。'; return; }
+    var out = outcome(lab.k, lab.s);
+    if (!done && !(lab.off && out)){ res.dataset.role = 'other'; res.innerHTML = '继续点。日志里橙色是复查和 CAS 失败，红色是拒绝，紫色是建线程。'; return; }
+    if (!out){ res.dataset.role = 'other'; res.innerHTML = '还没有结果，继续点各个线程。'; return; }
+    var label = function(k){ for (var i = 0; i < p.opts.length; i++) if (p.opts[i][0] === k) return p.opts[i][1]; return k; };
+    var right = out === lab.guess;
+    $('lab-guess').querySelectorAll('button').forEach(function(b){ b.classList.toggle('right', b.dataset.g === out); b.classList.toggle('wrong', b.dataset.g === lab.guess && !right); });
+    res.dataset.role = right ? 'done' : 'bad';
+    var body = out === p.answer ? WHY[lab.k] : '按你点的顺序，结果是“' + label(out) + '”。换个顺序结果就变，这正说明这里有竞争；源码的两次检查保证的是“不管怎么交错都不会卡住”。';
+    res.innerHTML = (right ? '<b>猜对了。</b>' : '<b>猜错了，结果是：' + esc(label(out)) + '。</b>') + esc(body);
+  }
+  function go(tok){ if (!lab.guess) return; var p = PRESETS[lab.k];
+    if (!lab.off && p.script[lab.pos] === tok) lab.pos++; else lab.off = true;
+    var ns = apply(lab.s, tok); if (ns === lab.s) return; lab.s = ns; paint(); }
+  $('lab-presets').addEventListener('click', function(e){ var b = e.target.closest('button[data-k]'); if (!b) return;
+    lab.k = b.dataset.k; lab.guess = null;
+    $('lab-presets').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x === b); });
+    guessUI(); reset(); });
+  $('lab-guess').addEventListener('click', function(e){ var b = e.target.closest('button[data-g]'); if (!b || lab.guess) return; lab.guess = b.dataset.g; guessUI(); paint(); });
+  $('lab-board').addEventListener('click', function(e){
+    var g = e.target.closest('button[data-go]'), t = e.target.closest('button[data-to]');
+    if (g) go(g.dataset.go); if (t) go('to:' + t.dataset.to);
+  });
+  $('lab-step').onclick = function(){ var p = PRESETS[lab.k]; if (lab.pos < p.script.length) go(p.script[lab.pos]); };
+  $('lab-run').onclick = function(){ var p = PRESETS[lab.k]; while (!lab.off && lab.pos < p.script.length){ lab.s = apply(lab.s, p.script[lab.pos]); lab.pos++; } paint(); };
+  $('lab-reset').onclick = function(){ reset(); };
+  guessUI(); reset();
+})();
+</script>
+
+</body>
+</html>
