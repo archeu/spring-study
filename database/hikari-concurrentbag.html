@@ -1,0 +1,1660 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>HikariCP ConcurrentBag 源码</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a mechanism topic (① 为什么需要 ② 没有它会怎样 ③ 相邻方案 ④ 原理 ⑤ 亲眼看到 ⑥ 细节 ↺). Colors: the per-thread pocket (ThreadLocal list) amber (of), the shared shelf (sharedList) blue (pd), the handoff window (SynchronousQueue) purple (cg), entry state / CAS and the chosen design teal (bk), database brown (g2), barging and robbed wake-ups orange (warn), wrong red, right green, old ways grey. Interactives: borrow/requite stepper (④) and a "you are the scheduler" interleaving lab with guess-first presets (⑥), both driven by the same pure simulator. Charts are drawn from measurements on the author's 2-vCPU VM. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:640px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-on{font-size:11.5px;font-weight:700;fill:var(--on-accent)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)}
+.f-oft{fill:var(--of-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-card{fill:var(--card)} .f-paper{fill:var(--code-bg)}
+.c-empty{fill:var(--card);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-bkd{stroke:var(--bk);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-pdd{stroke:var(--pd);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+.mk{fill:var(--of)}
+.mk-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+.dot-q{fill:var(--of)}
+.dot-s{fill:var(--bk)}
+.dot-t{fill:var(--warn)}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.need{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need b i{font-style:normal;font-family:var(--font-display);color:var(--of);margin-right:6px}
+.need p{font-size:14px;color:var(--muted)}
+.need .to{font-size:12.5px;align-self:flex-start;padding:2px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev{color:var(--ink)}
+.mj dd.ev b{color:var(--bad)}
+.mj .go{font-size:12.5px;align-self:flex-start;color:var(--muted)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- ③ route ---------- */
+.qflow{display:flex;flex-direction:column;gap:0}
+.qstep{display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;align-items:start}
+.qstep .qn{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-display);font-size:20px;background:var(--ink);color:var(--paper);position:relative;z-index:1}
+.qstep .qbody{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.qstep .qbody > b{font-size:17px}
+.qstep .qbody > p{font-size:14px;color:var(--muted)}
+.qstep .qbody > p code{color:var(--ink);overflow-wrap:anywhere}
+.qline{width:2px;height:22px;background:var(--line-strong);margin-left:21px}
+.ans{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.an{border:1.5px solid var(--rc);background:var(--rt);border-radius:12px;padding:8px 12px;font-size:14px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.an > span{font-size:12.5px;color:var(--muted)}
+.an > b{font-weight:700}
+.an a{font-size:12.5px}
+.an code{overflow-wrap:anywhere}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.exp-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.exp-h .n{font-family:var(--font-display);font-size:22px;color:var(--of)}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.fact .to6{margin-top:auto;font-size:12.5px;color:var(--muted)}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:21px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way .cfg{font-family:var(--font-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.way svg{display:block;width:100%;height:auto}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b code{font-size:.9em}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:4.6em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--bad)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:620px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+.ctl.off{opacity:.45}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg-btns button:disabled{opacity:.4;cursor:not-allowed}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:18px;height:3px;border-radius:2px;display:inline-block}
+.lg i.d{height:0;border-top:2px dashed}
+.notes{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.notes li{font-size:14.5px;padding:8px 12px;border-radius:10px;background:var(--rt);border-left:4px solid var(--rc)}
+
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+
+/* ---------- bag board (stepper + lab) ---------- */
+.board{display:flex;flex-direction:column;gap:12px}
+.bd-top{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,.7fr) minmax(0,1.2fr);gap:10px}
+.pane{border:2px solid var(--rc);background:var(--rt);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.pane > small{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}
+.pane > small code{color:var(--ink)}
+.pane .row{display:flex;flex-wrap:wrap;gap:6px;min-height:30px;align-items:center}
+.pane .big{font-family:var(--font-display);font-size:28px;line-height:1}
+.ent{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:12.5px;padding:3px 8px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card)}
+.ent i{font-style:normal;font-size:11px;padding:0 5px;border-radius:5px}
+.ent[data-st="0"]{border-color:var(--bk)}
+.ent[data-st="0"] i{background:var(--bk);color:var(--on-accent)}
+.ent[data-st="1"] i{background:var(--ink);color:var(--paper)}
+.ent.flash{box-shadow:0 0 0 3px var(--of)}
+.ent.stale{opacity:.55;border-style:dashed}
+.pl{font-family:var(--font-mono);font-size:12.5px;padding:3px 9px;border-radius:999px;background:var(--card);border:1.5px solid var(--cg)}
+.empty-note{font-size:12.5px;color:var(--muted)}
+.thr-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.thr{border:1.5px solid var(--line-strong);background:var(--card);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.thr.act{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.thr-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.thr-h b{font-family:var(--font-display);font-weight:400;font-size:20px}
+.stt{font-size:11.5px;padding:1px 8px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+.stt.parked{background:var(--cg-tint);border:1px solid var(--cg)}
+.stt.done{background:var(--good-tint)}
+.thr .kv{display:grid;grid-template-columns:3.2em minmax(0,1fr);gap:4px 8px;font-size:12.5px;align-items:center}
+.thr .kv > span{color:var(--muted)}
+.thr .kv > div{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.thr .nxt{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;min-height:2.6em}
+.thr .btns{display:flex;gap:6px;flex-wrap:wrap}
+.pk{font-family:var(--font-mono);font-size:12px;padding:1px 7px;border-radius:6px;border:1.5px solid var(--of);background:var(--of-tint)}
+.logbox{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;background:var(--code-bg)}
+.logbox li{font-size:13px;display:grid;grid-template-columns:2em 1.6em minmax(0,1fr);gap:6px;align-items:baseline}
+.logbox li .ln{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.logbox li b{font-family:var(--font-display);font-weight:400}
+.logbox li.k-steal,.logbox li.k-robbed{color:var(--warn)}
+.logbox li.k-xset,.logbox li.k-xread{color:var(--bad)}
+.logbox li.k-pocket,.logbox li.k-topocket{color:var(--of)}
+.logbox li.k-offer,.logbox li.k-hand{color:var(--cg)}
+.logbox li.new{font-weight:700}
+.vs{display:inline-flex}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+/* ---------- source ---------- */
+pre.src{padding:12px 0}
+pre.src code{display:inline-block;min-width:100%}
+pre.src .l{display:block;padding:0 16px 0 0}
+pre.src .l .no{display:inline-block;width:3.4em;padding-right:.9em;text-align:right;color:var(--muted);user-select:none}
+pre.src .l.hl{background:var(--of-tint)}
+pre.src .l .tag{font-family:var(--font-display);color:var(--of);margin-left:.6em}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+.bar{display:inline-block;height:9px;border-radius:3px;background:var(--rc);vertical-align:middle;margin-right:6px}
+.how{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.how .need b i{color:var(--bk)}
+.states{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.sc{border:2px solid var(--rc);background:var(--card);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.sc b{font-family:var(--font-mono);font-size:14px}
+.sc span{font-size:13px;color:var(--muted)}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts,.metaphor,.states{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bd-top{grid-template-columns:1fr 1fr}
+  .bd-top .pane:first-child{grid-column:1 / -1}
+  .thr-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .how{grid-template-columns:1fr}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ledger{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras,.ex{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+}
+@media (max-width:520px){
+  .facts,.metaphor,.presets,.ctl-grid,.states,.thr-grid,.bd-top{grid-template-columns:1fr}
+  .tiles,.ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+  .qstep{grid-template-columns:34px minmax(0,1fr);gap:10px}
+  .qstep .qn{width:34px;height:34px;font-size:17px}
+  .qline{margin-left:16px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-pd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-pd" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-cg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-cg" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>数据库</span><span aria-hidden="true">/</span><span class="tb-here">HikariCP ConcurrentBag 源码</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">HIKARICP 6.3.3 · CONCURRENTBAG · THREADLOCAL · COPYONWRITEARRAYLIST · SYNCHRONOUSQUEUE · CAS</p>
+  <h1>借连接不加锁，代价是不保证先来先得</h1>
+  <p class="lead">ConcurrentBag 只认连接身上的一个 <code>state</code> 字段：谁用 <b>CAS</b> 把它从 0 改成 1，连接就归谁。线程自己的<b>口袋</b>（ThreadLocal）、公共的<b>货架</b>（sharedList）、<b>递交窗口</b>（SynchronousQueue）都只是去哪找连接的路子，所以借和还都不用拿锁。代价是：还回来、递给等待者的连接，在对方醒来之前谁扫到都能拿走，排在前面的人可能一直被插队。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>为什么需要</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>没有它会怎样</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>相邻方案</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>原理</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>亲眼看到</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>面试被问“HikariCP 为什么快？借连接要不要加锁？等连接是先来先得吗？”，又想弄清<a href="../perf/response-time-queueing.html#s6">上一页</a>压测里那件怪事：平均只等 338 ms，却有 1808 次等满 1 秒超时。所以本页偏源码和设计取舍，⑤ 很短，篇幅给 ④ 和 ⑥ 的第三圈，⑥ 末尾有面试题。源码以 Spring Boot 3.5 带的 <b>HikariCP 6.3.3</b> 为准；标“实测”的数字在本机跑过：JDK 21，2 核 ARM 虚拟机。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>为什么需要：池子里最热的两行代码</h2>
+    <p class="lead">每个请求至少借一次连接、还一次。Tomcat 有 200 个线程，池子只有 10 个连接，这两步每秒要被调用上万次，而且是很多线程同时调。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="200 个 Tomcat 线程同时向 10 个连接的池子借和还，池子要满足四个要求">
+        <g transform="translate(20,30)">
+          <text class="t-h" x="0" y="0">Tomcat 工作线程 ×200</text>
+          <g class="f-neu">
+            <rect x="0" y="14" width="22" height="22" rx="5" class="b-neu"/><rect x="28" y="14" width="22" height="22" rx="5" class="b-neu"/><rect x="56" y="14" width="22" height="22" rx="5" class="b-neu"/><rect x="84" y="14" width="22" height="22" rx="5" class="b-neu"/><rect x="112" y="14" width="22" height="22" rx="5" class="b-neu"/>
+            <rect x="0" y="42" width="22" height="22" rx="5" class="b-neu"/><rect x="28" y="42" width="22" height="22" rx="5" class="b-neu"/><rect x="56" y="42" width="22" height="22" rx="5" class="b-neu"/><rect x="84" y="42" width="22" height="22" rx="5" class="b-neu"/><rect x="112" y="42" width="22" height="22" rx="5" class="b-neu"/>
+          </g>
+          <text class="t-m" x="0" y="86">每个请求：getConnection() 借</text>
+          <text class="t-m" x="0" y="102">　　　　　close() 还</text>
+        </g>
+        <path class="e-ink" d="M180 70 H300" marker-end="url(#ah-ink)"/>
+        <text class="t-s" x="240" y="60" text-anchor="middle">借 borrow</text>
+        <path class="e-mut" d="M300 100 H180" marker-end="url(#ah-mut)"/>
+        <text class="t-m" x="240" y="118" text-anchor="middle">还 requite</text>
+        <rect x="310" y="22" width="270" height="120" rx="14" class="b-bk"/>
+        <text class="t-h" x="445" y="46" text-anchor="middle">HikariPool 里的 ConcurrentBag</text>
+        <g transform="translate(330,62)">
+          <rect x="0" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="24" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="48" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="72" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="96" y="0" width="20" height="28" rx="4" class="b-card"/>
+          <rect x="120" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="144" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="168" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="192" y="0" width="20" height="28" rx="4" class="b-card"/><rect x="216" y="0" width="20" height="28" rx="4" class="b-card"/>
+        </g>
+        <text class="t-m" x="445" y="112" text-anchor="middle">10 个连接（PoolEntry）</text>
+        <text class="t-m" x="445" y="128" text-anchor="middle">每个都是一条 TCP 连接 + 一个 state</text>
+        <path class="e-g2" d="M580 82 H660" marker-end="url(#ah-g2)"/>
+        <rect x="670" y="40" width="210" height="84" rx="14" class="b-g2"/>
+        <text class="t-h" x="775" y="76" text-anchor="middle">MySQL / PostgreSQL</text>
+        <text class="t-m" x="775" y="98" text-anchor="middle">一次查询：毫秒级</text>
+        <g transform="translate(20,170)">
+          <rect x="0" y="0" width="200" height="62" rx="12" class="b-card"/><text class="t-b" x="12" y="24">有空闲：要快</text><text class="t-m" x="12" y="44">这条路每秒走上万次</text>
+          <rect x="216" y="0" width="200" height="62" rx="12" class="b-card"/><text class="t-b" x="228" y="24">没空闲：能等、能超时</text><text class="t-m" x="228" y="44">connectionTimeout 默认 30 s</text>
+          <rect x="432" y="0" width="210" height="62" rx="12" class="b-card"/><text class="t-b" x="444" y="24">还回来：叫醒等的人</text><text class="t-m" x="444" y="44">别让连接闲着、人干等</text>
+          <rect x="658" y="0" width="202" height="62" rx="12" class="b-card"/><text class="t-b" x="670" y="24">管家回收时不撞车</text><text class="t-m" x="670" y="44">空闲超时、保活检查</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>ConcurrentBag 是 HikariPool 存放连接的容器，借（<code>borrow</code>）和还（<code>requite</code>）都落在它身上。它要同时满足图下面这四件事。</figcaption>
+  </figure>
+  <div class="note-box"><b>和已学页面的关系</b><span>池子为什么要有、开多大，在<a href="db-pool-tx-perf.html">连接池与事务性能</a>讲过；等连接怎样把响应时间拉长，在<a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a>讲过。这一页往下一层，看池子内部怎么借、怎么还。</span></div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>没有它会怎样：用会的东西写一个池子</h2>
+    <p class="lead">只用 JUC 现成的东西，最顺手的写法是一个阻塞队列：借就是 <code>poll</code>，还就是 <code>offer</code>。commons-pool2（DBCP2 底下那层）就是这个思路。它能用，问题出在“所有人都要过同一把锁”。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><span class="n">老办法</span><b>一把锁的池子</b></div>
+<pre><code><span class="cm">// 10 个连接放进一个有界阻塞队列</span>
+var idle = new ArrayBlockingQueue&lt;Conn&gt;(10);
+
+Conn borrow(long ms) throws InterruptedException {
+    return idle.poll(ms, MILLISECONDS);  <span class="cm">// 拿锁 → 取 → 放锁</span>
+}
+void giveBack(Conn c) {
+    idle.offer(c);                       <span class="cm">// 拿锁 → 放 → 唤醒一个 → 放锁</span>
+}</code></pre>
+    </div>
+    <figure>
+      <div class="fig-box">
+        <svg class="sv" viewBox="0 0 420 210" role="img" aria-label="所有线程的借和还都要先排队拿同一把锁">
+          <text class="t-b" x="14" y="24">借的、还的，全挤在一把锁前</text>
+          <g transform="translate(14,44)">
+            <rect x="0" y="0" width="34" height="26" rx="6" class="b-neu"/><text class="t-m" x="17" y="17" text-anchor="middle">借</text>
+            <rect x="40" y="0" width="34" height="26" rx="6" class="b-neu"/><text class="t-m" x="57" y="17" text-anchor="middle">还</text>
+            <rect x="80" y="0" width="34" height="26" rx="6" class="b-neu"/><text class="t-m" x="97" y="17" text-anchor="middle">借</text>
+            <rect x="120" y="0" width="34" height="26" rx="6" class="b-neu"/><text class="t-m" x="137" y="17" text-anchor="middle">借</text>
+            <rect x="160" y="0" width="34" height="26" rx="6" class="b-neu"/><text class="t-m" x="177" y="17" text-anchor="middle">还</text>
+          </g>
+          <path class="e-mut" d="M214 57 H246" marker-end="url(#ah-mut)"/>
+          <rect x="252" y="36" width="44" height="44" rx="10" class="b-bad"/>
+          <text class="t-bad" x="274" y="63" text-anchor="middle">锁</text>
+          <path class="e-mut" d="M300 57 H322" marker-end="url(#ah-mut)"/>
+          <rect x="326" y="30" width="80" height="56" rx="10" class="b-neu"/>
+          <text class="t-m" x="366" y="54" text-anchor="middle">队列</text>
+          <text class="t-m" x="366" y="72" text-anchor="middle">c0 c1 c2…</text>
+          <text class="t-s" x="14" y="122">同一时刻只有一个线程在锁里。</text>
+          <text class="t-s" x="14" y="144">核越多、借还越频繁，排在锁前的人越多。</text>
+          <text class="t-s" x="14" y="166">想要先来先得，还连接时就得叫醒一个</text>
+          <text class="t-s" x="14" y="188">睡着的线程，每次都是一次线程切换。</text>
+        </svg>
+      </div>
+    </figure>
+  </div>
+  <div class="exp-h"><span class="tag-real">实测</span><b>只测借还本身：拿到连接马上还，每秒能借还多少次</b></div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>线程数（池子 10 个）</th><th class="num">1</th><th class="num">4</th><th class="num">10</th><th class="num">40</th><th class="num">200</th></tr></thead>
+      <tbody>
+        <tr><th>HikariCP <code>ConcurrentBag</code></th><td class="num">800 万</td><td class="num good">1294 万</td><td class="num good">1291 万</td><td class="num good">1014 万</td><td class="num good">869 万</td></tr>
+        <tr><th><code>ArrayBlockingQueue</code>（一把非公平锁）</th><td class="num">927 万</td><td class="num">790 万</td><td class="num">847 万</td><td class="num">761 万</td><td class="num">676 万</td></tr>
+        <tr><th><code>synchronized</code> + <code>wait/notify</code></th><td class="num">571 万</td><td class="num">245 万</td><td class="num">209 万</td><td class="num">214 万</td><td class="num">299 万</td></tr>
+        <tr><th>一把锁 + 严格先来先得递交</th><td class="num">912 万</td><td class="num">378 万</td><td class="num">278 万</td><td class="num bad">41 万</td><td class="num bad">27 万</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tip">单位：次/秒。最后一行是我按 Tomcat JDBC <code>FairBlockingQueue</code> 的思路写的：还回来的连接直接塞给排在最前面的人。40 线程那一列跑了 3 次取中位数，其余各 1 次。这台机器只有 2 核，同一时刻真正在跑的只有 2 个线程，所以“一把锁”只慢了两到四成；核更多时差距会更大，这里测不出来，不给数字。</p>
+  <div class="misj">
+    <div class="mj">
+      <b><i>痛 1</i>热路径上人人过锁</b>
+      <p>单线程时几种写法一次借还都在 110～175 ns。一有并发，锁的写法就掉下来，因为借和还都要串行地过同一个临界区。</p>
+    </div>
+    <div class="mj">
+      <b><i>痛 2</i>要公平就要付线程切换的钱</b>
+      <p>严格先来先得，意味着还连接时必须把它交到一个正在睡觉的线程手里。对方醒来要几微秒，40 线程时每秒只剩 41 万次，是 ConcurrentBag 的 4%。</p>
+    </div>
+  </div>
+  <div class="essence">
+    <span class="big">精华</span>
+    <p>ConcurrentBag 的精华：<b>有空闲连接时不碰任何锁</b>（翻自己口袋、CAS 抢货架），<b>没空闲时谁正在 CPU 上跑谁先拿</b>，不为了公平去等一个睡着的线程。</p>
+    <p>不懂这一点的典型误用：以为“换成 HikariCP 慢 SQL 就快了”（池子开销是百纳秒级，查询是毫秒级），或者以为“等连接是排队的，先来先得”，结果被少数请求等到超时吓一跳，见 <a href="#pit-timeout">⑥ 坑 1</a>。</p>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>相邻方案：四个池子怎么放连接</h2>
+    <p class="lead">Java 里常见的几个连接池，借还的写法各不相同。下表每一格都对着各自的源码核过（版本见表头下）。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>池子</th><th>空闲连接放在哪</th><th>借、还要不要拿锁</th><th>没有空闲时怎么等</th><th>先来先得吗</th></tr></thead>
+      <tbody>
+        <tr><th>commons-pool2 2.12.1<br><small>DBCP2 用它</small></th><td><code>LinkedBlockingDeque</code>，默认 <code>lifo=true</code>，还回来放队头</td><td>要，一把 <code>ReentrantLock</code></td><td>在 <code>notEmpty</code> 条件上等</td><td><code>fairness</code> 默认 <code>false</code>，不保证</td></tr>
+        <tr><th>Tomcat JDBC 10.1.55</th><td><code>FairBlockingQueue</code>：一个 <code>LinkedList</code> + 一个等待者链表</td><td>要，一把锁</td><td>排进等待者链表，还连接时直接塞给链表头</td><td><code>fairQueue</code> 默认 <code>true</code>，是</td></tr>
+        <tr><th>Druid 1.2.28</th><td>一个数组当栈用，从尾巴取（LIFO）</td><td>要，一把 <code>ReentrantLock</code>（默认构造是非公平锁）</td><td>在 <code>notEmpty</code> 条件上 <code>await</code></td><td>不保证</td></tr>
+        <tr class="hl"><th>HikariCP 6.3.3</th><td>货架 <code>CopyOnWriteArrayList</code> + 每线程一个口袋</td><td><b>有空闲时不要</b>，只 CAS 一个 <code>state</code></td><td>停在 <code>SynchronousQueue(true).poll</code> 上等人递</td><td>等的人之间是，但<b>新来的人能插队</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="trio">
+    <div class="need" data-role="other"><b><i>要严格先来先得</i></b><p>比如批处理里不能容忍个别请求等很久：Tomcat JDBC 的 <code>fairQueue</code> 是现成的。</p></div>
+    <div class="need" data-role="other"><b><i>要 SQL 监控、防火墙</i></b><p>Druid 的强项在 StatFilter、WallFilter 这些外围功能，不在借还速度。</p></div>
+    <div class="need" data-role="bk"><b><i>其余情况</i></b><p>Spring Boot 2.0 起默认就是 HikariCP。本页学它的 <code>ConcurrentBag</code>。</p></div>
+  </div>
+  <p class="pick-line"><b>选择规则：</b>借还速度极少是瓶颈，先按“要不要严格公平、要不要监控”选池子。本页学 HikariCP 的 ConcurrentBag，因为它把“公平”换成了“不过锁”，这个取舍正是面试和调优要说清的那一层。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>原理：三个地方找连接，一个字段定归属</h2>
+    <p class="lead">先记住一句话：<b>连接放在哪不重要，<code>state</code> 是几才重要。</b>下面的口袋、货架、递交窗口都只存“引用”，同一个连接可以同时出现在好几个地方；真正决定它归谁的，只有它自己身上那个 <code>volatile int state</code>。</p>
+  </div>
+
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="bk"><h4>CAS</h4><p><code>compareAndSet(0, 1)</code>：如果现在是 0 就改成 1，返回成没成功。CPU 一条指令完成，两个线程同时做，只有一个能成功。不用锁。</p></div>
+      <div class="fact" data-role="of"><h4>ThreadLocal</h4><p>每个线程各有一份的变量。线程 A 往自己那份里放东西，线程 B 看不见，所以读写都不用加锁。</p></div>
+      <div class="fact" data-role="pd"><h4>CopyOnWriteArrayList</h4><p>读的时候直接遍历当前数组，不加锁；写（加、删）时复制一份新数组再替换。适合读极多、写极少。</p></div>
+      <div class="fact" data-role="cg"><h4>SynchronousQueue</h4><p>容量为 0 的队列。<code>offer(x)</code> 只有在恰好有线程停在 <code>poll</code> 上时才成功，直接交到对方手里；没人等就返回 <code>false</code>，什么也不存。</p></div>
+    </div>
+  </div>
+
+  <figure id="m-three">
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 330" role="img" aria-label="借连接按顺序找三个地方：自己的口袋、公共货架、递交窗口；归属只由连接的 state 决定">
+        <!-- threads -->
+        <rect x="16" y="20" width="230" height="78" rx="12" class="b-card"/>
+        <text class="t-h" x="30" y="44">线程 A</text>
+        <rect x="30" y="56" width="200" height="30" rx="8" class="b-of"/>
+        <text class="t-s" x="42" y="76">口袋：</text><text class="t-mono" x="88" y="76">[c0]</text>
+        <rect x="16" y="112" width="230" height="78" rx="12" class="b-card"/>
+        <text class="t-h" x="30" y="136">线程 B</text>
+        <rect x="30" y="148" width="200" height="30" rx="8" class="b-of"/>
+        <text class="t-s" x="42" y="168">口袋：</text><text class="t-mono" x="88" y="168">[c1]</text>
+        <rect x="16" y="204" width="230" height="64" rx="12" class="b-card"/>
+        <text class="t-h" x="30" y="228">线程 W</text>
+        <text class="t-m" x="30" y="252">口袋空，货架上也没有空闲的</text>
+        <!-- shelf -->
+        <rect x="320" y="20" width="270" height="170" rx="14" class="b-pd"/>
+        <text class="t-h" x="336" y="44">货架 sharedList</text>
+        <text class="t-monos" x="336" y="62">CopyOnWriteArrayList&lt;PoolEntry&gt;</text>
+        <g transform="translate(336,76)">
+          <rect x="0" y="0" width="56" height="44" rx="8" class="b-card"/><text class="t-mono" x="28" y="18" text-anchor="middle">c0</text><rect x="12" y="24" width="32" height="14" rx="4" class="f-bk"/><text class="t-on" x="28" y="35" text-anchor="middle">0</text>
+          <rect x="64" y="0" width="56" height="44" rx="8" class="b-card"/><text class="t-mono" x="92" y="18" text-anchor="middle">c1</text><rect x="76" y="24" width="32" height="14" rx="4" class="f-ink"/><text class="t-on" x="92" y="35" text-anchor="middle">1</text>
+          <rect x="128" y="0" width="56" height="44" rx="8" class="b-card"/><text class="t-mono" x="156" y="18" text-anchor="middle">c2</text><rect x="140" y="24" width="32" height="14" rx="4" class="f-ink"/><text class="t-on" x="156" y="35" text-anchor="middle">1</text>
+          <rect x="192" y="0" width="56" height="44" rx="8" class="b-card"/><text class="t-mono" x="220" y="18" text-anchor="middle">c3</text><rect x="204" y="24" width="32" height="14" rx="4" class="f-ink"/><text class="t-on" x="220" y="35" text-anchor="middle">1</text>
+        </g>
+        <text class="t-m" x="336" y="142">所有连接都在这里，按加入的先后排</text>
+        <text class="t-m" x="336" y="160">借的时候从头扫，CAS 第一个 state = 0 的</text>
+        <text class="t-m" x="336" y="178">（c1 在 B 的口袋里，但现在被别人借着）</text>
+        <!-- handoff -->
+        <rect x="650" y="20" width="234" height="170" rx="14" class="b-cg"/>
+        <text class="t-h" x="666" y="44">递交窗口 handoffQueue</text>
+        <text class="t-monos" x="666" y="62">SynchronousQueue&lt;&gt;(true)，容量 0</text>
+        <rect x="666" y="78" width="70" height="30" rx="15" class="b-card"/><text class="t-mono" x="701" y="98" text-anchor="middle">W</text>
+        <text class="t-s" x="748" y="98">停在 poll 上</text>
+        <text class="t-m" x="666" y="134">还连接的人看到 waiters &gt; 0，</text>
+        <text class="t-m" x="666" y="152">就 offer 给最早停下的那位；</text>
+        <text class="t-m" x="666" y="170">没人在 poll，offer 直接失败</text>
+        <!-- arrows -->
+        <circle cx="270" cy="71" r="12" class="f-of"/><text class="t-on" x="270" y="75" text-anchor="middle">1</text>
+        <path class="e-pd" d="M246 160 C 280 160, 290 110, 318 104" marker-end="url(#ah-pd)"/>
+        <circle cx="282" cy="140" r="12" class="f-pd"/><text class="t-on" x="282" y="144" text-anchor="middle">2</text>
+        <path class="e-cg" d="M246 236 C 450 300, 620 260, 690 110" marker-end="url(#ah-cg)"/>
+        <circle cx="470" cy="268" r="12" class="f-cg"/><text class="t-on" x="470" y="272" text-anchor="middle">3</text>
+        <text class="t-s" x="490" y="274">实在没有：waiters+1，停在窗口上等人递</text>
+        <!-- key -->
+        <rect x="16" y="290" width="868" height="32" rx="10" class="b-bk"/>
+        <text class="t-b" x="30" y="311">归属只看 state：</text>
+        <text class="t-s" x="140" y="311">对 c0 做 compareAndSet(0, 1) 成功的那个线程，c0 才是它的。口袋、货架、窗口里放的都只是引用。</text>
+      </svg>
+    </div>
+    <figcaption><code>borrow()</code> 按 1 → 2 → 3 的顺序找：先翻自己的口袋（ThreadLocal 里的列表，最多记 16 个），再扫货架，最后停在递交窗口上等。图里 A 的口袋记着 c0，c0 正空着，A 借的时候 1 就命中，连货架都不用看。</figcaption>
+  </figure>
+
+  <figure id="m-state">
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 220" role="img" aria-label="PoolEntry 的四个状态和它们之间的转换">
+        <rect x="60" y="70" width="170" height="64" rx="14" class="b-bk"/><text class="t-h" x="145" y="98" text-anchor="middle">NOT_IN_USE</text><text class="t-mono" x="145" y="118" text-anchor="middle">0 · 空闲</text>
+        <rect x="420" y="70" width="170" height="64" rx="14" class="b-card"/><text class="t-h" x="505" y="98" text-anchor="middle">IN_USE</text><text class="t-mono" x="505" y="118" text-anchor="middle">1 · 借出</text>
+        <rect x="240" y="160" width="170" height="52" rx="14" class="b-g2"/><text class="t-h" x="325" y="184" text-anchor="middle">RESERVED</text><text class="t-mono" x="325" y="202" text-anchor="middle">-2 · 管家占住</text>
+        <rect x="700" y="120" width="170" height="64" rx="14" class="b-neu"/><text class="t-h" x="785" y="148" text-anchor="middle">REMOVED</text><text class="t-mono" x="785" y="168" text-anchor="middle">-1 · 下架</text>
+        <path class="e-bk" d="M230 88 H418" marker-end="url(#ah-bk)"/><text class="t-bk" x="324" y="80" text-anchor="middle">borrow：CAS 0→1</text>
+        <path class="e-ink" d="M420 120 H232" marker-end="url(#ah-ink)"/><text class="t-s" x="324" y="138" text-anchor="middle">requite：setState(0)</text>
+        <path class="e-g2" d="M120 134 C 120 180, 180 190, 238 188" marker-end="url(#ah-g2)"/><text class="t-g2" x="40" y="176">reserve：CAS 0→-2</text>
+        <path class="e-g2" d="M290 160 C 260 150, 210 145, 190 136" marker-end="url(#ah-g2)"/>
+        <text class="t-g2" x="196" y="158" text-anchor="end">unreserve：-2→0</text>
+        <path class="e-mut" d="M590 110 C 640 110, 660 140, 698 148" marker-end="url(#ah-mut)"/><text class="t-m" x="640" y="100" text-anchor="middle">remove：CAS 1→-1</text>
+        <path class="e-mut" d="M410 192 C 560 210, 650 190, 698 170" marker-end="url(#ah-mut)"/><text class="t-m" x="560" y="214" text-anchor="middle">remove：CAS -2→-1</text>
+        <text class="t-m" x="60" y="30">四个常量写在接口 IConcurrentBagEntry 里，PoolEntry 用 AtomicIntegerFieldUpdater 改它的 volatile int state</text>
+        <text class="t-m" x="60" y="50">requite 直接 setState(0)（此时只有借的人自己拿着它），其余转换都是 CAS，谁先成功算谁的</text>
+      </svg>
+    </div>
+    <figcaption>管家（HouseKeeper）要关掉一个闲太久的连接，先 <code>reserve</code> 把 0 改成 -2，和借的人抢同一个 CAS：业务线程抢到了，管家就跳过它；管家抢到了，业务线程扫货架时看到 -2，接着扫下一个。两边都不用锁，也不会撞车。</figcaption>
+  </figure>
+
+  <div class="sub" id="m-walk">
+    <h3>一次完整的借还 <small>池子里只有 1 个连接，A 借两次，B 来晚了要等</small></h3>
+    <div class="stage" id="walk" tabindex="0" aria-label="借还分步演示，左右方向键切换步骤">
+      <div class="st-top">
+        <div class="ctrl">
+          <button class="btn" type="button" id="wk-prev">← 上一步</button>
+          <button class="btn primary" type="button" id="wk-next">下一步 →</button>
+          <button class="btn" type="button" id="wk-play">自动播放</button>
+          <button class="btn" type="button" id="wk-reset">从头来</button>
+        </div>
+        <span class="st-pos" id="wk-pos">第 <b>0</b> / 10 步</span>
+      </div>
+      <p class="cap-txt" id="wk-cap">开始：货架上只有 c0，两个线程的口袋都是空的。点“下一步”。</p>
+      <div class="board" id="wk-board"></div>
+    </div>
+  </div>
+
+  <div class="sub" id="m-hand">
+    <h3>递交只是“叫醒 + 推荐”，不是“交到手里”</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 230" role="img" aria-label="时间线：A 还连接时先把 state 改成 0 再递给 W；W 醒来之前 A 马上又借，扫货架把 c0 抢了回去，W 醒来 CAS 失败">
+          <text class="t-b" x="20" y="34">线程 A</text>
+          <text class="t-b" x="20" y="124">线程 W</text>
+          <line class="e-axis" x1="90" y1="28" x2="880" y2="28"/>
+          <line class="e-axis" x1="90" y1="118" x2="880" y2="118"/>
+          <rect x="110" y="14" width="140" height="28" rx="6" class="b-bk"/><text class="t-s" x="180" y="33" text-anchor="middle">setState(0)</text>
+          <rect x="260" y="14" width="150" height="28" rx="6" class="b-cg"/><text class="t-s" x="335" y="33" text-anchor="middle">offer(c0) 成功</text>
+          <rect x="420" y="14" width="200" height="28" rx="6" class="b-warn"/><text class="t-s" x="520" y="33" text-anchor="middle">马上又借：扫货架 CAS 成功</text>
+          <rect x="90" y="104" width="300" height="28" rx="6" class="b-cg"/><text class="t-s" x="240" y="123" text-anchor="middle">停在 poll 上睡着</text>
+          <rect x="400" y="104" width="250" height="28" rx="6" class="b-card"/><text class="t-m" x="525" y="123" text-anchor="middle">被唤醒，等 CPU 调度（几微秒）</text>
+          <rect x="660" y="104" width="120" height="28" rx="6" class="b-bad"/><text class="t-bad" x="720" y="123" text-anchor="middle">CAS 失败</text>
+          <path class="e-ink" d="M790 118 H870" marker-end="url(#ah-ink)"/><text class="t-m" x="830" y="110" text-anchor="middle">重新 poll</text>
+          <path class="e-cg" d="M335 42 C 335 70, 400 80, 404 102" marker-end="url(#ah-cg)"/>
+          <rect x="110" y="160" width="660" height="22" rx="4" class="f-oft"/>
+          <text class="t-of" x="440" y="176" text-anchor="middle">这一段里 c0 的 state 一直是 0：货架上谁扫到，谁就能 CAS 拿走</text>
+          <text class="t-m" x="110" y="210">实测：池子 1 个连接、W 在等，A 还完立刻再借，1000 次里 A 抢回 949～981 次（⑤ 第 4 段）。中间隔 1 ms 再借，只剩 4～5 次。</text>
+        </svg>
+      </div>
+      <figcaption><code>requite()</code> 先把 state 改成 0，再看有没有人在等、递给谁。递交成功后，连接仍然挂在货架上，state 仍是 0，直到收到的人醒来、自己 CAS 成功。正在 CPU 上跑的线程比刚被叫醒的线程快得多，所以“还完马上又借”几乎总能把连接抢回来。被抢的人回去重新 <code>poll</code>，在 SynchronousQueue 的公平队列里排到了最后。源码在扫货架那段写着注释：<code>If we may have stolen another waiter's connection, request another bag add.</code></figcaption>
+    </figure>
+  </div>
+
+  <div class="sub" id="m-order">
+    <h3>为什么非得先改 state、再看 waiters</h3>
+    <div class="two">
+      <div class="way" data-role="bk">
+        <h4>HikariCP 的顺序</h4>
+        <ul class="pains">
+          <li class="ok">还的人：① 写 <code>state = 0</code>，② 读 <code>waiters</code></li>
+          <li class="ok">借的人：① 写 <code>waiters + 1</code>，② 读 <code>state</code>（扫货架）</li>
+          <li class="ok">两边都是“先写自己的，再读对方的”，而且都是 volatile / 原子操作。不管怎么交错，至少有一边能看到对方写的值：要么借的人扫到 state = 0 自己拿走，要么还的人看到 waiters &gt; 0 去递交</li>
+        </ul>
+      </div>
+      <div class="way" data-role="bad">
+        <h4>被放弃的顺序 <small>先递交，递不出去再改 0</small></h4>
+        <ul class="pains">
+          <li>还的人：① 读 <code>waiters</code> = 0，② 写 <code>state = 0</code></li>
+          <li>如果借的人正好在 ① 和 ② 之间加了 waiters、扫了货架（这时 state 还是 1），他就会停到窗口上等</li>
+          <li>还的人看到的是旧的 waiters = 0，改完 state 就走了。结果：连接空着，人在干等，没人去叫他。这叫<b>丢失唤醒</b></li>
+        </ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="bk">⑥ 的调度实验台里有这个场景，可以自己点出来。在实验台用的同一个模拟器里随机交错各跑 2 万次：HikariCP 的顺序 0 次丢失唤醒；被放弃的顺序 672 次。</p>
+  </div>
+
+  <div class="sub" id="m-design">
+    <h3>为什么这样设计：公平和吞吐只能选一个</h3>
+    <p class="tip">“被放弃的设计”是我把 HikariCP 6.3.3 的 <code>requite</code> 改了几行：先 <code>offer</code>，state 保持 1 交到对方手里，递不出去才改回 0；对方醒来不用再 CAS。这样谁也插不了队，严格先来先得。它的丢失唤醒问题见上一节，这里只看公平换来了什么、付出了什么。</p>
+    <div class="design">
+      <div class="way" data-role="bk">
+        <h4>HikariCP：谁正在跑谁先拿</h4>
+        <ul class="pains">
+          <li class="ok">没人等时，借还全程无锁；有人等时，还的人不用等对方醒</li>
+          <li class="ok">一个 <code>state</code> 管住所有并发，代码短，管家回收也用同一套 CAS</li>
+          <li>不公平：同样平均等 1 ms，有的人等 0，有的人被反复插队</li>
+        </ul>
+      </div>
+      <div class="way" data-role="other">
+        <h4>独占递交：排在前面的先拿</h4>
+        <ul class="pains">
+          <li class="ok">每个人等的时间都差不多，P99 只比 P50 高一点</li>
+          <li>只要有人在等，每次还连接都必须叫醒一个睡着的线程，线程切换的成本落在每一次借还上</li>
+          <li>要补上丢失唤醒，还得在改 0 之后再查一遍、再抢回来递，代码更复杂</li>
+        </ul>
+      </div>
+    </div>
+    <figure>
+      <div class="exp-h"><span class="tag-real">实测</span><b>20 个线程抢 10 个连接，每次持有 1 ms，还完马上又借：每次借连接等了多久</b></div>
+      <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 300" role="img" aria-label="等待时间分位数：HikariCP 原版 P50 和 P90 约为 0，P99 27.5 毫秒，最长 0.53 秒；独占递交各分位都在 1 到 4 毫秒"><line class="e-grid" x1="92" y1="32" x2="92" y2="250"/><text class="t-xs" x="92" y="268" text-anchor="middle">≤1 µs</text><line class="e-grid" x1="198.33333333333331" y1="32" x2="198.33333333333331" y2="250"/><text class="t-xs" x="198.33333333333331" y="268" text-anchor="middle">10 µs</text><line class="e-grid" x1="304.66666666666663" y1="32" x2="304.66666666666663" y2="250"/><text class="t-xs" x="304.66666666666663" y="268" text-anchor="middle">100 µs</text><line class="e-grid" x1="411" y1="32" x2="411" y2="250"/><text class="t-xs" x="411" y="268" text-anchor="middle">1.0 ms</text><line class="e-grid" x1="517.3333333333333" y1="32" x2="517.3333333333333" y2="250"/><text class="t-xs" x="517.3333333333333" y="268" text-anchor="middle">10 ms</text><line class="e-grid" x1="623.6666666666667" y1="32" x2="623.6666666666667" y2="250"/><text class="t-xs" x="623.6666666666667" y="268" text-anchor="middle">100 ms</text><line class="e-grid" x1="730" y1="32" x2="730" y2="250"/><text class="t-xs" x="730" y="268" text-anchor="middle">1.00 s</text><text class="t-b" x="78" y="56" text-anchor="end">P50</text><line class="e-dash" x1="92" y1="52" x2="414.38270485146273" y2="52"/><circle cx="414.38270485146273" cy="52" r="7" class="f-neu"/><rect x="85" y="45" width="14" height="14" rx="3" class="f-bk"/><text class="t-bk" x="102" y="42" text-anchor="start">≈0</text><text class="t-m" x="426.38270485146273" y="56">1.1 ms</text><text class="t-b" x="78" y="100" text-anchor="end">P90</text><line class="e-dash" x1="92" y1="96" x2="415.65262850100294" y2="96"/><circle cx="415.65262850100294" cy="96" r="7" class="f-neu"/><rect x="85" y="89" width="14" height="14" rx="3" class="f-bk"/><text class="t-bk" x="102" y="86" text-anchor="start">≈0</text><text class="t-m" x="427.65262850100294" y="100">1.1 ms</text><text class="t-b" x="78" y="144" text-anchor="end">P99</text><line class="e-dash" x1="564.0708684882557" y1="140" x2="432.47327907504217" y2="140"/><circle cx="432.47327907504217" cy="140" r="7" class="f-neu"/><rect x="557.0708684882557" y="133" width="14" height="14" rx="3" class="f-bk"/><text class="t-bk" x="574.0708684882557" y="130" text-anchor="start">28 ms</text><text class="t-m" x="420.47327907504217" y="144" text-anchor="end">1.6 ms</text><text class="t-b" x="78" y="188" text-anchor="end">P99.9</text><line class="e-dash" x1="652.1786568350377" y1="184" x2="456.0399842649142" y2="184"/><circle cx="456.0399842649142" cy="184" r="7" class="f-neu"/><rect x="645.1786568350377" y="177" width="14" height="14" rx="3" class="f-bk"/><text class="t-bk" x="662.1786568350377" y="174" text-anchor="start">185 ms</text><text class="t-m" x="444.0399842649142" y="188" text-anchor="end">2.7 ms</text><text class="t-b" x="78" y="232" text-anchor="end">最长</text><line class="e-dash" x1="700.8447656981049" y1="228" x2="475.8655689559541" y2="228"/><circle cx="475.8655689559541" cy="228" r="7" class="f-neu"/><rect x="693.8447656981049" y="221" width="14" height="14" rx="3" class="f-bk"/><text class="t-bk" x="710.8447656981049" y="218" text-anchor="start">532 ms</text><text class="t-m" x="463.8655689559541" y="232" text-anchor="end">4.1 ms</text><rect x="92" y="273" width="12" height="12" rx="3" class="f-bk"/><text class="t-s" x="110" y="283">HikariCP 原版（谁先扫到谁拿）</text><circle cx="382" cy="279" r="6" class="f-neu"/><text class="t-s" x="394" y="283">改成独占递交（先来先得）</text><text class="t-m" x="730" y="283" text-anchor="end">平均都是 1.05～1.09 ms</text></svg></div>
+      <figcaption>横轴是对数刻度。平均等待两边一样（利特尔法则管着：总吞吐一样，平均就一样），差别全在分布上。HikariCP 约 97% 的借用等了不到 20 µs，因为都是还完立刻扫货架抢回来的；剩下的人被一再插队，3 次运行里最长等了 0.45～0.62 秒。独占递交每个人都老老实实等 1 ms 左右。各跑了 3 次，HikariCP 的 P99 在 26.7～27.5 ms 之间，独占递交在 1.2～1.6 ms 之间。</figcaption>
+    </figure>
+    <figure>
+      <div class="exp-h"><span class="tag-real">实测</span><b>40 个线程、10 个连接、拿到马上还：每秒能借还多少次</b></div>
+      <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 240" role="img" aria-label="每秒借还次数：ConcurrentBag 约 1014 万，ArrayBlockingQueue 761 万，synchronized 214 万，严格先来先得 41 万，改成独占递交的 ConcurrentBag 34.5 万"><line class="e-grid" x1="230" y1="8" x2="230" y2="218"/><text class="t-xs" x="230" y="234" text-anchor="middle">0</text><line class="e-grid" x1="304.54545454545456" y1="8" x2="304.54545454545456" y2="218"/><text class="t-xs" x="304.54545454545456" y="234" text-anchor="middle">200 万</text><line class="e-grid" x1="379.0909090909091" y1="8" x2="379.0909090909091" y2="218"/><text class="t-xs" x="379.0909090909091" y="234" text-anchor="middle">400 万</text><line class="e-grid" x1="453.6363636363636" y1="8" x2="453.6363636363636" y2="218"/><text class="t-xs" x="453.6363636363636" y="234" text-anchor="middle">600 万</text><line class="e-grid" x1="528.1818181818182" y1="8" x2="528.1818181818182" y2="218"/><text class="t-xs" x="528.1818181818182" y="234" text-anchor="middle">800 万</text><line class="e-grid" x1="602.7272727272727" y1="8" x2="602.7272727272727" y2="218"/><text class="t-xs" x="602.7272727272727" y="234" text-anchor="middle">1000 万</text><text class="t-s" x="218" y="31" text-anchor="end">HikariCP ConcurrentBag</text><rect x="230" y="14" width="377.9454545454546" height="26" rx="5" class="f-bk"/><text class="t-bk" x="615.9454545454546" y="31">1014 万次/秒</text><text class="t-s" x="218" y="71" text-anchor="end">ArrayBlockingQueue（一把锁）</text><rect x="230" y="54" width="283.64545454545464" height="26" rx="5" class="f-neu"/><text class="t-b" x="521.6454545454546" y="71">761 万次/秒</text><text class="t-s" x="218" y="111" text-anchor="end">synchronized + wait/notify</text><rect x="230" y="94" width="79.76363636363635" height="26" rx="5" class="f-neu"/><text class="t-b" x="317.76363636363635" y="111">214 万次/秒</text><text class="t-s" x="218" y="151" text-anchor="end">一把锁 + 严格先来先得递交</text><rect x="230" y="134" width="15.281818181818181" height="26" rx="5" class="f-neu"/><text class="t-b" x="253.28181818181818" y="151">41 万次/秒</text><text class="t-s" x="218" y="191" text-anchor="end">ConcurrentBag 改成独占递交</text><rect x="230" y="174" width="12.859090909090924" height="26" rx="5" class="f-bad"/><text class="t-bad" x="250.85909090909092" y="191">34.5 万次/秒</text></svg></div>
+      <figcaption>只测借还本身的开销，3 次取中位数。一旦开始有人排队，严格递交的写法每次都要等对方醒来，吞吐掉到原来的 3%～4%；HikariCP 让正在跑的线程直接拿走，等待者白醒一回，整体不停。</figcaption>
+    </figure>
+    <p class="verdict" data-role="bk"><b>决定胜负的约束：</b>叫醒一个睡着的线程要微秒级，正在 CPU 上的线程 CAS 拿走只要几十纳秒；而且一个配得合理的连接池，大部分时候根本不用等。HikariCP 因此选了吞吐和简单，把严格公平让了出去。代价落在“有人在等”的那一小段时间里：等待者的尾延迟。</p>
+    <div class="how">
+      <div class="need" data-role="pd"><b><i>货架为什么用 CopyOnWriteArrayList</i></b><p>借连接时要扫，每秒上万次；加、删连接只发生在建新连接和回收时，几秒一次。扫的时候不加锁，拿的是当时数组的快照；改的时候复制一份，慢一点也无所谓。</p></div>
+      <div class="need" data-role="of"><b><i>为什么要每线程一个口袋</i></b><p>同一个线程还完再借，大概率拿回刚还的那个。口袋命中时，整个 <code>borrow</code> 只碰两样东西：自己线程的列表、这个连接的 state，连 <code>waiters</code> 计数都不改。</p></div>
+      <div class="need" data-role="cg"><b><i>递交窗口为什么容量是 0</i></b><p>只有真有人停在 <code>poll</code> 上，<code>offer</code> 才会成功。没人等就不存，连接不会同时躺在货架和另一个队列里，也就不会有人从队列里捞到一个早被别人拿走的连接。<code>true</code> 表示等的人之间按先后来。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="m-api">
+    <h3>最少的 API：HikariPool 只用到这几个方法</h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">API</span><b>HikariPool.java 里对 connectionBag 的调用</b>（6.3.3）</div>
+<pre><code>PoolEntry e = connectionBag.borrow(timeout, MILLISECONDS); <span class="cm">// getConnection()，超时返回 null</span>
+connectionBag.requite(e);                                 <span class="cm">// Connection.close() → recycle()</span>
+connectionBag.add(newEntry);                              <span class="cm">// 建连接的线程建好后上架</span>
+connectionBag.reserve(e);                                 <span class="cm">// 管家 / 保活检查：先占住（0 → -2）</span>
+connectionBag.unreserve(e);                               <span class="cm">// 检查完还活着，放回（-2 → 0）</span>
+connectionBag.remove(e);                                  <span class="cm">// 下架（1 或 -2 → -1），然后关掉真实连接</span>
+connectionBag.getWaitingThreadCount();                    <span class="cm">// = 指标 hikaricp.connections.pending</span>
+connectionBag.getCount(STATE_IN_USE);                     <span class="cm">// = active；STATE_NOT_IN_USE 就是 idle</span></code></pre>
+    </div>
+    <p class="tip">口袋最多记几个、用不用 WeakReference、还连接时怎么自旋、各版本改了什么，这些是细节，放到 <a href="#s6">第⑥步</a>。</p>
+  </div>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>亲眼看到：直接拿 HikariCP 的 ConcurrentBag 来玩</h2>
+    <p class="lead">不用连数据库。<code>ConcurrentBag</code> 是 public 类，自己写一个带 <code>state</code> 的小对象放进去，就能看到口袋、偷连接、递交、插队这四件事。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">1</span><b>依赖</b>只要 HikariCP 和它依赖的 slf4j-api，用 Maven 就是一行</div>
+<pre><code>&lt;dependency&gt;&lt;groupId&gt;com.zaxxer&lt;/groupId&gt;&lt;artifactId&gt;HikariCP&lt;/artifactId&gt;&lt;version&gt;6.3.3&lt;/version&gt;&lt;/dependency&gt;</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">2</span><b>BagPeek.java</b>单文件，JDK 11+ 可以直接 <code>java BagPeek.java</code> 运行</div>
+<pre><code>import com.zaxxer.hikari.util.ConcurrentBag;
+import com.zaxxer.hikari.util.ConcurrentBag.IConcurrentBagEntry;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+<span class="cm">// 运行：java -cp HikariCP-6.3.3.jar:slf4j-api-2.0.x.jar BagPeek.java（JDK 11+）</span>
+
+<span class="cm">// 直接用 HikariCP 里的 ConcurrentBag，不连数据库：Conn 只是一个带 state 的小对象</span>
+public class BagPeek {
+  static class Conn implements IConcurrentBagEntry {
+    final String id; final AtomicInteger state = new AtomicInteger(); <span class="cm">// 0 空闲 1 借出</span>
+    Conn(String id) { this.id = id; }
+    public boolean compareAndSet(int e, int n) { return state.compareAndSet(e, n); }
+    public void setState(int s) { state.set(s); }
+    public int getState() { return state.get(); }
+    public String toString() { return id; }
+  }
+  static ConcurrentBag&lt;Conn&gt; bag(int n) {
+    var b = new ConcurrentBag&lt;Conn&gt;(waiting -&gt; {});        <span class="cm">// 不补新连接</span>
+    for (int i = 0; i &lt; n; i++) b.add(new Conn("c" + i));
+    return b;
+  }
+
+  public static void main(String[] args) throws Exception {
+    <span class="cm">// ① 口袋：A、B 各借一次再还，c0、c1 分别进了 A、B 的 ThreadLocal 口袋</span>
+    var bag = bag(3);
+    var a = Executors.newSingleThreadExecutor(r -&gt; new Thread(r, "A"));
+    var b = Executors.newSingleThreadExecutor(r -&gt; new Thread(r, "B"));
+    Conn ca = a.submit(() -&gt; bag.borrow(1, TimeUnit.SECONDS)).get();
+    Conn cb = b.submit(() -&gt; bag.borrow(1, TimeUnit.SECONDS)).get();
+    a.submit(() -&gt; bag.requite(ca)).get();
+    b.submit(() -&gt; bag.requite(cb)).get();
+    System.out.println("① B 再借：" + b.submit(() -&gt; { var c = bag.borrow(1, TimeUnit.SECONDS); bag.requite(c); return c; }).get()
+        + "（c0 也空着，B 先翻自己的口袋）");
+
+    <span class="cm">// ② 偷：新线程 C 口袋是空的，扫货架（sharedList）拿走 c0；A 口袋里那条 c0 就过期了</span>
+    var stolen = Executors.newSingleThreadExecutor(r -&gt; new Thread(r, "C")).submit(() -&gt; bag.borrow(1, TimeUnit.SECONDS)).get();
+    System.out.println("② C 拿到：" + stolen + "；A 再借：" + a.submit(() -&gt; bag.borrow(1, TimeUnit.SECONDS)).get()
+        + "（口袋里的 c0 已被 C 借走，CAS 失败，改去扫货架）");
+    a.shutdown(); b.shutdown();
+
+    <span class="cm">// ③ 递交：只有 1 个连接，W 在等；main 一还，就 offer 给停在 poll 上的 W</span>
+    var one = bag(1);
+    Conn held = one.borrow(1, TimeUnit.SECONDS);
+    var w = CompletableFuture.supplyAsync(() -&gt; { try { long t = System.nanoTime(); var c = one.borrow(2, TimeUnit.SECONDS);
+        return "W 拿到 " + c + "，等了 " + (System.nanoTime() - t) / 1_000_000 + " ms"; } catch (InterruptedException e) { return "?"; } });
+    Thread.sleep(200);
+    System.out.println("③ 还之前 waiters = " + one.getWaitingThreadCount());
+    one.requite(held);
+    System.out.println("   " + w.get());
+
+    <span class="cm">// ④ 插队：还完马上又借，W 被唤醒前，还的人自己把连接抢了回去</span>
+    int trials = 1000, robbed = 0;
+    for (int i = 0; i &lt; trials; i++) {
+      var single = bag(1);
+      Conn mine = single.borrow(1, TimeUnit.SECONDS);
+      var waiter = CompletableFuture.supplyAsync(() -&gt; { try { return single.borrow(1, TimeUnit.SECONDS); } catch (InterruptedException e) { return null; } });
+      while (single.getWaitingThreadCount() == 0) Thread.onSpinWait();
+      Thread.sleep(1);                        <span class="cm">// 让 W 停进 poll</span>
+      single.requite(mine);                   <span class="cm">// 还：递给 W</span>
+      Conn again = single.borrow(0, TimeUnit.MILLISECONDS); <span class="cm">// 马上又借</span>
+      if (again != null) { robbed++; single.requite(again); }   <span class="cm">// 再还一次，W 这回才拿到</span>
+      waiter.get();
+    }
+    System.out.println("④ 还完马上又借，1000 次里抢回来 " + robbed + " 次；这些次里 W 白醒一回，CAS 失败后重新 poll");
+  }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">3</span><b>运行</b>jar 在 <code>~/.m2/repository/com/zaxxer/HikariCP/6.3.3/</code> 和 <code>org/slf4j/slf4j-api/</code> 下</div>
+<pre class="console"><code><span class="w">$ java -cp HikariCP-6.3.3.jar:slf4j-api-2.0.18.jar BagPeek.java</span>
+SLF4J(W): No SLF4J providers were found.                  <span class="cm">← 没放日志实现，忽略</span>
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+<b>① B 再借：c1</b>（c0 也空着，B 先翻自己的口袋）
+<b>② C 拿到：c0；A 再借：c1</b>（口袋里的 c0 已被 C 借走，CAS 失败，改去扫货架）
+③ 还之前 waiters = 1
+   <b>W 拿到 c0，等了 200 ms</b>
+<b>④ 还完马上又借，1000 次里抢回来 959 次</b>；这些次里 W 白醒一回，CAS 失败后重新 poll</code></pre>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>段</th><th>看到了什么</th><th>对应 ④ 的哪一条</th></tr></thead>
+      <tbody>
+        <tr><th>①</th><td>货架上 c0 排在前面而且空着，B 拿到的却是 c1：它先翻了自己的口袋</td><td><a href="#m-three">三个地方找连接</a>的第 1 步</td></tr>
+        <tr><th>②</th><td>A 的口袋里明明记着 c0，C 照样从货架上拿走了；A 再借时 CAS 失败，转去货架拿到 c1（那是 B 口袋里记着的）</td><td><a href="#m-three">归属只看 state</a>，口袋只是线索</td></tr>
+        <tr><th>③</th><td>W 等了 200 ms，main 一还就到了 W 手里，没有经过谁的口袋</td><td>waiters &gt; 0 时走<a href="#m-hand">递交窗口</a></td></tr>
+        <tr><th>④</th><td>多次运行在 949～981 次之间。只要还完到再借之间隔 1 ms，就只剩 4～5 次</td><td><a href="#m-hand">递交只是叫醒 + 推荐</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="done-box"><b>到这里已经能交差了：</b>面试被问“HikariCP 借连接怎么做的、公平吗”，可以拿这四段输出说清楚；排查“平均不高却有人等超时”时，也知道该怀疑插队。</div>
+  <div class="todo">
+    <b>已知还没处理的细节</b>
+    <ul>
+      <li>插队在真实池子里有多严重、什么写法会放大它：<a href="#pit-timeout">⑥ 坑 1</a>、<a href="#pit-loop">坑 2</a></li>
+      <li>一个线程同时要两个连接会怎样：<a href="#pit-nested">⑥ 坑 3</a></li>
+      <li>虚拟线程下口袋还管不管用：<a href="#pit-vt">⑥ 坑 5</a></li>
+      <li>源码逐行、口袋上限、WeakReference、各版本改动：<a href="#c3">⑥ 第三圈</a></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>细节：从会踩的坑，到一行行源码</h2>
+    <p class="lead">按圈往里走：第一圈是不知道就会出事的坑，第二圈是团队里该怎么写，第三圈读源码、自己当一回线程调度器、看各版本改了什么。</p>
+  </div>
+
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-timeout">
+        <b><em>坑 1</em>平均等待不高，却总有几个请求等到超时<a class="root" href="#m-hand">← ④ 递交只是推荐</a></b>
+        <dl>
+          <dt>现象</dt><dd>200 个线程抢 10 个连接、每次持有 1 ms，<code>connectionTimeout</code> 设 1 s：6 秒里 HikariCP 超时 457 次，P99 等了 467 ms；同样负载下严格先来先得 0 次超时，最长 31 ms。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>递过去的连接在对方醒来前 state 还是 0，正在跑的线程扫货架就拿走了。被抢的人回去重新 <code>poll</code>，排到最后，再被抢，再排到最后。</dd>
+          <dt>做法</dt><dd class="fix">让“等连接”很少发生：按并发和持有时间算池子、缩短持有时间；<code>connectionTimeout</code> 按接口的延迟预算设；盯 <code>hikaricp.connections.timeout</code> 和 acquire 的最大值，不只看平均。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-loop">
+        <b><em>坑 2</em>不开事务的循环查询，一路插队<a class="root" href="#m-hand">← ④ 递交只是推荐</a></b>
+        <dl>
+          <dt>现象</dt><dd>不在事务里时，<code>JdbcTemplate</code> 每次调用、MyBatis 每次 Mapper 调用都借一次、还一次。循环 100 次就是“还完马上又借”100 次。20 线程实测：立刻再借时 97% 的借用是插队拿到的，P99 27.5 ms；隔 100 µs 再借，插队降到 14%，P99 2.8 ms。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>还的人正在 CPU 上，被叫醒的人还在路上，还的人扫货架总是更快。</dd>
+          <dt>做法</dt><dd class="fix">一次借、做完再还：把循环放进一个事务，或用 <code>ConnectionCallback</code>；能合并就改成一条 <code>IN</code> 查询或批量语句。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-nested">
+        <b><em>坑 3</em>一个线程同时要两个连接，池子满时互相卡死<a class="root" href="#m-state">← ④ 归属只看 state</a></b>
+        <dl>
+          <dt>现象</dt><dd>外层事务拿着一个连接，里面又 <code>REQUIRES_NEW</code>、或者查另一个用同一个池子的 DAO。10 个线程各拿 1 个、各等第 2 个，10 个连接全被“等别人”的人占着，全部等到 <code>connectionTimeout</code>。</dd>
+          <dt>根源</dt><dd>借出去的连接只有借的人能改回 0，池子不会从谁手里收回来；<code>borrow</code> 没有空闲的就只能等。</dd>
+          <dt>做法</dt><dd class="fix">别让一个线程同时持有两个连接。实在要，池子至少开到 HikariCP wiki《About Pool Sizing》给的 <code>Tn × (Cm − 1) + 1</code>（Tn 是线程数，Cm 是一个线程同时最多拿几个）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-leak">
+        <b><em>坑 4</em>借了不还，连接永远是 IN_USE<a class="root" href="#m-state">← ④ 归属只看 state</a></b>
+        <dl>
+          <dt>现象</dt><dd>忘了 <code>close()</code>，或异常路径没关。<code>active</code> 只涨不跌，最后人人等超时。类注释原话：borrowed but never "requited" will result in a memory leak。</dd>
+          <dt>根源</dt><dd>借出时连接没从货架上拿下来，只是 state 变成 1。没有人调用 <code>requite</code>，它就一直是 1。</dd>
+          <dt>做法</dt><dd class="fix">一律 try-with-resources，或交给 <code>JdbcTemplate</code> / MyBatis 管。测试环境开 <code>leakDetectionThreshold</code>（默认 0，即关闭），它只打一条带堆栈的警告，不会帮你收回连接。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-vt">
+        <b><em>坑 5</em>换成虚拟线程，口袋几乎不再命中<a class="root" href="#m-three">← ④ 口袋按线程分</a></b>
+        <dl>
+          <dt>现象</dt><dd>每个任务一条新虚拟线程、只借一次：口袋命中 0%，全靠扫货架。一个任务里借 3 次：后两次能命中，约 67%。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>口袋是 <code>ThreadLocal</code>，新线程的口袋是空的，而且每条借过连接的虚拟线程都会建一个 16 格的列表，线程结束就成了垃圾。</dd>
+          <dt>做法</dt><dd class="fix">不用改配置，功能是对的，只是少了最快那条路。6.3.3 和 7.0.2 源码里都没有针对虚拟线程的分支。另外，等待会从 Tomcat 线程池挪到连接池里，<code>pending</code> 会变大，见<a href="../perf/response-time-queueing.html#s6">上一页</a>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-metrics">
+        <b><em>坑 6</em>看指标时误读 pending 和 idle<a class="root" href="#m-api">← ④ API 和指标</a></b>
+        <dl>
+          <dt>现象</dt><dd>不缺连接时 <code>pending</code> 偶尔也是 1；压测时 <code>idle</code> 显示有空闲，却有人在等。</dd>
+          <dt>根源</dt><dd><code>pending</code> 就是 <code>waiters</code>：口袋没命中的线程扫货架之前就 +1 了。<code>idle</code> 数的是 state = 0 的连接，递交途中的那个也算。指标值由 <code>PoolStats</code> 缓存，最多 1 秒刷新一次。</dd>
+          <dt>做法</dt><dd class="fix">看 <code>pending</code> 的趋势和持续时间，配合 timeout 计数和 acquire 的最大值判断，不要拿某一秒的瞬时值下结论。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl" id="rule1"><b>借连接一律 try-with-resources，或交给框架</b><p>手写 JDBC 时，<code>Connection</code>、<code>Statement</code>、<code>ResultSet</code> 都放进 <code>try (...)</code>。</p><p class="guard">连接永远停在 state = 1（坑 4）</p></div>
+      <div class="rl" id="rule2"><b>拿着连接时不做远程调用、不等锁、不睡</b><p>调接口、发 MQ、等分布式锁，都放到事务外面。</p><p class="guard">持有时间变长 → 等待变常态 → 插队和超时被放大（坑 1）</p></div>
+      <div class="rl" id="rule3"><b>循环查询合并成一次借，或改成批量</b><p>放进同一个事务，或者用 <code>IN</code>、<code>batchUpdate</code>。</p><p class="guard">一路“还完马上又借”插到别人前面（坑 2）</p></div>
+      <div class="rl" id="rule4"><b>一个线程不同时拿两个连接，<code>REQUIRES_NEW</code> 慎用</b><p>非用不可时，按 <code>Tn × (Cm − 1) + 1</code> 开池子，并压测验证。</p><p class="guard">池子满时互相卡死（坑 3）</p></div>
+      <div class="rl" id="rule5"><b>告警看 timeout 次数和 acquire 最大值</b><p><code>hikaricp.connections.timeout</code>、<code>hikaricp.connections.acquire</code> 的 max，加上 pending 持续多久。</p><p class="guard">平均值正常，掩盖了被反复插队的少数请求（坑 1、坑 6）</p></div>
+      <div class="rl" id="rule6"><b>业务代码别直接用 ConcurrentBag</b><p>6.3.3 的 javadoc 已标 <code>@hidden</code>；6.3.0 还把字段 <code>threadList</code> 改名成了 <code>threadLocalList</code>。本页 ⑤ 直接用它，只是为了观察。</p><p class="guard">升级 HikariCP 时编译不过或反射失效</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>读源码：borrow 和 requite 一行行看</h3></div>
+    <div class="how">
+      <div class="need" data-role="bk"><b><i>1</i>先找调用方，再看被调用的</b><p>先在 <code>HikariPool</code> 里搜 <code>connectionBag.</code>，只有 ④ 末尾那几处。知道谁在什么时候调，读 ConcurrentBag 时才知道每个方法在防什么。</p></div>
+      <div class="need" data-role="bk"><b><i>2</i>先看状态，再看流程</b><p>四个常量 0、1、-1、-2 和谁能改它，就是这个类的全部“不变式”。流程里每一个 CAS，都是在维护这张状态图。</p></div>
+      <div class="need" data-role="bk"><b><i>3</i>复制出来加计数器，信代码不信注释</b><p>把类复制一份、每条路径加一个 <code>LongAdder</code>，跑一遍就知道哪条路最常走，下面的“计数器实测”就是这么来的。类注释从 2.7.9 到 7.0.2 都还写着用 <code>AbstractQueuedLongSynchronizer</code> 发信号，代码里用的是 <code>SynchronousQueue</code>。</p></div>
+    </div>
+
+    <div class="codebox">
+      <div class="code-bar"><span class="n">borrow</span><b>ConcurrentBag.java</b>HikariCP 6.3.3，行号和源码一致（Apache License 2.0，© Brett Wooldridge）</div>
+<pre class="src"><code><span class="l"><span class="no">131</span>   public T borrow(long timeout, final TimeUnit timeUnit) throws InterruptedException</span><span class="l"><span class="no">132</span>   {</span><span class="l"><span class="no">133</span>      <span class="cm">// Try the thread-local list first</span></span><span class="l"><span class="no">134</span>      final var list = threadLocalList.get();</span><span class="l"><span class="no">135</span>      for (var i = list.size() - 1; i &gt;= 0; i--) {</span><span class="l hl"><span class="no">136</span>         final var entry = list.remove(i);<span class="tag">❶</span></span><span class="l"><span class="no">137</span>         @SuppressWarnings("unchecked")</span><span class="l"><span class="no">138</span>         final T bagEntry = useWeakThreadLocals ? ((WeakReference&lt;T&gt;) entry).get() : (T) entry;</span><span class="l hl"><span class="no">139</span>         if (bagEntry != null &amp;&amp; bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_IN_USE)) {<span class="tag">❷</span></span><span class="l"><span class="no">140</span>            return bagEntry;</span><span class="l"><span class="no">141</span>         }</span><span class="l"><span class="no">142</span>      }</span><span class="l"><span class="no">143</span></span><span class="l"><span class="no">144</span>      <span class="cm">// Otherwise, scan the shared list ... then poll the handoff queue</span></span><span class="l hl"><span class="no">145</span>      final var waiting = waiters.incrementAndGet();<span class="tag">❸</span></span><span class="l"><span class="no">146</span>      try {</span><span class="l"><span class="no">147</span>         for (T bagEntry : sharedList) {</span><span class="l hl"><span class="no">148</span>            if (bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_IN_USE)) {<span class="tag">❹</span></span><span class="l"><span class="no">149</span>               <span class="cm">// If we may have stolen another waiter's connection, request another bag add.</span></span><span class="l"><span class="no">150</span>               if (waiting &gt; 1) {</span><span class="l hl"><span class="no">151</span>                  listener.addBagItem(waiting - 1);<span class="tag">❺</span></span><span class="l"><span class="no">152</span>               }</span><span class="l"><span class="no">153</span>               return bagEntry;</span><span class="l"><span class="no">154</span>            }</span><span class="l"><span class="no">155</span>         }</span><span class="l"><span class="no">156</span></span><span class="l hl"><span class="no">157</span>         listener.addBagItem(waiting);<span class="tag">❻</span></span><span class="l"><span class="no">158</span></span><span class="l"><span class="no">159</span>         timeout = timeUnit.toNanos(timeout);</span><span class="l"><span class="no">160</span>         do {</span><span class="l"><span class="no">161</span>            final var start = currentTime();</span><span class="l hl"><span class="no">162</span>            final T bagEntry = handoffQueue.poll(timeout, NANOSECONDS);<span class="tag">❼</span></span><span class="l hl"><span class="no">163</span>            if (bagEntry == null || bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_IN_USE)) {<span class="tag">❽</span></span><span class="l"><span class="no">164</span>               return bagEntry;</span><span class="l"><span class="no">165</span>            }</span><span class="l"><span class="no">166</span></span><span class="l"><span class="no">167</span>            timeout -= elapsedNanos(start);</span><span class="l hl"><span class="no">168</span>         } while (timeout &gt; 10_000);<span class="tag">❾</span></span><span class="l"><span class="no">169</span></span><span class="l"><span class="no">170</span>         return null;</span><span class="l"><span class="no">171</span>      }</span><span class="l"><span class="no">172</span>      finally {</span><span class="l hl"><span class="no">173</span>         waiters.decrementAndGet();<span class="tag">❿</span></span><span class="l"><span class="no">174</span>      }</span><span class="l"><span class="no">175</span>   }</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>从口袋<b>尾部</b>往前取，取一个删一个。最后还的那个最先被拿到，它最可能还热、还活着；从尾部删，<code>FastList</code> 不用挪数组。没命中的过期线索也顺手扔掉了。</span></li>
+      <li><b>2</b><span>口袋里的只是线索：它可能已被别人借走、被管家 reserve、已经下架，所以必须 CAS。走 WeakReference 时，<code>get()</code> 还可能是 null（被 GC 清了）。</span></li>
+      <li><b>3</b><span>口袋没命中，先把 <code>waiters</code> 加 1，再去扫货架。顺序不能反，原因见 <a href="#m-order">④ 先写自己的、再读对方的</a>。口袋命中时根本走不到这里，所以不碰这个共享计数。</span></li>
+      <li><b>4</b><span>从头扫，CAS 第一个 state = 0 的。货架是 <code>CopyOnWriteArrayList</code>，遍历的是开始时那份数组的快照，不加锁。</span></li>
+      <li><b>5</b><span>作者自己写明了插队：<code>waiting &gt; 1</code> 说明还有别人在等，我这次扫到的可能本该是递给他的，于是请池子再补一个连接。只有没到 <code>maximumPoolSize</code> 时才真会建，池子已满就什么也不发生。</span></li>
+      <li><b>6</b><span>货架上也没有，就让池子补连接（异步，见下面的 <code>addBagItem</code>），自己去窗口等。</span></li>
+      <li><b>7</b><span>停在 <code>SynchronousQueue.poll</code> 上，线程在这里睡着。jstack 里那一大片 <code>ConcurrentBag.borrow</code> 就停在这一行（上一页实测 190 个）。</span></li>
+      <li><b>8</b><span>超时返回 null；递来了也要 CAS。CAS 失败就是被插队了：用剩下的时间回到 7 重新 <code>poll</code>。</span></li>
+      <li><b>9</b><span>剩下的时间不到 10 µs 就不再等了。</span></li>
+      <li><b>10</b><span>不管拿没拿到，出门前 <code>waiters</code> 减 1。</span></li>
+    </ul>
+
+    <div class="codebox">
+      <div class="code-bar"><span class="n">requite</span><b>ConcurrentBag.java</b>还连接：<code>Connection.close()</code> → <code>PoolEntry.recycle()</code> → <code>HikariPool.recycle()</code> → 这里</div>
+<pre class="src"><code><span class="l"><span class="no">186</span>   public void requite(final T bagEntry)</span><span class="l"><span class="no">187</span>   {</span><span class="l hl"><span class="no">188</span>      bagEntry.setState(STATE_NOT_IN_USE);<span class="tag">❶</span></span><span class="l"><span class="no">189</span></span><span class="l hl"><span class="no">190</span>      for (var i = 0; waiters.get() &gt; 0; i++) {<span class="tag">❷</span></span><span class="l hl"><span class="no">191</span>         if (bagEntry.getState() != STATE_NOT_IN_USE || handoffQueue.offer(bagEntry)) {<span class="tag">❸</span></span><span class="l"><span class="no">192</span>            return;</span><span class="l"><span class="no">193</span>         }</span><span class="l hl"><span class="no">194</span>         else if ((i &amp; 0xff) == 0xff) {<span class="tag">❹</span></span><span class="l"><span class="no">195</span>            parkNanos(MICROSECONDS.toNanos(10));</span><span class="l"><span class="no">196</span>         }</span><span class="l"><span class="no">197</span>         else {</span><span class="l hl"><span class="no">198</span>            Thread.yield();<span class="tag">❺</span></span><span class="l"><span class="no">199</span>         }</span><span class="l"><span class="no">200</span>      }</span><span class="l"><span class="no">201</span></span><span class="l"><span class="no">202</span>      final var threadLocalEntries = this.threadLocalList.get();</span><span class="l hl"><span class="no">203</span>      if (threadLocalEntries.size() &lt; 16) {<span class="tag">❻</span></span><span class="l"><span class="no">204</span>         threadLocalEntries.add(useWeakThreadLocals ? new WeakReference&lt;&gt;(bagEntry) : bagEntry);</span><span class="l"><span class="no">205</span>      }</span><span class="l"><span class="no">206</span>   }</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>第一件事就把 state 改成 0。从这一刻起，任何扫货架的人都能拿走它。</span></li>
+      <li><b>2</b><span>只要还有人在等，就一直试着递出去。</span></li>
+      <li><b>3</b><span>state 已经不是 0，说明有人从货架上拿走了，不用递了；否则 <code>offer</code>，成功就交给最早停在 poll 上的人。<code>offer</code> 失败，是因为等的人还在扫货架、还没走到 <code>poll</code>。</span></li>
+      <li><b>4</b><span>每转 256 圈睡 10 µs，其余时候 <code>Thread.yield()</code>。7.0.1 起多了一个条件：等的人多时（<code>i % waiting == 0</code>）也睡一下，少烧点 CPU。</span></li>
+      <li><b>5</b><span>没人等了，就放进<b>还的这个线程</b>自己的口袋。</span></li>
+      <li><b>6</b><span>口袋最多记 16 个，满了就不记，反正货架上一直有。6.2.1 及以前是 50 个，6.3.0 改成 16。</span></li>
+    </ul>
+    <p class="tip"><code>add()</code>（新连接上架）和 <code>unreserve()</code>（管家检查完放回）结尾也有同样的“有人等就递、递不出去就 yield”循环，所以新建好的连接也能直接递到等待者手里。</p>
+  </div>
+
+  <div class="sub" id="lab-wrap">
+    <h3>实验台：你来当线程调度器 <small>先猜，再一步步点</small></h3>
+    <p class="tip">每个线程的代码按上面的源码拆成几个原子步骤。真实的 JVM 里谁先跑由调度器决定，这里由你决定：点“按剧本走一步”看设计好的交错，也可以直接点某个线程的“走一步”，试试别的顺序。日志里的行号对应上面的源码。</p>
+    <div class="lab" id="lab">
+      <div class="presets" id="lab-presets">
+        <button type="button" data-k="pocket" aria-pressed="true"><b>1 · 先翻口袋</b><span>两个线程各借各还，B 再借拿到哪个</span></button>
+        <button type="button" data-k="steal" aria-pressed="false"><b>2 · 口袋被偷</b><span>A 口袋里记着的，被新线程拿走了</span></button>
+        <button type="button" data-k="hand" aria-pressed="false"><b>3 · 递交</b><span>只有 1 个连接，W 在等</span></button>
+        <button type="button" data-k="barge" aria-pressed="false"><b>4 · 还完马上又借</b><span>谁拿到 c0：还的人还是等的人</span></button>
+        <button type="button" data-k="spin" aria-pressed="false"><b>5 · 还连接时转圈</b><span>有人在等，却没人停在 poll 上</span></button>
+        <button type="button" data-k="lost" aria-pressed="false"><b>6 · 被放弃的写法</b><span>先递交、后改 state，会出什么事</span></button>
+      </div>
+      <div class="guess" id="lab-guess"></div>
+      <div class="run-row">
+        <span class="seg-btns" id="lab-var" role="group" aria-label="requite 的写法">
+          <button type="button" data-v="hikari" aria-pressed="true">HikariCP 原版</button>
+          <button type="button" data-v="excl" aria-pressed="false">被放弃的写法</button>
+        </span>
+        <button class="btn primary" type="button" id="lab-step">按剧本走一步</button>
+        <button class="btn" type="button" id="lab-run">跑完剧本</button>
+        <button class="btn" type="button" id="lab-reset">从头来</button>
+        <span class="tip" id="lab-pos"></span>
+      </div>
+      <div class="board" id="lab-board"></div>
+      <div class="lab-res" id="lab-res" data-role="other">先在上面选一个猜测，再开始点。</div>
+    </div>
+  </div>
+
+  <div class="sub" id="pool-side">
+    <h3>池子那一侧：借到之后、等的时候、闲下来时</h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">getConnection</span><b>HikariPool.java</b>6.3.3</div>
+<pre class="src"><code><span class="l"><span class="no">158</span>         var timeout = hardTimeout;</span><span class="l"><span class="no">159</span>         do {</span><span class="l hl"><span class="no">160</span>            var poolEntry = connectionBag.borrow(timeout, MILLISECONDS);<span class="tag">❶</span></span><span class="l"><span class="no">161</span>            if (poolEntry == null) {</span><span class="l"><span class="no">162</span>               break; <span class="cm">// We timed out... break and throw exception</span></span><span class="l"><span class="no">163</span>            }</span><span class="l"><span class="no">164</span></span><span class="l"><span class="no">165</span>            final var now = currentTime();</span><span class="l hl"><span class="no">166</span>            if (poolEntry.isMarkedEvicted() || (elapsedMillis(poolEntry.lastAccessed, now) &gt; aliveBypassWindowMs &amp;&amp; isConnectionDead(poolEntry.connection))) {<span class="tag">❷</span></span><span class="l"><span class="no">167</span>               closeConnection(poolEntry, poolEntry.isMarkedEvicted() ? EVICTED_CONNECTION_MESSAGE : DEAD_CONNECTION_MESSAGE);</span><span class="l hl"><span class="no">168</span>               timeout = hardTimeout - elapsedMillis(startTime);<span class="tag">❸</span></span><span class="l"><span class="no">169</span>            }</span><span class="l"><span class="no">170</span>            else {</span><span class="l"><span class="no">171</span>               metricsTracker.recordBorrowStats(poolEntry, startTime);</span><span class="l"><span class="no">172</span>               if (isRequestBoundariesEnabled) {</span><span class="l"><span class="no">173</span>                  try {</span><span class="l"><span class="no">174</span>                     poolEntry.connection.beginRequest();</span><span class="l"><span class="no">175</span>                  } catch (SQLException e) {</span><span class="l"><span class="no">176</span>                     logger.warn("beginRequest Failed for: {}, ({})", poolEntry.connection, e.getMessage());</span><span class="l"><span class="no">177</span>                  }</span><span class="l"><span class="no">178</span>               }</span><span class="l hl"><span class="no">179</span>               return poolEntry.createProxyConnection(leakTaskFactory.schedule(poolEntry));<span class="tag">❹</span></span><span class="l"><span class="no">180</span>            }</span><span class="l"><span class="no">181</span>         } while (timeout &gt; 0L);</span><span class="l"><span class="no">182</span></span><span class="l"><span class="no">183</span>         metricsTracker.recordBorrowTimeoutStats(startTime);</span><span class="l"><span class="no">184</span>         throw createTimeoutException(startTime);</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>先从 bag 借。<code>timeout</code> 就是 <code>connectionTimeout</code>，默认 30 秒。</span></li>
+      <li><b>2</b><span>借到的连接如果被标记要驱逐，或者上次用完已经超过 <code>aliveBypassWindowMs</code>（系统属性，默认 500 ms），就先检查一下还活不活着。500 ms 内刚用过的直接跳过检查，这又是一处用“大多数时候”换速度的地方。</span></li>
+      <li><b>3</b><span>坏的就关掉（<code>remove</code> 把 1 改成 -1），用剩下的时间再借一次。</span></li>
+      <li><b>4</b><span>包成代理连接交出去。<code>leakTaskFactory.schedule</code> 就是 <code>leakDetectionThreshold</code> 的计时器。</span></li>
+    </ul>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">补连接</span><b>addBagItem / shouldContinueCreating</b></div>
+<pre class="src"><code><span class="l"><span class="no">341</span>   public void addBagItem(final int waiting)</span><span class="l"><span class="no">342</span>   {</span><span class="l hl"><span class="no">343</span>      if (waiting &gt; addConnectionExecutor.getQueue().size())<span class="tag">❶</span></span><span class="l"><span class="no">344</span>         addConnectionExecutor.submit(poolEntryCreator);</span><span class="l"><span class="no">345</span>   }</span><span class="l"><span class="no">⋮</span></span><span class="l"><span class="no">784</span>      private synchronized boolean shouldContinueCreating() {</span><span class="l"><span class="no">785</span>         return poolState == POOL_NORMAL &amp;&amp; getTotalConnections() &lt; config.getMaximumPoolSize() &amp;&amp;</span><span class="l hl"><span class="no">786</span>            (getIdleConnections() &lt; config.getMinimumIdle() || connectionBag.getWaitingThreadCount() &gt; getIdleConnections());<span class="tag">❷</span></span><span class="l"><span class="no">787</span>      }</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">管家</span><b>HouseKeeper 回收空闲连接</b></div>
+<pre class="src"><code><span class="l"><span class="no">832</span>               final var notInUse = connectionBag.values(STATE_NOT_IN_USE);</span><span class="l"><span class="no">833</span>               var maxToRemove = notInUse.size() - config.getMinimumIdle();</span><span class="l hl"><span class="no">834</span>               for (PoolEntry entry : notInUse) {<span class="tag">❸</span></span><span class="l"><span class="no">835</span>                  if (maxToRemove &gt; 0 &amp;&amp; elapsedMillis(entry.lastAccessed, now) &gt; idleTimeout &amp;&amp; connectionBag.reserve(entry)) {</span><span class="l"><span class="no">836</span>                     closeConnection(entry, "(connection has passed idleTimeout)");</span><span class="l hl"><span class="no">837</span>                     maxToRemove--;<span class="tag">❹</span></span><span class="l"><span class="no">838</span>                  }</span><span class="l"><span class="no">839</span>               }</span><span class="l"><span class="no">840</span>               logPoolState("After  cleanup ");</span></code></pre>
+      </div>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>borrow 里那两处 <code>addBagItem</code> 走到这里：等的人比排着队要建的连接多，就再提交一个建连接任务。建连接在单独的线程里做，不占借连接的线程。</span></li>
+      <li><b>2</b><span>真要建之前再判断一次：没到上限，并且空闲的少于 <code>minimumIdle</code>，或者等的人比空闲的多。默认 <code>minimumIdle</code> 等于 <code>maximumPoolSize</code>，池子一开始就是满的，这里基本都返回 false。</span></li>
+      <li><b>3</b><span><code>values(STATE_NOT_IN_USE)</code> 返回的是倒序快照：管家从货架尾部开始看。借的时候从头扫，于是前面的连接越用越热，后面的闲下来被回收，池子自然缩回去。</span></li>
+      <li><b>4</b><span>回收前先 <code>reserve</code>（0 → -2），和借的人抢同一个 CAS，抢不到就跳过，见 <a href="#m-state">④ 状态图</a>。</span></li>
+    </ul>
+  </div>
+
+  <div class="sub" id="count">
+    <h3>计数器实测：各条路到底走了多少次</h3>
+    <p class="tip">把 6.3.3 的 ConcurrentBag 复制一份，每条路径加一个 <code>LongAdder</code>，每次借到连接后持有 1 ms（模拟一次查询），跑 5 秒。“有人在等时从货架拿到”就是源码注释说的“可能抢了别人的”；“白醒”是递交收到了、CAS 却失败的次数。</p>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>场景（池子 10 个）</th><th class="num">口袋</th><th class="num">货架</th><th class="num">有人在等时从货架拿到</th><th class="num">递交</th><th class="num">白醒 / 每次借</th><th class="num">等待 P99</th></tr></thead>
+        <tbody>
+          <tr><th>8 个平台线程</th><td class="num good">99.98%</td><td class="num">0.02%</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">≈0</td></tr>
+          <tr><th>20 个平台线程，还完立刻再借</th><td class="num">0.01%</td><td class="num">0.02%</td><td class="num bad">97.3%</td><td class="num">2.6%</td><td class="num bad">0.97</td><td class="num bad">27.5 ms</td></tr>
+          <tr><th>20 个平台线程，隔 100 µs 再借</th><td class="num">0.02%</td><td class="num">0.04%</td><td class="num">14.3%</td><td class="num">85.7%</td><td class="num">0.14</td><td class="num">2.8 ms</td></tr>
+          <tr><th>200 个平台线程，立刻再借，超时 1 s</th><td class="num">0.03%</td><td class="num">0.01%</td><td class="num bad">95.7%</td><td class="num">3.5%</td><td class="num bad">0.96</td><td class="num bad">467 ms</td></tr>
+          <tr><th>虚拟线程，每个任务借 1 次</th><td class="num bad">0%</td><td class="num">97.6%</td><td class="num">2.4%</td><td class="num">0</td><td class="num">0</td><td class="num">3 µs</td></tr>
+          <tr><th>虚拟线程，每个任务借 3 次</th><td class="num">66.7%</td><td class="num">32.8%</td><td class="num">0.5%</td><td class="num">0</td><td class="num">0</td><td class="num">3 µs</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">200 线程那一行另有 0.8% 的借用超时。虚拟线程两行的并发是 8，池子够用，所以不用等；“有人在等时从货架拿到”在这里只是别的线程恰好也在扫货架，并没有真的抢谁。计数包含 1 秒预热。</p>
+  </div>
+
+  <div class="sub" id="ver">
+    <h3>版本差异 <small>对着各版本的 sources jar 逐个 diff</small></h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>HikariCP</th><th>ConcurrentBag 的变化</th><th>谁带的这个版本</th></tr></thead>
+        <tbody>
+          <tr><th>2.7.9</th><td>口袋不设上限；<code>remove()</code> 不清自己口袋；<code>add()</code> 自旋时不看 state</td><td>老项目</td></tr>
+          <tr><th>3.4.5 ～ 6.2.1</th><td>口袋上限 50；<code>remove()</code> 顺手清掉自己口袋里那条；<code>add()</code> 自旋前先看 state 还是不是 0。核心的 borrow / requite 逻辑和今天一样</td><td>Spring Boot 2.7 是 4.0.3（支持 JDK 8 的最后一个大版本）</td></tr>
+          <tr><th>6.3.0 ～ 7.0.0</th><td>口袋上限改成 16；字段 <code>threadList</code> 改名 <code>threadLocalList</code>；<code>unreserve()</code> 自旋也先看 state；6.3.3 的 javadoc 标了 <code>@hidden</code></td><td>Spring Boot 3.5.16 是 6.3.3</td></tr>
+          <tr><th>7.0.1 起</th><td><code>requite()</code> 和 <code>unreserve()</code> 的自旋：等的人多时更早 <code>parkNanos</code></td><td>Spring Boot 4.1.2 是 7.0.2</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">Spring Boot 的对应关系取自本机 <code>spring-boot-dependencies</code> 3.5.16 和 4.1.2 的 pom，2.7 那一条见<a href="db-pool-tx-perf.html">连接池页</a>。从 2.7.9 到 7.0.2，“先改 state、再看 waiters”和“递交只是推荐”这两点都没变过。</p>
+  </div>
+
+  <div class="sub">
+    <h3>再往深一点</h3>
+    <div class="deep">
+      <div class="dp" data-role="of">
+        <h4>Spring Boot 可执行 jar 里，口袋存的是 WeakReference</h4>
+        <ul>
+          <li>构造时判断：加载 HikariCP 的类加载器不是系统类加载器，就用 <code>WeakReference</code> 包一层，口袋换成普通 <code>ArrayList</code>。看判断条件，是为应用服务器准备的：那里的线程比应用活得久，线程上挂着强引用，重新部署后旧的类加载器就回收不掉。</li>
+          <li><code>java -jar</code> 跑 Spring Boot 可执行 jar 时，HikariCP 是由 Boot 自己的类加载器加载的，按这条判断就走 WeakReference；在 IDE 里直接跑 main 则不走。可以用 <code>-Dcom.zaxxer.hikari.useWeakReferences=true/false</code> 强制，源码注释说这是没写进文档的开关。</li>
+          <li>读出来的一个小毛刺：WeakReference 模式下，<code>remove()</code> 里的 <code>threadLocalList.get().remove(bagEntry)</code> 拿 PoolEntry 去比 WeakReference，永远对不上，口袋里那条删不掉。实测确认如此。无害，下次 borrow 时 CAS 失败就扔掉了。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="bk">
+        <h4>为什么是 Dekker 式的“先写后读”</h4>
+        <ul>
+          <li>还的人写 state、读 waiters；借的人写 waiters、读 state。这是两线程互斥算法里最经典的一招：只要两边的写和读都是顺序一致的（Java 里 volatile 和原子类保证这一点），就不可能两边都读到旧值。</li>
+          <li>反过来，如果 state 用普通字段、或者两步之间有一边先读后写，就会出现 ④ 里那种“连接空着、人在干等”。</li>
+          <li>这也是 requite 里 <code>setState(0)</code> 必须在循环之前的原因，不只是“早点让别人能用”。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="cg">
+        <h4>还连接的线程会不会一直转圈</h4>
+        <ul>
+          <li>只在“有人在等，但没人停在 poll 上，连接也没被拿走”时转圈。那个等的人正在扫货架，下一刻要么扫到这个连接（转圈结束），要么停到 poll 上（offer 成功）。所以通常只转几圈。</li>
+          <li>大量线程同时在等时，转圈的线程会频繁 <code>yield</code>。7.0.1 让它在等的人多时更早 park 10 µs，少抢 CPU。</li>
+          <li>调度实验台第 5 个剧本就是这个场景。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="pd">
+        <h4>从头扫、从尾回收，池子会自己缩</h4>
+        <ul>
+          <li>borrow 从货架头部扫，管家从尾部看。负载降下来后，前几个连接一直有人用，<code>lastAccessed</code> 一直新；后面的连接闲置超过 <code>idleTimeout</code> 就被回收，直到剩 <code>minimumIdle</code> 个。</li>
+          <li>前提是 <code>minimumIdle</code> 小于 <code>maximumPoolSize</code>。默认两者相等，管家整段跳过（源码里那个 <code>if</code>）。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>HikariCP 为什么快？</summary><p>借还的热路径上没有锁：先翻 ThreadLocal 口袋，再对 <code>CopyOnWriteArrayList</code> 做无锁遍历加 CAS；没有空闲时用 <code>SynchronousQueue</code> 直接递交。此外还有字节码生成的代理类、用 <code>FastList</code> 代替 <code>ArrayList</code> 记录打开的 Statement 等。</p><p>但要补一句：池子本身的开销在百纳秒级，数据库调用在毫秒级，业务里真正慢的通常不是池子。</p></details>
+      <details><summary>借连接要不要加锁？</summary><p>有空闲连接时不要，只 CAS 连接的 <code>state</code>。没有空闲时线程停在 <code>SynchronousQueue.poll</code> 上，那里会 park。<code>CopyOnWriteArrayList</code> 写的时候有锁，但只在加、删连接时写，不在借还路径上。</p></details>
+      <details><summary>等连接是先来先得的吗？</summary><p>等待者之间是：<code>SynchronousQueue</code> 用的是公平模式。但新来的线程扫货架时能把刚还回、正在递交途中的连接 CAS 走，被抢的人重新排到队尾。源码注释自己写了 "we may have stolen another waiter's connection"。所以整体不保证先来先得，尾延迟会比平均高很多。</p></details>
+      <details><summary>requite 为什么先 setState(0) 再看 waiters？</summary><p>为了不丢唤醒。借的人先加 waiters 再扫货架，还的人先改 state 再读 waiters，两边至少有一边能看到对方：要么借的人扫到 0 自己拿走，要么还的人看到有人在等去递交。反过来写，借的人可能在“还的人读完 waiters、还没改 state”那一刻扫货架，什么也没扫到就去睡了，连接却空着。</p></details>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>HikariCP 的代理层：<code>JavassistProxyFactory</code> 生成的 <code>ProxyConnection</code>，关闭时怎么回滚、重置状态</li>
+      <li><code>SynchronousQueue</code> 和 <code>LinkedTransferQueue</code> 的实现：配对、先自旋再 park</li>
+      <li>管家 HouseKeeper、<code>maxLifetime</code> 的随机抖动和 <code>keepaliveTime</code></li>
+      <li>用 JMH 正经地测借还开销：多线程基准、伪共享</li>
+      <li>Java 内存模型：volatile 的顺序一致性，从 Dekker 算法看“先写后读”</li>
+      <li>Druid 的 <code>DruidDataSource</code>：一把锁加两个 Condition 的生产者和消费者</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 BagPeek，验证第⑥步</h2>
+    <p class="lead">每个练习都写了做对时会看到什么，不用对答案也能自己判断。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="of">
+      <h4>练习 1 · 隔一会儿再借</h4>
+      <p>在 BagPeek 第 4 段 <code>single.requite(mine)</code> 后面加一行 <code>Thread.sleep(1);</code> 再借。</p>
+      <p><b>做对了会看到：</b>抢回次数从 950 上下掉到个位数（本机 4～5 次）。W 从被叫醒到 CAS 远用不了 1 ms，所以它先拿到了。</p>
+      <p class="uses">用到：坑 2，④ 递交只是推荐</p>
+    </div>
+    <div class="exc" data-role="warn">
+      <h4>练习 2 · 量出插队的尾巴</h4>
+      <p>开 20 个线程循环“借 → <code>LockSupport.parkNanos(1_000_000)</code> → 还”，池子 10 个，记下每次 borrow 等了多久，跑 5 秒算 P50 和 P99。再在还和借之间加 100 µs 跑一次。</p>
+      <p><b>做对了会看到：</b>平均都在 1 ms 左右；立刻再借时 P50 ≈ 0、P99 几十毫秒；加了间隔后 P50 ≈ 0.9 ms、P99 两三毫秒。</p>
+      <p class="uses">用到：坑 1、坑 2，④ 设计对比</p>
+    </div>
+    <div class="exc" data-role="bad">
+      <h4>练习 3 · 亲手写出被放弃的设计</h4>
+      <p>把 ConcurrentBag 复制成自己的类，<code>requite</code> 改成：有人等就直接 <code>offer</code>（state 保持 1），递不出去才 <code>setState(0)</code> 进口袋；borrow 里 poll 到了直接返回、不再 CAS。先在实验台第 6 个剧本里找出丢唤醒的顺序，再用练习 2 的程序测。</p>
+      <p><b>做对了会看到：</b>P99 掉到 1.6 ms 左右，公平了；把持有时间改成 0、开 40 线程，每秒借还从约 1000 万次掉到约 35 万次。</p>
+      <p class="uses">用到：④ 先改 state 再看 waiters、为什么这样设计</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出 ConcurrentBag 的精华。</summary><p>连接归谁只看它的 <code>state</code>，口袋、货架、递交窗口都只是找它的路；所以有空闲时借还不用锁，代价是递交途中的连接谁都能抢，不保证先来先得。</p><p class="from">← ② 精华</p></details>
+    <details><summary>2. 用一个阻塞队列做池子，痛在哪？</summary><p>借和还都要过同一把锁，热路径串行；想做到公平，每次还连接都得叫醒一个睡着的线程，等的人一多吞吐就掉到几十万次每秒。</p><p class="from">← ② 实测表</p></details>
+    <details><summary>3. “平均等待不高却有人超时”，根源是 ④ 里的哪一条？</summary><p>递交只是叫醒加推荐：递过去的连接在对方醒来前 state 还是 0，正在跑的线程扫货架就能拿走，被抢的人回到队尾。</p><p class="from">← ④ 递交只是推荐</p></details>
+    <details><summary>4. 预测：Tomcat 200 个线程、池子 10 个、压到满载，借连接主要走哪条路？口袋还能命中吗？</summary><p>几乎不走口袋。满载时 waiters 一直大于 0，还连接时会去递交，不会放进口袋；新来借的线程主要靠扫货架，抢走正在递交途中的连接，其余靠递交。计数器实测 200 线程那一行：口袋 0.03%，有人等时从货架拿到 95.7%。</p><p class="from">← ④ 三个地方找连接 + requite 的流程</p></details>
+    <details><summary>5. 预测：管家 reserve 一个空闲连接时，正好有业务线程扫货架扫到它，会怎样？</summary><p>两边抢同一个 CAS：管家是 0 → -2，业务线程是 0 → 1，只有一个成功。业务线程赢了，管家这轮跳过它；管家赢了，业务线程看到 -2，接着扫下一个。没有锁，也不会两边都以为拿到了。</p><p class="from">← ④ 状态图</p></details>
+    <details><summary>6. 预测：如果把容量为 0 的 SynchronousQueue 换成容量 10 的 ArrayBlockingQueue，让 offer 总能成功，会怎样？</summary><p>功能上还对，因为最后都靠 CAS 定归属；但连接会同时躺在货架和队列里。等的人还在扫货架、没走到 poll 时，offer 也成功了，连接进了队列；等的人从货架上拿走它之后，队列里还留着一条过期引用。后来的等待者 poll 到它、CAS 失败、白醒一回，队列里过期的引用越积越多。</p><p class="from">← ④ 递交窗口为什么容量是 0</p></details>
+    <details><summary>7. 预测：一个虚拟线程处理一个请求，请求里不开事务连查 5 次，口袋命中率大概多少？</summary><p>约 80%。第一次口袋是空的，要扫货架；后 4 次借的是刚还进自己口袋的那个，只要没人在等就命中。实测每任务借 3 次时是 66.7%，正好是 2/3。</p><p class="from">← ④ 口袋按线程分 + 坑 5</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>以 HikariCP 6.3.3（Spring Boot 3.5.16 自带）的源码为准，版本差异对照了 2.7.9、3.4.5、4.0.3、5.1.0、6.0.0、6.2.1、6.3.0～6.3.2、7.0.0～7.0.2 的 sources jar；对照的其他池子是 commons-pool2 2.12.1、Tomcat JDBC 10.1.55、Druid 1.2.28。标“实测”的数字在 2 核 ARM 虚拟机、JDK 21 上测得，绝对值只供参考，看的是相对大小。本页引用的源码片段遵循 Apache License 2.0。</p>
+  <p>相关：<a href="db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a> · <a href="../perf/load-testing.html">压测</a> · <a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a></p>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+// ConcurrentBag 交错模拟：每个线程按源码拆成几个原子步骤，谁先走由调用方决定。
+// variant: 'hikari' = 6.3.3 原版；'excl' = 被放弃的写法（先递交、递不出去才把 state 改回 0）
+var BAG = (function(){
+  function clone(s){ return JSON.parse(JSON.stringify(s)); }
+  function make(cfg){
+    var s = {variant: cfg.variant || 'hikari', entries: [], waiters: 0, pollers: [], threads: [], log: [], n: 0};
+    for (var i = 0; i < cfg.entries; i++) s.entries.push({id: 'c' + i, st: 0});
+    cfg.threads.forEach(function(t){
+      s.threads.push({id: t.id, prog: t.prog.slice(), op: 0, pc: startPc(s, t.prog[0]), pocket: [], hold: null, giving: null,
+        inbox: null, waiting: 0, status: t.prog.length ? 'ready' : 'done', got: [], spins: 0, robbed: 0, paths: []});
+    });
+    return s;
+  }
+  function startPc(s, op){ return op === 'borrow' ? 'b.pocket' : op === 'requite' ? (s.variant === 'excl' ? 'x.loop' : 'r.set') : 'end'; }
+  function th(s, id){ for (var i = 0; i < s.threads.length; i++) if (s.threads[i].id === id) return s.threads[i]; return null; }
+  function ent(s, id){ for (var i = 0; i < s.entries.length; i++) if (s.entries[i].id === id) return s.entries[i]; return null; }
+  function say(s, t, line, text, kind){ s.n++; s.log.push({n: s.n, t: t.id, line: line, text: text, kind: kind || ''}); }
+  function finishOp(s, t){
+    t.op++;
+    if (t.op >= t.prog.length){ t.status = 'done'; t.pc = 'end'; }
+    else { t.pc = startPc(s, t.prog[t.op]); t.status = 'ready'; }
+  }
+  function gotIt(s, t, e, path){
+    t.hold = e.id; t.got.push(e.id); t.paths.push(path); s.waiters -= (path === 'pocket' ? 0 : 1); finishOp(s, t);
+  }
+  function canStep(s, id){ var t = th(s, id); return !!t && t.status === 'ready'; }
+  function step(s0, id){
+    var s = clone(s0), t = th(s, id), e;
+    if (!t || t.status !== 'ready') return s;
+    switch (t.pc){
+      case 'b.pocket':
+        if (t.pocket.length){
+          e = ent(s, t.pocket.pop());
+          if (e.st === 0){ e.st = 1; say(s, t, 139, '翻口袋：取出 ' + e.id + '，CAS 0→1 成功，拿到了', 'pocket'); gotIt(s, t, e, 'pocket'); }
+          else say(s, t, 139, '翻口袋：取出 ' + e.id + '，可它的 state 是 ' + e.st + '（已被别人借走），丢掉接着翻', 'stale');
+        } else {
+          t.waiting = ++s.waiters; t.pc = 'b.scan';
+          say(s, t, 145, '口袋是空的 → waiters+1，现在 waiters = ' + s.waiters, 'inc');
+        }
+        break;
+      case 'b.scan':
+        e = null;
+        for (var i = 0; i < s.entries.length; i++) if (s.entries[i].st === 0){ e = s.entries[i]; break; }
+        if (e){
+          e.st = 1;
+          if (t.waiting > 1) say(s, t, 150, '扫货架：' + e.id + ' 的 state 是 0，CAS 成功。当时还有别人在等（waiting = ' + t.waiting + '），源码注释说这叫“可能抢了别人的”', 'steal');
+          else say(s, t, 148, '扫货架：' + e.id + ' 的 state 是 0，CAS 成功，拿到了', 'shared');
+          gotIt(s, t, e, t.waiting > 1 ? 'steal' : 'shared');
+        } else {
+          s.pollers.push(t.id); t.status = 'parked'; t.pc = 'b.poll';
+          say(s, t, 162, '扫货架：没有 state = 0 的 → 停在 handoffQueue.poll() 上等人递（排第 ' + s.pollers.length + '）', 'park');
+        }
+        break;
+      case 'b.cas':
+        e = ent(s, t.inbox); t.inbox = null;
+        if (s.variant === 'excl'){ say(s, t, 0, '醒来：递过来的 ' + e.id + ' 已经是 IN_USE，直接用', 'hand'); gotIt(s, t, e, 'handoff'); break; }
+        if (e.st === 0){ e.st = 1; say(s, t, 163, '醒来：对递过来的 ' + e.id + ' 做 CAS 0→1，成功', 'hand'); gotIt(s, t, e, 'handoff'); }
+        else {
+          t.robbed++; s.pollers.push(t.id); t.status = 'parked'; t.pc = 'b.poll';
+          say(s, t, 163, '醒来：对 ' + e.id + ' 做 CAS 失败，它已经被别人拿走了。白醒一回，回去重新 poll（排第 ' + s.pollers.length + '）', 'robbed');
+        }
+        break;
+      case 'r.set':
+        e = ent(s, t.hold); e.st = 0; t.giving = e.id; t.hold = null; t.pc = 'r.loop';
+        say(s, t, 188, '还 ' + e.id + '：先把 state 改成 0。从这一刻起，谁扫到都能 CAS 拿走', 'set');
+        break;
+      case 'r.loop':
+        e = ent(s, t.giving);
+        if (s.waiters === 0){
+          if (t.pocket.length < 16) t.pocket.push(e.id);
+          say(s, t, 203, '没人在等（waiters = 0）→ 把 ' + e.id + ' 放进自己的口袋，还完了' + (e.st !== 0 ? '（其实 ' + e.id + ' 已经被别人拿走，口袋里这条只是过期的线索，下次借时 CAS 会失败）' : ''), 'topocket');
+          t.giving = null; finishOp(s, t);
+        } else if (e.st !== 0){
+          say(s, t, 191, 'waiters = ' + s.waiters + '，但 ' + e.id + ' 的 state 已经不是 0：有人从货架上拿走了，不用再递', 'taken');
+          t.giving = null; finishOp(s, t);
+        } else if (s.pollers.length){
+          var p = th(s, s.pollers.shift()); p.inbox = e.id; p.status = 'ready'; p.pc = 'b.cas';
+          say(s, t, 191, 'waiters = ' + s.waiters + ' → offer 成功，' + e.id + ' 递给了 ' + p.id + '。' + p.id + ' 被唤醒，但还没 CAS，state 仍是 0', 'offer');
+          t.giving = null; finishOp(s, t);
+        } else {
+          t.spins++;
+          say(s, t, 198, 'waiters = ' + s.waiters + '，可没人停在 poll 上 → offer 失败，Thread.yield() 后再试（第 ' + t.spins + ' 圈）', 'spin');
+        }
+        break;
+      case 'x.loop':
+        e = ent(s, t.hold);
+        if (s.waiters === 0){ t.pc = 'x.set'; say(s, t, 0, '【被放弃的写法】读 waiters = 0 → 准备把 ' + e.id + ' 的 state 改回 0（还没改）', 'xread'); }
+        else if (s.pollers.length){
+          var q = th(s, s.pollers.shift()); q.inbox = e.id; q.status = 'ready'; q.pc = 'b.cas'; t.hold = null;
+          say(s, t, 0, '【被放弃的写法】offer 成功，' + e.id + ' 保持 IN_USE 递给 ' + q.id + '，别人扫货架抢不到', 'offer');
+          finishOp(s, t);
+        } else { t.spins++; say(s, t, 0, '【被放弃的写法】waiters = ' + s.waiters + '，没人在 poll → yield 再试（第 ' + t.spins + ' 圈）', 'spin'); }
+        break;
+      case 'x.set':
+        e = ent(s, t.hold); e.st = 0; t.hold = null;
+        if (t.pocket.length < 16) t.pocket.push(e.id);
+        say(s, t, 0, '【被放弃的写法】把 ' + e.id + ' 的 state 改成 0，放进口袋，还完了（不再看 waiters）', 'xset');
+        finishOp(s, t);
+        break;
+    }
+    return s;
+  }
+  function timeout(s0, id){
+    var s = clone(s0), t = th(s, id);
+    if (!t || t.status !== 'parked') return s;
+    s.pollers = s.pollers.filter(function(x){ return x !== id; });
+    s.waiters--; t.got.push(null); t.paths.push('timeout');
+    say(s, t, 170, '等到超时：borrow() 返回 null，getConnection() 抛 SQLTransientConnectionException', 'timeout');
+    finishOp(s, t);
+    return s;
+  }
+  function ready(s){ return s.threads.filter(function(t){ return t.status === 'ready'; }).map(function(t){ return t.id; }); }
+  function owners(s, eid){ // 此刻有几个人认为自己拥有它
+    var n = 0;
+    s.threads.forEach(function(t){
+      if (t.hold === eid) n++;
+      if (s.variant === 'excl' && t.inbox === eid) n++;
+    });
+    return n;
+  }
+  function verdict(s){
+    var parked = s.threads.filter(function(t){ return t.status === 'parked'; }).map(function(t){ return t.id; });
+    var free = s.entries.filter(function(e){ return e.st === 0; }).map(function(e){ return e.id; });
+    var quiet = ready(s).length === 0;
+    var dup = s.entries.filter(function(e){ return owners(s, e.id) > 1; }).map(function(e){ return e.id; });
+    return {quiet: quiet, parked: parked, free: free, lost: quiet && parked.length > 0 && free.length > 0, dup: dup,
+      robbed: s.threads.reduce(function(a, t){ return a + t.robbed; }, 0), spins: s.threads.reduce(function(a, t){ return a + t.spins; }, 0)};
+  }
+  function lineText(s, t){
+    if (t.status === 'done') return '做完了';
+    if (t.status === 'parked') return '停在 handoffQueue.poll(timeout) 上';
+    var op = t.prog[t.op];
+    var m = {
+      'b.pocket': t.pocket.length ? '翻口袋：list.remove(i) → compareAndSet(0, 1)' : '口袋空 → waiters.incrementAndGet()',
+      'b.scan': 'for (e : sharedList) e.compareAndSet(0, 1)',
+      'b.cas': 'poll() 返回 ' + t.inbox + (s.variant === 'excl' ? ' → 直接用' : ' → compareAndSet(0, 1)'),
+      'r.set': 'requite：setState(STATE_NOT_IN_USE)',
+      'r.loop': 'while (waiters.get() > 0) { getState() != 0 || offer(e) }',
+      'x.loop': '【放弃的写法】while (waiters.get() > 0) offer(e)',
+      'x.set': '【放弃的写法】setState(0)，放进口袋'
+    };
+    return (op === 'borrow' ? 'borrow · ' : 'requite · ') + (m[t.pc] || t.pc);
+  }
+  return {make: make, step: step, timeout: timeout, canStep: canStep, ready: ready, verdict: verdict, owners: owners, lineText: lineText, th: th, ent: ent};
+})();
+/*SIM-END*/
+(function(){
+  var esc = function(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var ST = {'0':'空闲','1':'借出','-1':'下架','-2':'管家占住'};
+  function boardHTML(s, o){
+    o = o || {};
+    var last = s.log.length ? s.log[s.log.length - 1] : null;
+    var inbox = {}; s.threads.forEach(function(t){ if (t.inbox) inbox[t.inbox] = t.id; });
+    var h = '<div class="bd-top">';
+    h += '<div class="pane" data-role="pd"><small><span>货架 <code>sharedList</code></span><span>从左往右扫</span></small><div class="row">';
+    s.entries.forEach(function(e){
+      h += '<span class="ent" data-st="' + e.st + '">' + e.id + ' <i>' + e.st + ' ' + ST[e.st] + '</i>' + (inbox[e.id] ? '<small>→ 递给 ' + inbox[e.id] + '</small>' : '') + '</span>';
+    });
+    h += '</div></div>';
+    h += '<div class="pane" data-role="other"><small><span><code>waiters</code></span><span>= pending</span></small><div class="big">' + s.waiters + '</div></div>';
+    h += '<div class="pane" data-role="cg"><small><span>递交窗口 <code>handoffQueue</code></span><span>容量 0</span></small><div class="row">';
+    h += s.pollers.length ? s.pollers.map(function(p, i){ return '<span class="pl">' + (i + 1) + '. ' + p + ' 在 poll</span>'; }).join('') : '<span class="empty-note">没人停在 poll 上</span>';
+    h += '</div></div></div><div class="thr-grid">';
+    s.threads.forEach(function(t){
+      var stt = t.status === 'parked' ? '<span class="stt parked">停在 poll，睡着</span>' : t.status === 'done' ? '<span class="stt done">做完了</span>' : '<span class="stt">可以走</span>';
+      var pocket = t.pocket.length ? t.pocket.map(function(id){ var e = BAG.ent(s, id); return '<span class="pk' + (e.st !== 0 ? ' stale' : '') + '">' + id + '</span>'; }).join('') : '<span class="empty-note">空</span>';
+      var hand = t.hold ? '<span class="ent" data-st="1">' + t.hold + '</span>' : t.giving ? '<span class="empty-note">正在还 ' + t.giving + '</span>' : '<span class="empty-note">—</span>';
+      var got = t.got.length ? t.got.map(function(g, i){ return (g || '超时') + '<small>（' + ({pocket:'口袋',shared:'货架',steal:'货架·有人在等',handoff:'递交',timeout:'超时'})[t.paths[i]] + '）</small>'; }).join('，') : '—';
+      h += '<div class="thr' + (last && last.t === t.id ? ' act' : '') + '"><div class="thr-h"><b>' + t.id + '</b>' + stt + '</div>';
+      h += '<div class="kv"><span>口袋</span><div>' + pocket + '</div><span>手里</span><div>' + hand + '</div><span>借到过</span><div style="font-size:12.5px">' + got + '</div></div>';
+      h += '<div class="nxt">下一步：' + esc(BAG.lineText(s, t)) + '</div>';
+      if (o.interactive){
+        h += '<div class="btns"><button class="btn" type="button" data-go="' + t.id + '"' + (t.status === 'ready' && !o.locked ? '' : ' disabled') + '>让 ' + t.id + ' 走一步</button>';
+        if (t.status === 'parked') h += '<button class="btn" type="button" data-to="' + t.id + '"' + (o.locked ? ' disabled' : '') + '>让 ' + t.id + ' 超时</button>';
+        h += '</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div><ol class="logbox" aria-live="polite">';
+    if (!s.log.length) h += '<li><span class="ln"></span><b></b><span class="empty-note">还没开始</span></li>';
+    s.log.forEach(function(l, i){
+      h += '<li class="k-' + l.kind + (i === s.log.length - 1 ? ' new' : '') + '"><span class="ln">' + (l.line ? 'L' + l.line : '改') + '</span><b>' + l.t + '</b><span>' + esc(l.text) + '</span></li>';
+    });
+    return h + '</ol>';
+  }
+  function paint(el, s, o){ el.innerHTML = boardHTML(s, o); var lb = el.querySelector('.logbox'); if (lb) lb.scrollTop = lb.scrollHeight; }
+
+  /* ---------- ④ 分步演示 ---------- */
+  var WALK = {cfg: {entries: 1, threads: [{id: 'A', prog: ['borrow', 'requite', 'borrow', 'requite']}, {id: 'B', prog: ['borrow']}]},
+    script: ['A', 'A', 'A', 'A', 'A', 'B', 'B', 'A', 'A', 'B'],
+    caps: ['开始：货架上只有 c0，两个线程的口袋都是空的。点“下一步”。',
+      'A 第一次借：口袋是空的，先把 <b>waiters</b> 加 1，表示“我要去货架上找了”。',
+      '<b>第 2 条路，扫货架</b>：c0 的 state 是 0，CAS 改成 1，A 拿到了，waiters 减回 0。',
+      'A 用完，还 c0：第一件事是把 <b>state 改回 0</b>。',
+      '没人在等，c0 被记进 <b>A 自己的口袋</b>。它仍然在货架上，口袋里只是多了一条线索。',
+      'A 又要借：<b>第 1 条路，翻口袋</b>。取出 c0，CAS 成功。这一次没碰 waiters，也没扫货架。',
+      'B 也要借：它的口袋是空的，waiters 加 1。',
+      '货架上唯一的 c0 正被 A 用着。<b>第 3 条路</b>：B 停到递交窗口的 <code>poll</code> 上睡着等。',
+      'A 还 c0：先把 state 改成 0。从这一刻起，谁扫到都能拿走它。',
+      'waiters = 1，A 把 c0 <b>offer</b> 给停在窗口上的 B。B 被唤醒，但还没来得及 CAS，c0 的 state 仍是 0。',
+      'B 醒来对 c0 做 CAS，成功。要是 A 在上一步之后马上又借，就会在这之前把 c0 抢回去，见下面的“递交只是叫醒 + 推荐”。']};
+  var walkStates = [BAG.make(WALK.cfg)];
+  WALK.script.forEach(function(id){ walkStates.push(BAG.step(walkStates[walkStates.length - 1], id)); });
+  var wk = {i: 0, timer: null};
+  var $ = function(id){ return document.getElementById(id); };
+  function wkShow(){
+    paint($('wk-board'), walkStates[wk.i], {});
+    $('wk-cap').innerHTML = WALK.caps[wk.i];
+    $('wk-pos').innerHTML = '第 <b>' + wk.i + '</b> / ' + WALK.script.length + ' 步';
+    $('wk-prev').disabled = wk.i === 0; $('wk-next').disabled = wk.i === WALK.script.length;
+  }
+  function wkStop(){ if (wk.timer){ clearInterval(wk.timer); wk.timer = null; $('wk-play').textContent = '自动播放'; } }
+  $('wk-prev').onclick = function(){ wkStop(); if (wk.i > 0){ wk.i--; wkShow(); } };
+  $('wk-next').onclick = function(){ wkStop(); if (wk.i < WALK.script.length){ wk.i++; wkShow(); } };
+  $('wk-reset').onclick = function(){ wkStop(); wk.i = 0; wkShow(); };
+  $('wk-play').onclick = function(){
+    if (wk.timer){ wkStop(); return; }
+    if (wk.i === WALK.script.length) wk.i = 0;
+    $('wk-play').textContent = '暂停'; wkShow();
+    wk.timer = setInterval(function(){ if (wk.i >= WALK.script.length){ wkStop(); return; } wk.i++; wkShow(); }, 1800);
+  };
+  $('walk').addEventListener('keydown', function(e){ if (e.key === 'ArrowRight'){ e.preventDefault(); $('wk-next').click(); } else if (e.key === 'ArrowLeft'){ e.preventDefault(); $('wk-prev').click(); } });
+  wkShow();
+
+  /* ---------- ⑥ 调度实验台 ---------- */
+  function lastKind(s, id, kinds){ for (var i = s.log.length - 1; i >= 0; i--){ var l = s.log[i]; if (l.t === id && kinds.indexOf(l.kind) >= 0) return l.kind; } return null; }
+  var PRE = {
+    pocket: {variant: 'hikari', cfg: {entries: 3, threads: [{id: 'A', prog: ['borrow', 'requite']}, {id: 'B', prog: ['borrow', 'requite', 'borrow']}]}, setup: [],
+      script: ['A', 'A', 'B', 'B', 'A', 'A', 'B', 'B', 'B'],
+      q: 'A、B 各借一次再还。B 第二次借（剧本最后一步）拿到的是哪个？',
+      opts: [['c0', 'c0：货架上排第一，而且空着'], ['c1', 'c1：B 上次用的那个'], ['c2', 'c2：还没人用过']], answer: 'c1',
+      out: function(s){ var b = BAG.th(s, 'B'); return b.got.length >= 2 ? b.got[1] || 'timeout' : null; },
+      why: '口袋先于货架。B 还 c1 时没人在等，c1 进了 B 的口袋；B 再借先翻口袋，CAS c1 成功，根本没去扫货架。'},
+    steal: {variant: 'hikari', cfg: {entries: 2, threads: [{id: 'A', prog: ['borrow', 'requite', 'borrow']}, {id: 'C', prog: ['borrow']}]}, setup: [],
+      script: ['A', 'A', 'A', 'A', 'C', 'C', 'A', 'A', 'A'],
+      q: 'A 借了 c0 又还，c0 进了 A 的口袋。接着新线程 C 来借。A 第二次借拿到哪个？',
+      opts: [['c0', '口袋里记着的 c0'], ['c1', 'c1'], ['wait', '要等 C 还']], answer: 'c1',
+      out: function(s){ var a = BAG.th(s, 'A'); if (a.got.length >= 2) return a.got[1] || 'timeout'; return a.status === 'parked' ? 'wait' : null; },
+      why: '口袋里只是一条线索。C 的口袋是空的，扫货架时 c0 正空着，就被 C 拿走了。A 翻口袋取出 c0，CAS 失败，扔掉这条过期线索，转去货架拿到 c1。'},
+    hand: {variant: 'hikari', cfg: {entries: 1, threads: [{id: 'A', prog: ['borrow', 'requite']}, {id: 'W', prog: ['borrow']}]}, setup: ['A', 'A'],
+      script: ['W', 'W', 'A', 'A', 'W'],
+      q: '池子只有 c0，在 A 手里。W 来借，只能等。A 还 c0 时，c0 去了哪？',
+      opts: [['pocket', '进 A 的口袋'], ['hand', '递给正在 poll 的 W'], ['shelf', '只放回货架，等 W 自己来扫']], answer: 'hand',
+      out: function(s){ var k = lastKind(s, 'A', ['offer', 'topocket', 'taken']); return k === 'offer' ? 'hand' : k === 'topocket' ? 'pocket' : k === 'taken' ? 'shelf' : null; },
+      why: 'A 改完 state 看到 waiters = 1，有人在等，就 offer 给停在 poll 上的 W。只有没人等时才进口袋。',
+      alt: {pocket: '按你点的顺序，A 还的时候没人在等（waiters = 0），所以 c0 进了 A 的口袋。', shelf: '按你点的顺序，W 加了 waiters、还没停到 poll 上，就先扫到了 state = 0 的 c0，A 看到 state 已不是 0 就不递了。'}},
+    barge: {variant: 'hikari', cfg: {entries: 1, threads: [{id: 'A', prog: ['borrow', 'requite', 'borrow']}, {id: 'W', prog: ['borrow']}]}, setup: ['A', 'A', 'W', 'W'],
+      script: ['A', 'A', 'A', 'A', 'W'],
+      q: 'A 拿着 c0，W 停在 poll 上等。A 还完马上又借。最后谁拿到 c0？',
+      opts: [['A', '还的人 A'], ['W', '一直在等的 W'], ['both', '两个都拿到（出 bug 了）']], answer: 'A',
+      out: function(s){ var v = BAG.verdict(s); if (v.dup.length) return 'both'; var a = BAG.th(s, 'A'), w = BAG.th(s, 'W');
+        if (a.status === 'done' && a.hold === 'c0' && (w.status !== 'ready')) return 'A'; if (w.hold === 'c0') return 'W'; return null; },
+      why: 'A 的 offer 只是叫醒 W、把 c0 推荐给它，c0 的 state 仍是 0，仍在货架上。A 紧接着再借，扫货架 CAS 成功；W 醒来 CAS 失败，白醒一回，重新 poll。真实机器上 A 正在 CPU 上、W 刚被叫醒，所以 ⑤ 里 1000 次有 949～981 次是 A 赢。',
+      alt: {W: '按你点的顺序，W 在 A 再借之前就醒来 CAS 成功了。要插队，A 得赶在 W 醒来之前扫到货架；在真实机器上这几乎总是发生（⑤ 第 4 段）。'}},
+    spin: {variant: 'hikari', cfg: {entries: 1, threads: [{id: 'A', prog: ['borrow', 'requite']}, {id: 'B', prog: ['borrow']}]}, setup: ['A', 'A', 'B'],
+      script: ['A', 'A', 'A', 'B', 'A'],
+      q: 'A 拿着 c0。B 已经把 waiters 加成 1，但还没扫货架。这时 A 还 c0，会怎样？',
+      opts: [['pocket', '立刻放进自己口袋，还完'], ['spin', '原地转圈，直到 B 从货架上拿走'], ['hand', '递给 B']], answer: 'spin',
+      out: function(s){ var a = BAG.th(s, 'A'); if (a.status !== 'done') return null; if (a.spins > 0) return 'spin'; var k = lastKind(s, 'A', ['offer', 'topocket', 'taken']);
+        return k === 'offer' ? 'hand' : k === 'topocket' ? 'pocket' : k === 'taken' ? 'spin' : null; },
+      why: 'B 算进了 waiters，可它还在扫货架、没走到 poll，A 的 offer 没人接，只能 yield 再试。B 扫到 state = 0 的 c0 拿走后，A 下一圈看到 state 已不是 0（或 waiters 已减回 0），才退出循环。后一种情况 A 会把 c0 记进口袋，那只是一条过期线索。',
+      alt: {hand: '按你点的顺序，B 先扫了货架（那时 c0 还是 1），停到了 poll 上，所以 A 改完 state 后 offer 成功，直接递给了 B，没有转圈。', pocket: '按你点的顺序，A 还的时候已经没人在等（waiters = 0），c0 直接进了 A 的口袋。'}},
+    lost: {variant: 'excl', cfg: {entries: 1, threads: [{id: 'A', prog: ['borrow', 'requite']}, {id: 'B', prog: ['borrow']}]}, setup: ['A', 'A'],
+      script: ['A', 'B', 'B', 'A'],
+      q: '被放弃的写法：先看 waiters、递交，递不出去才把 state 改回 0。A 还 c0 的同时 B 来借。B 最后怎样？',
+      opts: [['got', 'B 拿到 c0'], ['lost', 'B 一直等到超时，c0 却空着'], ['err', '抛异常']], answer: 'lost',
+      out: function(s){ var v = BAG.verdict(s), b = BAG.th(s, 'B'); if (b.hold === 'c0') return 'got'; if (v.lost) return 'lost'; return null; },
+      why: 'A 读到 waiters = 0 时，B 还没来。B 在 A 改 state 之前扫了货架（c0 还是 1），于是去睡了；A 改完 state 就走，不会再看一眼 waiters。连接空着，人在干等，这就是丢失唤醒。切到“HikariCP 原版”，用同样的顺序再点一遍：A 第一步就把 state 改成 0，B 扫货架时直接拿到。',
+      alt: {got: '按你点的顺序，B 扫货架时 A 已经把 state 改回 0 了，所以没出事。丢失唤醒只发生在“A 读完 waiters、还没改 state”这条缝里：试试 A → B → B → A。'}}
+  };
+  var lab = {k: 'pocket', variant: 'hikari', s: null, pos: 0, guess: null, off: false};
+  function labReset(){
+    var p = PRE[lab.k];
+    var cfg = JSON.parse(JSON.stringify(p.cfg)); cfg.variant = lab.variant;
+    var s = BAG.make(cfg);
+    p.setup.forEach(function(id){ s = BAG.step(s, id); });
+    s.log.forEach(function(l){ l.text = '（开场）' + l.text; });
+    lab.s = s; lab.pos = 0; lab.off = false;
+    labPaint();
+  }
+  function labGuess(){
+    var p = PRE[lab.k], h = '<p><b>先猜：</b>' + esc(p.q) + '</p><div class="opts">';
+    p.opts.forEach(function(o){ h += '<button type="button" data-g="' + o[0] + '" aria-pressed="' + (lab.guess === o[0]) + '">' + esc(o[1]) + '</button>'; });
+    $('lab-guess').innerHTML = h + '</div>';
+  }
+  function labPaint(){
+    var p = PRE[lab.k], locked = !lab.guess;
+    paint($('lab-board'), lab.s, {interactive: true, locked: locked});
+    var done = lab.pos >= p.script.length;
+    $('lab-step').disabled = locked || done || lab.off;
+    $('lab-run').disabled = locked || done || lab.off;
+    $('lab-pos').textContent = lab.off ? '你走了自己的顺序，剧本按钮已停用，点“从头来”恢复' : '剧本 ' + lab.pos + ' / ' + p.script.length + ' 步';
+    var v = BAG.verdict(lab.s), out = p.out(lab.s, v), res = $('lab-res');
+    var finished = out !== null && (done || v.quiet || lab.off);
+    if (locked){ res.dataset.role = 'other'; res.innerHTML = '先在上面选一个猜测，再开始点。'; return; }
+    if (!finished){
+      res.dataset.role = 'other';
+      res.innerHTML = v.quiet && !out ? '所有线程都停下了。' : '继续点。日志里橙色是插队和白醒，紫色是递交，琥珀色是口袋。';
+      return;
+    }
+    var label = function(k){ for (var i = 0; i < p.opts.length; i++) if (p.opts[i][0] === k) return p.opts[i][1]; return k; };
+    var extra = (v.lost ? ' <b>此刻 ' + v.parked.join('、') + ' 停在 poll 上，' + v.free.join('、') + ' 却空着：丢失唤醒。</b>' : '') +
+      (v.robbed ? ' 本次有人白醒 ' + v.robbed + ' 次。' : '') + (v.spins ? ' 还连接时转了 ' + v.spins + ' 圈。' : '');
+    if (lab.variant !== p.variant){
+      res.dataset.role = 'other';
+      res.innerHTML = '换了写法，这次不计对错。结果：<b>' + esc(label(out)) + '</b>。' + extra + (lab.k === 'lost' ? ' 原版先改 state、再看 waiters，B 扫货架时一定能看到 c0 空着。' : '');
+      return;
+    }
+    var right = out === lab.guess;
+    $('lab-guess').querySelectorAll('button').forEach(function(b){ b.classList.toggle('right', b.dataset.g === out); b.classList.toggle('wrong', b.dataset.g === lab.guess && !right); });
+    res.dataset.role = right ? 'done' : 'bad';
+    var body = out === p.answer ? p.why : ((p.alt && p.alt[out]) || ('按你点的顺序，结果是“' + label(out) + '”。结果取决于交错顺序。'));
+    res.innerHTML = (right ? '<b>猜对了。</b>' : '<b>猜错了，结果是：' + esc(label(out)) + '。</b>') + esc(body) + extra;
+  }
+  function labGo(id){ if (!lab.guess || !BAG.canStep(lab.s, id)) return; var p = PRE[lab.k];
+    if (!lab.off && p.script[lab.pos] === id) lab.pos++; else lab.off = true;
+    lab.s = BAG.step(lab.s, id); labPaint(); }
+  $('lab-presets').addEventListener('click', function(e){ var b = e.target.closest('button[data-k]'); if (!b) return;
+    lab.k = b.dataset.k; lab.variant = PRE[lab.k].variant; lab.guess = null;
+    $('lab-presets').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x === b); });
+    $('lab-var').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x.dataset.v === lab.variant); });
+    labGuess(); labReset(); });
+  $('lab-guess').addEventListener('click', function(e){ var b = e.target.closest('button[data-g]'); if (!b || lab.guess) return;
+    lab.guess = b.dataset.g; labGuess(); labPaint(); });
+  $('lab-var').addEventListener('click', function(e){ var b = e.target.closest('button[data-v]'); if (!b) return;
+    lab.variant = b.dataset.v; $('lab-var').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x === b); }); labReset(); });
+  $('lab-board').addEventListener('click', function(e){
+    var g = e.target.closest('button[data-go]'), t = e.target.closest('button[data-to]');
+    if (g) labGo(g.dataset.go);
+    if (t && lab.guess){ lab.off = true; lab.s = BAG.timeout(lab.s, t.dataset.to); labPaint(); }
+  });
+  $('lab-step').onclick = function(){ var p = PRE[lab.k]; if (lab.pos < p.script.length) labGo(p.script[lab.pos]); };
+  $('lab-run').onclick = function(){ var p = PRE[lab.k]; while (!lab.off && lab.pos < p.script.length && BAG.canStep(lab.s, p.script[lab.pos])) { lab.s = BAG.step(lab.s, p.script[lab.pos]); lab.pos++; } labPaint(); };
+  $('lab-reset').onclick = function(){ labReset(); };
+  labGuess(); labReset();
+})();
+</script>
+
+</body>
+</html>
