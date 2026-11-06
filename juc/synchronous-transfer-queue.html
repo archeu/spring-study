@@ -1,0 +1,1700 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>SynchronousQueue 与 LinkedTransferQueue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a basic-theory topic (① 要解决的问题 ② 朴素做法 ③ 几种思路 ④ 关键洞察 ⑤ 手推一遍 ⑥ 边界和变体 ↺). Colors: data nodes (items waiting to be taken) amber (of), request nodes (takers waiting for an item) blue (pd), parked waiters purple (cg), the CAS on item and the chosen design teal (bk), async buffered puts of LinkedTransferQueue brown (g2), spinning orange (warn), wrong red, right green, matched / dead nodes and old ways grey. Interactives: a step-through of ten operations on a LinkedTransferQueue (⑤) and a guess-first sandbox (⑥), both driven by a sequential port of JDK 21u xfer / xferLifo / unsplice. Charts come from measurements on the author's 2-vCPU VM with JDK 11 and JDK 21. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:640px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-on{font-size:11.5px;font-weight:700;fill:var(--on-accent)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)}
+.f-oft{fill:var(--of-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-card{fill:var(--card)} .f-paper{fill:var(--code-bg)}
+.c-empty{fill:var(--card);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-bkd{stroke:var(--bk);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-pdd{stroke:var(--pd);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+.mk{fill:var(--of)}
+.mk-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+.dot-q{fill:var(--of)}
+.dot-s{fill:var(--bk)}
+.dot-t{fill:var(--warn)}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.need{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need b i{font-style:normal;font-family:var(--font-display);color:var(--of);margin-right:6px}
+.need p{font-size:14px;color:var(--muted)}
+.need .to{font-size:12.5px;align-self:flex-start;padding:2px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev{color:var(--ink)}
+.mj dd.ev b{color:var(--bad)}
+.mj .go{font-size:12.5px;align-self:flex-start;color:var(--muted)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- ③ route ---------- */
+.qflow{display:flex;flex-direction:column;gap:0}
+.qstep{display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;align-items:start}
+.qstep .qn{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-display);font-size:20px;background:var(--ink);color:var(--paper);position:relative;z-index:1}
+.qstep .qbody{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.qstep .qbody > b{font-size:17px}
+.qstep .qbody > p{font-size:14px;color:var(--muted)}
+.qstep .qbody > p code{color:var(--ink);overflow-wrap:anywhere}
+.qline{width:2px;height:22px;background:var(--line-strong);margin-left:21px}
+.ans{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.an{border:1.5px solid var(--rc);background:var(--rt);border-radius:12px;padding:8px 12px;font-size:14px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.an > span{font-size:12.5px;color:var(--muted)}
+.an > b{font-weight:700}
+.an a{font-size:12.5px}
+.an code{overflow-wrap:anywhere}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.exp-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.exp-h .n{font-family:var(--font-display);font-size:22px;color:var(--of)}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.fact .to6{margin-top:auto;font-size:12.5px;color:var(--muted)}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:21px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way .cfg{font-family:var(--font-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.way svg{display:block;width:100%;height:auto}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b code{font-size:.9em}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:4.6em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--bad)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:620px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+.ctl.off{opacity:.45}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg-btns button:disabled{opacity:.4;cursor:not-allowed}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:18px;height:3px;border-radius:2px;display:inline-block}
+.lg i.d{height:0;border-top:2px dashed}
+.notes{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.notes li{font-size:14.5px;padding:8px 12px;border-radius:10px;background:var(--rt);border-left:4px solid var(--rc)}
+
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+
+/* ---------- dual queue board ---------- */
+.dq{display:flex;flex-direction:column;gap:10px}
+.dq-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+.dq-meta b{color:var(--ink);font-family:var(--font-mono);font-weight:600}
+.dq-chain{display:flex;flex-wrap:nowrap;align-items:flex-start;gap:0;overflow-x:auto;padding:22px 6px 8px;min-height:104px;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.dq-n{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;position:relative}
+.dq-box{min-width:66px;padding:6px 8px;border-radius:10px;border:2px solid var(--rc);background:var(--rt);display:flex;flex-direction:column;align-items:center;gap:1px}
+.dq-box b{font-family:var(--font-mono);font-size:12.5px}
+.dq-box span{font-family:var(--font-mono);font-size:11.5px;color:var(--ink)}
+.dq-box small{font-size:11px;color:var(--muted)}
+.dq-n.dead .dq-box{border-style:dashed;opacity:.62}
+.dq-n.new .dq-box{box-shadow:0 0 0 3px var(--warn)}
+.dq-n.hit .dq-box{box-shadow:0 0 0 3px var(--bk)}
+.dq-ptr{position:absolute;top:-20px;font-family:var(--font-mono);font-size:11px;font-weight:600;padding:0 6px;border-radius:6px;background:var(--ink);color:var(--paper);white-space:nowrap}
+.dq-ptr.tail{background:var(--neutral)}
+.dq-arrow{flex:none;align-self:center;width:28px;text-align:center;color:var(--line-strong);font-family:var(--font-mono);margin-top:-18px}
+.dq-null{flex:none;align-self:center;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-top:-18px}
+.dq-wait{font-size:11px;color:var(--cg);font-weight:600}
+.dq-gone{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)}
+.dq-gone code{padding:1px 6px;border-radius:6px;border:1.5px dashed var(--line-strong)}
+.thr-row{display:flex;flex-wrap:wrap;gap:6px}
+.thr-chip{font-size:12.5px;padding:3px 9px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card)}
+.thr-chip.waiting{border-color:var(--cg);background:var(--cg-tint)}
+.thr-chip.done{border-color:var(--good)}
+.thr-chip b{font-family:var(--font-display);font-weight:400;font-size:15px;margin-right:4px}
+.oplog{margin:0;padding:8px 10px;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:210px;overflow-y:auto;border:1.5px solid var(--line);border-radius:12px;background:var(--card)}
+.oplog li{font-size:13px;display:grid;grid-template-columns:1.6em minmax(0,1fr);gap:6px}
+.oplog li b{font-family:var(--font-display);font-weight:400}
+.oplog li.k-match{color:var(--bk)}
+.oplog li.k-wait{color:var(--cg)}
+.oplog li.k-append{color:var(--g2)}
+.oplog li.k-fail{color:var(--muted)}
+.oplog li.k-cancel{color:var(--bad)}
+.oplog li.new{font-weight:700}
+.op-pad{display:flex;flex-direction:column;gap:8px}
+.op-pad .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.op-pad .row > span{font-size:13px;color:var(--muted);min-width:4.5em}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+.xmap{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+/* ---------- source ---------- */
+pre.src{padding:12px 0}
+pre.src code{display:inline-block;min-width:100%}
+pre.src .l{display:block;padding:0 16px 0 0}
+pre.src .l .no{display:inline-block;width:3.4em;padding-right:.9em;text-align:right;color:var(--muted);user-select:none}
+pre.src .l.hl{background:var(--of-tint)}
+pre.src .l .tag{font-family:var(--font-display);color:var(--of);margin-left:.6em}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+.bar{display:inline-block;height:9px;border-radius:3px;background:var(--rc);vertical-align:middle;margin-right:6px}
+.how{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.how .need b i{color:var(--bk)}
+.states{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.sc{border:2px solid var(--rc);background:var(--card);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.sc b{font-family:var(--font-mono);font-size:14px}
+.sc span{font-size:13px;color:var(--muted)}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts,.metaphor,.states{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .xmap{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .how{grid-template-columns:1fr}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ledger{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras,.ex{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+}
+@media (max-width:520px){
+  .facts,.metaphor,.presets,.ctl-grid,.states,.xmap{grid-template-columns:1fr}
+  .tiles,.ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+  .qstep{grid-template-columns:34px minmax(0,1fr);gap:10px}
+  .qstep .qn{width:34px;height:34px;font-size:17px}
+  .qline{margin-left:16px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-pd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-pd" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-cg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-cg" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Java 并发</span><span aria-hidden="true">/</span><span class="tb-here">SynchronousQueue 与 LinkedTransferQueue</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">JDK 21 · DUAL QUEUE · DUAL STACK · CAS · PARK / UNPARK · SLACK · JSR-166</p>
+  <h1>一条链表，排着的要么全是货，要么全是等货的人</h1>
+  <p class="lead">这两个类底层是同一个算法：<b>双重队列</b>（dual queue）。链表里的节点要么是<b>数据</b>（放进来的货），要么是<b>请求</b>（等着取货的空位）。来一个反方向的操作，就找到第一个还没配对的节点，用<b>一次 CAS</b> 改掉它的 <code>item</code>，交接当场完成，等着的那个线程被直接叫醒。SynchronousQueue 只做同步交接，默认按栈（后来的先配），公平模式按队列；LinkedTransferQueue 让放的人自己选：放下就走（<code>put</code>），还是等到被取走（<code>transfer</code>）。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>要解决的问题</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>朴素做法</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>几种思路</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>关键洞察</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>手推一遍</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>边界和变体</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>面试时被追问：“<code>Executors.newCachedThreadPool()</code> 为什么用 SynchronousQueue？突发流量下线程为什么会暴涨？SynchronousQueue 容量是 0，那等着的线程排在哪？”<a href="../database/hikari-concurrentbag.html">上一页</a>里 HikariCP 递交连接用的也是它。本页偏实现和面试，源码以 <b>JDK 21.0.2 之后</b>的新实现为准（JDK 22 引入，回移到了 21u），也对照 JDK 8～17 的老实现。标“实测”的数字在本机跑过：2 核 ARM 虚拟机，JDK 11.0.32 和 21.0.12。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>要解决的问题：把东西亲手交给另一个线程</h2>
+    <p class="lead">有一类场景不想要缓冲区：线程池把任务交给一个闲着的工作线程，连接池把刚还回来的连接交给正在等的人。没人接就别放，有人接就当面交。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 230" role="img" aria-label="生产者和消费者在一个容量为 0 的交接点会合；要满足四个要求">
+        <rect x="20" y="30" width="200" height="90" rx="14" class="b-of"/>
+        <text class="t-h" x="120" y="62" text-anchor="middle">放的人（生产者）</text>
+        <text class="t-m" x="120" y="84" text-anchor="middle">execute(task) / 还连接</text>
+        <text class="t-m" x="120" y="102" text-anchor="middle">put(x)</text>
+        <rect x="350" y="20" width="200" height="110" rx="14" class="b-bk"/>
+        <text class="t-h" x="450" y="54" text-anchor="middle">交接点</text>
+        <text class="t-s" x="450" y="78" text-anchor="middle">容量 0：不存东西</text>
+        <text class="t-m" x="450" y="100" text-anchor="middle">只让两边会合</text>
+        <rect x="680" y="30" width="200" height="90" rx="14" class="b-pd"/>
+        <text class="t-h" x="780" y="62" text-anchor="middle">取的人（消费者）</text>
+        <text class="t-m" x="780" y="84" text-anchor="middle">空闲的工作线程 / 等连接的人</text>
+        <text class="t-m" x="780" y="102" text-anchor="middle">take()</text>
+        <path class="e-of" d="M222 75 H346" marker-end="url(#ah-of)"/><text class="t-of" x="284" y="66" text-anchor="middle">交出 x</text>
+        <path class="e-pd" d="M552 75 H676" marker-start="url(#ah-pd)"/><text class="t-pd" x="614" y="66" text-anchor="middle">接住 x</text>
+        <g transform="translate(20,152)">
+          <rect x="0" y="0" width="205" height="62" rx="12" class="b-card"/><text class="t-b" x="12" y="24">没人接就别放</text><text class="t-m" x="12" y="44">offer(x) 立刻返回 false</text>
+          <rect x="220" y="0" width="205" height="62" rx="12" class="b-card"/><text class="t-b" x="232" y="24">两边谁先到谁等</text><text class="t-m" x="232" y="44">put 等 take，take 等 put</text>
+          <rect x="440" y="0" width="205" height="62" rx="12" class="b-card"/><text class="t-b" x="452" y="24">很多人同时交接也不慢</text><text class="t-m" x="452" y="44">几十个线程同时 put / take</text>
+          <rect x="660" y="0" width="200" height="62" rx="12" class="b-card"/><text class="t-b" x="672" y="24">等不及能走</text><text class="t-m" x="672" y="44">超时、被中断都要收拾干净</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>这就是 <code>SynchronousQueue</code> 的定义：每一次插入都必须等到另一个线程把它取走。它“容量为 0”，可等着的线程总得有个地方排，这正是本页要回答的问题。</figcaption>
+  </figure>
+  <div class="note-box"><b>和已学页面的关系</b><span>线程池怎么用队列决定“排队还是加线程”，在 <a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a> 讲过；HikariCP 怎么用 <code>SynchronousQueue(true)</code> 递交连接，在 <a href="../database/hikari-concurrentbag.html">ConcurrentBag 源码</a> 讲过。这一页往下一层，看交接点内部长什么样。</span></div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>朴素做法：一把锁、一个槽位、三个条件</h2>
+    <p class="lead">用会的东西写一个“容量为 0”的交接点：一把 <code>ReentrantLock</code> 管一个槽位。<code>put</code> 放进槽位后还不能走，要一直等到对方真的取走。JDK 5 的 SynchronousQueue 就是用锁实现的，今天的源码里还为了兼容 1.5 的序列化格式，留着从来不用的 <code>qlock</code>、<code>WaitQueue</code> 字段。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><span class="n">朴素做法</span><b>LockedHandoff</b>能用，每次交接都要两次唤醒</div>
+<pre><code>final ReentrantLock lock = new ReentrantLock();
+final Condition slotFree = lock.newCondition(),
+                hasItem  = lock.newCondition(),
+                taken    = lock.newCondition();
+Object item; long putSeq, takeSeq;
+
+void put(Object e) throws InterruptedException {
+  lock.lock();
+  try {
+    while (item != null) slotFree.await(); <span class="cm">// 槽里有别人的</span>
+    item = e; long my = ++putSeq;
+    hasItem.signal();                      <span class="cm">// ① 叫醒取的人</span>
+    while (takeSeq &lt; my) taken.await();    <span class="cm">// 等对方取走</span>
+  } finally { lock.unlock(); }
+}
+Object take() throws InterruptedException {
+  lock.lock();
+  try {
+    while (item == null) hasItem.await();
+    Object e = item; item = null; takeSeq++;
+    taken.signalAll();                     <span class="cm">// ② 叫醒放的人</span>
+    slotFree.signal();
+    return e;
+  } finally { lock.unlock(); }
+}</code></pre>
+    </div>
+    <figure>
+      <div class="fig-box">
+        <svg class="sv" viewBox="0 0 420 300" role="img" aria-label="一次交接：放的人睡下、取的人被叫醒、放的人再被叫醒，两次线程切换，全在一把锁里">
+          <text class="t-b" x="14" y="24">一次交接要几次唤醒</text>
+          <text class="t-b" x="60" y="54" text-anchor="middle">放的人</text>
+          <text class="t-b" x="340" y="54" text-anchor="middle">取的人</text>
+          <line class="e-axis" x1="60" y1="64" x2="60" y2="280"/>
+          <line class="e-axis" x1="340" y1="64" x2="340" y2="280"/>
+          <rect x="20" y="74" width="80" height="26" rx="6" class="b-of"/><text class="t-s" x="60" y="92" text-anchor="middle">拿锁，放入</text>
+          <path class="e-ink" d="M100 100 C 200 104, 260 112, 336 124" marker-end="url(#ah-ink)"/><text class="t-s" x="210" y="98" text-anchor="middle">① signal</text>
+          <rect x="20" y="112" width="80" height="40" rx="6" class="b-cg"/><text class="t-s" x="60" y="130" text-anchor="middle">await</text><text class="t-m" x="60" y="146" text-anchor="middle">睡下</text>
+          <rect x="300" y="128" width="80" height="40" rx="6" class="b-pd"/><text class="t-s" x="340" y="146" text-anchor="middle">醒来抢锁</text><text class="t-m" x="340" y="162" text-anchor="middle">线程切换 1</text>
+          <path class="e-ink" d="M300 176 C 220 190, 150 200, 104 214" marker-end="url(#ah-ink)"/><text class="t-s" x="210" y="186" text-anchor="middle">② signal</text>
+          <rect x="20" y="206" width="80" height="40" rx="6" class="b-of"/><text class="t-s" x="60" y="224" text-anchor="middle">醒来抢锁</text><text class="t-m" x="60" y="240" text-anchor="middle">线程切换 2</text>
+          <text class="t-m" x="210" y="270" text-anchor="middle">所有放的、取的，全在同一把锁上排队</text>
+        </svg>
+      </div>
+    </figure>
+  </div>
+  <figure>
+    <div class="exp-h"><span class="tag-real">实测</span><b>4 对生产者 / 消费者不停交接，每秒能交接多少次（JDK 21.0.12）</b></div>
+    <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 200" role="img" aria-label="4 对生产者消费者每秒交接次数：朴素做法 7 万，公平 SynchronousQueue 65 万，LinkedTransferQueue.transfer 69 万，默认 SynchronousQueue 264 到 279 万"><line class="e-grid" x1="250" y1="8" x2="250" y2="178"/><text class="t-xs" x="250" y="194" text-anchor="middle">0</text><line class="e-grid" x1="310" y1="8" x2="310" y2="178"/><text class="t-xs" x="310" y="194" text-anchor="middle">50 万</text><line class="e-grid" x1="370" y1="8" x2="370" y2="178"/><text class="t-xs" x="370" y="194" text-anchor="middle">100 万</text><line class="e-grid" x1="430" y1="8" x2="430" y2="178"/><text class="t-xs" x="430" y="194" text-anchor="middle">150 万</text><line class="e-grid" x1="490" y1="8" x2="490" y2="178"/><text class="t-xs" x="490" y="194" text-anchor="middle">200 万</text><line class="e-grid" x1="550" y1="8" x2="550" y2="178"/><text class="t-xs" x="550" y="194" text-anchor="middle">250 万</text><line class="e-grid" x1="610" y1="8" x2="610" y2="178"/><text class="t-xs" x="610" y="194" text-anchor="middle">300 万</text><text class="t-s" x="238" y="31" text-anchor="end">朴素做法（一把锁）</text><rect x="250" y="14" width="9" height="26" rx="5" class="f-neu"/><line class="e-ink" x1="258.4" y1="18" x2="258.4" y2="36" style="stroke-width:1.5"/><text class="t-b" x="267" y="26">7～7.5 万次/秒</text><text class="t-m" x="267" y="39">每次交接 2.9～3.0 次线程切换</text><text class="t-s" x="238" y="71" text-anchor="end">SynchronousQueue(true)</text><rect x="250" y="54" width="80.39999999999998" height="26" rx="5" class="f-bk"/><line class="e-ink" x1="328" y1="58" x2="328" y2="76" style="stroke-width:1.5"/><text class="t-bk" x="338.4" y="66">65～67 万次/秒</text><text class="t-m" x="338.4" y="79">0.75～0.80 次切换</text><text class="t-s" x="238" y="111" text-anchor="end">LinkedTransferQueue.transfer</text><rect x="250" y="94" width="84" height="26" rx="5" class="f-bk"/><line class="e-ink" x1="332.8" y1="98" x2="332.8" y2="116" style="stroke-width:1.5"/><text class="t-bk" x="342" y="106">69～70 万次/秒</text><text class="t-m" x="342" y="119">0.77～0.80 次切换</text><text class="t-s" x="238" y="151" text-anchor="end">SynchronousQueue（默认）</text><rect x="250" y="134" width="334.79999999999995" height="26" rx="5" class="f-bk"/><line class="e-ink" x1="566.8" y1="138" x2="566.8" y2="156" style="stroke-width:1.5"/><text class="t-bk" x="592.8" y="146">264～279 万次/秒</text><text class="t-m" x="592.8" y="159">0.04～0.05 次切换</text></svg></div>
+    <figcaption>每种跑 3 秒、跑两遍，标的是两遍的范围。“线程切换”是这段时间里进程所有线程的上下文切换次数除以交接次数，从 <code>/proc/self/task/*/status</code> 读出来。1 对时朴素做法每秒 10～12 万次、每次交接正好 2.01 次切换；SynchronousQueue 默认模式每秒 63～74 万次、0.24～0.26 次切换。</figcaption>
+  </figure>
+  <div class="misj">
+    <div class="mj">
+      <b><i>痛 1</i>每次交接至少两次线程切换</b>
+      <p>放的人必须等“已取走”的回信，这就多出了一次唤醒。并发一高，抢锁失败的线程还要再睡再醒，4 对时每次交接要 2.9～3.0 次切换。</p>
+    </div>
+    <div class="mj">
+      <b><i>痛 2</i>所有交接挤在一把锁上</b>
+      <p>4 对同时交接，朴素做法反而比 1 对慢（每秒 7 万对 11 万）；双重栈从 1 对到 4 对涨了约 4 倍：线程一多，总有人正好在自旋等着，交接时不用睡下再叫醒（每次只有 0.04～0.05 次切换）。</p>
+    </div>
+  </div>
+  <div class="essence">
+    <span class="big">精华</span>
+    <p>双重队列的精华：<b>等着的线程自己就是队列里的一个节点</b>，来配对的线程用一次 CAS 改掉这个节点的 <code>item</code>，交接就完成了，然后只需要叫醒对方一次，自己不用等回信。</p>
+    <p>不懂这一点的典型误用：把 SynchronousQueue 当成“容量为 1 的队列”，以为 <code>offer</code> 能先放着；或者拿 LinkedTransferQueue 的 <code>put</code> 当交接用，其实它放下就走、队列无界，见 <a href="#pit-cached">⑥ 坑 1</a>、<a href="#pit-unbounded">坑 4</a>。</p>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>几种思路：等的人排在哪，交接靠什么完成</h2>
+    <p class="lead">“容量为 0”只是说不存元素，等着的线程总要有地方排。几种实现的区别就在这里。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>思路</th><th>等的人排在哪</th><th>交接怎么完成</th><th>顺序</th><th>谁在用</th></tr></thead>
+      <tbody>
+        <tr><th>一把锁 + 条件变量</th><td>条件变量的等待队列</td><td>拿锁放进槽位，signal 对方，再等回信</td><td>看锁</td><td>JDK 5 的 SynchronousQueue</td></tr>
+        <tr><th>双重栈 dual stack</th><td>一个无锁栈（Treiber 栈）的栈顶</td><td>新来的和栈顶配对，CAS 栈顶节点</td><td>后到先得</td><td>SynchronousQueue 默认模式：JDK 6～21.0.1 是 <code>TransferStack</code>，21.0.2 起是 <code>xferLifo</code></td></tr>
+        <tr class="hl"><th>双重队列 dual queue</th><td>一个无锁链表队列（Michael &amp; Scott 队列）</td><td>新来的和第一个没配对的节点配对，CAS 它的 <code>item</code></td><td>先到先得</td><td><code>SynchronousQueue(true)</code>；<code>LinkedTransferQueue</code>（JDK 7 起）</td></tr>
+        <tr><th>交换器</th><td>一个槽位，竞争大时换成一组槽位</td><td>两个线程互相换东西</td><td>不分先后</td><td><code>Exchanger</code>：两边都既给又拿，不分生产者和消费者</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="trio">
+    <div class="need" data-role="other"><b><i>要同步交接、不在乎顺序</i></b><p><code>new SynchronousQueue&lt;&gt;()</code>。线程池用它：最近闲下来的线程先接活，其余的闲久了被回收。</p></div>
+    <div class="need" data-role="other"><b><i>要同步交接、先来先得</i></b><p><code>new SynchronousQueue&lt;&gt;(true)</code>。HikariCP 递交连接就用这个。</p></div>
+    <div class="need" data-role="bk"><b><i>有时交接、有时缓冲</i></b><p><code>LinkedTransferQueue</code>：<code>transfer</code> 等到被取走，<code>put</code> 放下就走，取的一方不用区分。</p></div>
+  </div>
+  <p class="pick-line"><b>选择规则：</b>先问“放的人要不要等到被取走”，再问“要不要先来先得”。本页学双重队列和双重栈：从 JDK 21.0.2 起，SynchronousQueue 的两种模式和 LinkedTransferQueue 已经共用同一套节点和等待代码，学一个就懂三个。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>关键洞察：节点就是等着的人，CAS 就是交接</h2>
+    <p class="lead">打个比方：一个交接柜台前排着一列人，要么全是拿着货等人接的，要么全是空着手等货的，不会两种人混着排。来了一个反方向的人，就直接走到队首那位面前完成交接。下面把比方换成真实的结构：每个人是一个 <code>DualNode</code>，“交接”是对它的 <code>item</code> 做一次 CAS。比方对不上的地方：真实的链表里还挂着已经交接完、还没被摘掉的节点，<code>head</code> 也不总指着队首（见 <a href="#k-slack">洞察 5</a>）。</p>
+  </div>
+
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="bk"><h4>CAS</h4><p><code>compareAndSet(期望值, 新值)</code>：是期望值才改，一条 CPU 指令完成，两个线程同时做只有一个成功。JDK 里用的是 <code>compareAndExchange</code>，失败时顺便返回当前值。<a href="../database/hikari-concurrentbag.html#s4">上一页</a>用过。</p></div>
+      <div class="fact" data-role="cg"><h4>park / unpark</h4><p><code>LockSupport.park()</code> 让当前线程睡下，<code>unpark(t)</code> 叫醒 t。先 unpark 后 park 也行：会留一张“许可”，park 立刻返回，所以不怕叫早了。</p></div>
+      <div class="fact" data-role="pd"><h4>无锁链表队列</h4><p>Michael &amp; Scott 队列：用 CAS 改队尾节点的 <code>next</code> 来追加，用 CAS 改 <code>head</code> 来出队。<code>ConcurrentLinkedQueue</code> 就是它。</p></div>
+      <div class="fact" data-role="of"><h4>无锁栈</h4><p>Treiber 栈：只有一个 <code>head</code>（栈顶），压栈和弹栈都是对 <code>head</code> 做一次 CAS。</p></div>
+    </div>
+  </div>
+
+  <figure id="k-node">
+    <h3><span class="sn">洞察 1</span>一个节点两种身份，配对就是改 item</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="数据节点被取走时 item 从 x 变成 null；请求节点被填上时 item 从 null 变成 x；isData 和 item 是否为空不一致就算已配对">
+        <text class="t-b" x="20" y="28">数据节点：put / transfer 留下的“货”</text>
+        <rect x="20" y="42" width="190" height="64" rx="12" class="b-of"/><text class="t-mono" x="36" y="66">isData = true</text><text class="t-mono" x="36" y="90">item   = "x"</text>
+        <path class="e-bk" d="M214 74 H384" marker-end="url(#ah-bk)"/><text class="t-bk" x="299" y="64" text-anchor="middle">take 来了：CAS "x" → null</text>
+        <rect x="390" y="42" width="190" height="64" rx="12" class="b-neu"/><text class="t-mono" x="406" y="66">isData = true</text><text class="t-mono" x="406" y="90">item   = null</text>
+        <text class="t-m" x="600" y="70">已配对：take 拿到 "x"</text><text class="t-m" x="600" y="88">等着的 put 被叫醒，返回</text>
+        <text class="t-b" x="20" y="146">请求节点：take / poll(超时) 留下的“空位”</text>
+        <rect x="20" y="160" width="190" height="64" rx="12" class="b-pd"/><text class="t-mono" x="36" y="184">isData = false</text><text class="t-mono" x="36" y="208">item   = null</text>
+        <path class="e-bk" d="M214 192 H384" marker-end="url(#ah-bk)"/><text class="t-bk" x="299" y="182" text-anchor="middle">put 来了：CAS null → "y"</text>
+        <rect x="390" y="160" width="190" height="64" rx="12" class="b-neu"/><text class="t-mono" x="406" y="184">isData = false</text><text class="t-mono" x="406" y="208">item   = "y"</text>
+        <text class="t-m" x="600" y="188">已配对：等着的 take 醒来拿走 "y"，</text><text class="t-m" x="600" y="206">再把 item 改成指向节点自己</text>
+      </svg>
+    </div>
+    <figcaption>判断活没活只要一行：<code>matched() = isData != (item != null)</code>。数据节点有货就是活的，请求节点没货就是活的。CAS 成功的那一刻就是交接完成的那一刻；CAS 只有一个人能成功，所以一份货不会被两个人拿走，一个空位也不会被填两次。超时或中断的取消也走这条路：把 item 改成一个“不可能的值”（数据节点改成 null，请求节点改成指向自己），从此这个节点也算“已配对”，别人不会再和它配。</figcaption>
+  </figure>
+
+  <figure id="k-mode">
+    <h3><span class="sn">洞察 2</span>活着的节点永远是同一种</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 200" role="img" aria-label="链表前面是一段已配对的死节点，后面是一段活节点，活节点要么全是数据要么全是请求">
+        <text class="t-ink t-b" x="40" y="30">head</text><path class="e-ink" d="M56 36 V52" marker-end="url(#ah-ink)"/>
+        <g transform="translate(20,56)">
+          <rect x="0" y="0" width="90" height="48" rx="10" class="b-neu"/><text class="t-s" x="45" y="22" text-anchor="middle">已配对</text><text class="t-m" x="45" y="38" text-anchor="middle">死</text>
+          <path class="e-mut" d="M92 24 H124" marker-end="url(#ah-mut)"/>
+          <rect x="128" y="0" width="90" height="48" rx="10" class="b-neu"/><text class="t-s" x="173" y="22" text-anchor="middle">已配对</text><text class="t-m" x="173" y="38" text-anchor="middle">死</text>
+          <path class="e-mut" d="M220 24 H252" marker-end="url(#ah-mut)"/>
+          <rect x="256" y="0" width="90" height="48" rx="10" class="b-of"/><text class="t-s" x="301" y="22" text-anchor="middle">数据 a</text><text class="t-m" x="301" y="38" text-anchor="middle">活</text>
+          <path class="e-mut" d="M348 24 H380" marker-end="url(#ah-mut)"/>
+          <rect x="384" y="0" width="90" height="48" rx="10" class="b-of"/><text class="t-s" x="429" y="22" text-anchor="middle">数据 b</text><text class="t-m" x="429" y="38" text-anchor="middle">活</text>
+          <path class="e-mut" d="M476 24 H508" marker-end="url(#ah-mut)"/>
+          <rect x="512" y="0" width="90" height="48" rx="10" class="b-of"/><text class="t-s" x="557" y="22" text-anchor="middle">数据 c</text><text class="t-m" x="557" y="38" text-anchor="middle">活</text>
+        </g>
+        <text class="t-ink t-b" x="560" y="30">tail</text><path class="e-ink" d="M577 36 V52" marker-end="url(#ah-ink)"/>
+        <text class="t-m" x="660" y="74">一段死的前缀</text><text class="t-m" x="660" y="92">+ 一段活的后缀</text>
+        <rect x="20" y="130" width="860" height="52" rx="12" class="b-card"/>
+        <text class="t-b" x="36" y="153">为什么不会混排：</text>
+        <text class="t-s" x="160" y="153">每个操作都先顺着链表找“反方向的活节点”，找到就配对走人；只有一个都找不到，</text>
+        <text class="t-s" x="160" y="172">也就是活的全是同类（或者没有活的），才把自己追加到最后。所以一条链上不可能同时排着货和等货的人。</text>
+      </svg>
+    </div>
+    <figcaption>这条不变式让每个操作只需要看一眼：遇到第一个活节点，是反方向就配对，是同方向就说明后面全是同方向，直接去队尾排着。不用锁也能判断“现在队列处在哪种状态”。</figcaption>
+  </figure>
+
+  <div class="sub" id="k-xfer">
+    <h3><span class="sn">洞察 3</span>所有方法都是同一个 xfer(e, ns)</h3>
+    <p class="tip"><code>e</code> 是要放的东西，<code>null</code> 表示要取；<code>ns</code> 说明配不上时怎么办。两个类的十几个方法，全落在这四种 <code>ns</code> 上。</p>
+    <div class="xmap">
+      <div class="sc" data-role="other"><b>ns = 0 · 立即</b><span>配得上就配，配不上马上返回，不留节点</span><span><code>SQ.offer(e)</code> <code>SQ.poll()</code> <code>LTQ.poll()</code> <code>LTQ.tryTransfer(e)</code></span></div>
+      <div class="sc" data-role="g2"><b>ns = -1 · 异步</b><span>配不上就追加一个数据节点，自己不等，马上返回</span><span><code>LTQ.put</code> <code>LTQ.offer</code> <code>LTQ.add</code>（只有 LTQ 有）</span></div>
+      <div class="sc" data-role="cg"><b>ns = T · 限时</b><span>配不上就追加节点等着，最多等 T 纳秒，到时取消</span><span><code>SQ.offer(e, t)</code> <code>SQ.poll(t)</code> <code>LTQ.poll(t)</code> <code>LTQ.tryTransfer(e, t)</code></span></div>
+      <div class="sc" data-role="bk"><b>ns = MAX · 一直等</b><span>配不上就追加节点，一直等到被配对或被中断</span><span><code>SQ.put</code> <code>SQ.take</code> <code>LTQ.take</code> <code>LTQ.transfer</code></span></div>
+    </div>
+    <p class="tip">所以 SynchronousQueue 就是“放的一方只能选 0、T、MAX”的 LinkedTransferQueue；LinkedTransferQueue 多出来的只是 <code>ns = -1</code>：货可以先挂在链上，没人等它。</p>
+  </div>
+
+  <figure id="k-wait">
+    <h3><span class="sn">洞察 4</span>等的人先自旋，再登记，再睡；配对的人负责叫醒</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 236" role="img" aria-label="等待者先自旋最多 128 次，再把自己写进 waiter 字段、加一道全屏障、复查 item，然后 park；配对者 CAS 成功后读 waiter 并 unpark">
+        <text class="t-b" x="20" y="34">等的人</text>
+        <text class="t-b" x="20" y="150">配对的人</text>
+        <line class="e-axis" x1="90" y1="28" x2="880" y2="28"/>
+        <line class="e-axis" x1="90" y1="144" x2="880" y2="144"/>
+        <rect x="100" y="14" width="120" height="28" rx="6" class="b-card"/><text class="t-s" x="160" y="33" text-anchor="middle">追加节点</text>
+        <rect x="228" y="14" width="200" height="28" rx="6" class="b-warn"/><text class="t-s" x="328" y="33" text-anchor="middle">自旋 ≤128 次 onSpinWait</text>
+        <rect x="436" y="14" width="200" height="28" rx="6" class="b-cg"/><text class="t-s" x="536" y="33" text-anchor="middle">waiter = 我；全屏障</text>
+        <rect x="644" y="14" width="100" height="28" rx="6" class="b-card"/><text class="t-s" x="694" y="33" text-anchor="middle">复查 item</text>
+        <rect x="752" y="14" width="110" height="28" rx="6" class="b-cg"/><text class="t-s" x="807" y="33" text-anchor="middle">park</text>
+        <text class="t-m" x="328" y="62" text-anchor="middle">只在“我是第一个等的，或前一个也在自旋”时才转</text>
+        <text class="t-m" x="328" y="78" text-anchor="middle">虚拟线程、单核机器：一圈都不转</text>
+        <rect x="600" y="130" width="140" height="28" rx="6" class="b-bk"/><text class="t-s" x="670" y="149" text-anchor="middle">CAS item 成功</text>
+        <rect x="748" y="130" width="120" height="28" rx="6" class="b-card"/><text class="t-s" x="808" y="149" text-anchor="middle">读 waiter → unpark</text>
+        <path class="e-bk" d="M670 128 C 670 100, 690 70, 694 46" marker-end="url(#ah-bk)"/>
+        <text class="t-bk" x="656" y="108" text-anchor="end">自旋期间被配上：一次线程切换都不用</text>
+        <rect x="100" y="180" width="780" height="44" rx="10" class="b-card"/>
+        <text class="t-b" x="116" y="200">为什么不会漏叫：</text>
+        <text class="t-s" x="232" y="200">等的人先写 waiter、再读 item；配对的人先 CAS item、再读 waiter。两边中间都有屏障，</text>
+        <text class="t-s" x="232" y="217">至少一边能看到对方写的：要么等的人复查时发现已配对，不睡了；要么配对的人读到 waiter，去 unpark。</text>
+      </svg>
+    </div>
+    <figcaption>这是 <code>DualNode.await</code> 的骨架。自旋是为了省掉线程切换：如果对方马上就来，转几十纳秒就能拿到，用不着睡下再被叫醒。可转多了浪费 CPU，所以有条件、有上限。这里和<a href="../database/hikari-concurrentbag.html#m-order">上一页</a>的“先写自己的、再读对方的”是同一个套路。</figcaption>
+  </figure>
+
+  <figure id="k-slack">
+    <h3><span class="sn">洞察 5</span>head 和 tail 可以落后一步，被甩掉的旧 head 指向自己</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 220" role="img" aria-label="head 指向一个已配对的节点，后面才是活节点；旧 head 的 next 指向自己，不再拖住后面的节点">
+        <g transform="translate(20,40)">
+          <rect x="0" y="40" width="90" height="48" rx="10" class="b-neu" style="stroke-dasharray:5 4"/><text class="t-s" x="45" y="62" text-anchor="middle">旧 head</text><text class="t-m" x="45" y="78" text-anchor="middle">已甩掉</text>
+          <path class="e-mut" d="M60 40 C 60 10, 30 10, 30 36" marker-end="url(#ah-mut)"/><text class="t-m" x="72" y="14">next 指向自己</text>
+          <rect x="190" y="40" width="90" height="48" rx="10" class="b-neu"/><text class="t-s" x="235" y="62" text-anchor="middle">已配对</text><text class="t-m" x="235" y="78" text-anchor="middle">n2</text>
+          <path class="e-mut" d="M282 64 H314" marker-end="url(#ah-mut)"/>
+          <rect x="318" y="40" width="90" height="48" rx="10" class="b-of"/><text class="t-s" x="363" y="62" text-anchor="middle">数据 z</text><text class="t-m" x="363" y="78" text-anchor="middle">n3 活</text>
+          <path class="e-mut" d="M410 64 H442" marker-end="url(#ah-mut)"/>
+          <rect x="446" y="40" width="90" height="48" rx="10" class="b-of"/><text class="t-s" x="491" y="62" text-anchor="middle">数据 w</text><text class="t-m" x="491" y="78" text-anchor="middle">n4 活</text>
+          <text class="t-ink t-b" x="216" y="22">head</text><path class="e-ink" d="M232 26 V38" marker-end="url(#ah-ink)"/>
+          <text class="t-ink t-b" x="474" y="22">tail</text><path class="e-ink" d="M490 26 V38" marker-end="url(#ah-ink)"/>
+        </g>
+        <text class="t-s" x="600" y="70">head 指着一个已配对的节点，</text>
+        <text class="t-s" x="600" y="90">真正的队首是它后面那个：差一步</text>
+        <text class="t-s" x="600" y="110">就是源码里说的 slack = 1。</text>
+        <rect x="20" y="150" width="860" height="56" rx="12" class="b-card"/>
+        <text class="t-b" x="36" y="173">为什么不每次都改：</text>
+        <text class="t-s" x="160" y="173">head、tail 是所有线程都要 CAS 的热点，每次配对都改它，就每次都多一次竞争。允许落后一步，</text>
+        <text class="t-s" x="160" y="192">就不必每次都改，多走一步的代价只是多读一个节点。旧 head 改成指向自己，GC 就不会顺着它拖住后面一长串。</text>
+      </svg>
+    </div>
+    <figcaption>这张图正是 ⑤ 第 6 步之后的样子。顺着链表走的人如果读到一个 <code>next</code> 指向自己的节点，就知道自己落后了，回到 <code>head</code> 重来。tail 甚至可以落后到 head 之前，指着一个已经被甩掉的节点，⑤ 最后一步就是这样。</figcaption>
+  </figure>
+
+  <figure id="k-lifo">
+    <h3><span class="sn">洞察 6</span>公平是队列，不公平是栈，节点和等待完全一样</h3>
+    <div class="design">
+      <div class="way" data-role="pd">
+        <h4>公平：<code>xfer</code><small>SynchronousQueue(true)、LinkedTransferQueue</small></h4>
+        <svg viewBox="0 0 380 120" role="img" aria-label="队列：A、B、C 依次排在后面，来货时和最前面的 A 配对">
+          <text class="t-b" x="10" y="20">A、B、C 依次 take，然后来了一个 put</text>
+          <rect x="10" y="40" width="70" height="40" rx="8" class="b-pd"/><text class="t-s" x="45" y="65" text-anchor="middle">A</text>
+          <path class="e-mut" d="M82 60 H104" marker-end="url(#ah-mut)"/>
+          <rect x="108" y="40" width="70" height="40" rx="8" class="b-pd"/><text class="t-s" x="143" y="65" text-anchor="middle">B</text>
+          <path class="e-mut" d="M180 60 H202" marker-end="url(#ah-mut)"/>
+          <rect x="206" y="40" width="70" height="40" rx="8" class="b-pd"/><text class="t-s" x="241" y="65" text-anchor="middle">C</text>
+          <text class="t-bk" x="45" y="104" text-anchor="middle">← 货给 A</text>
+          <text class="t-m" x="300" y="65">新来的排到这</text>
+        </svg>
+      </div>
+      <div class="way" data-role="of">
+        <h4>不公平：<code>xferLifo</code><small>SynchronousQueue() 默认</small></h4>
+        <svg viewBox="0 0 380 120" role="img" aria-label="栈：C 在栈顶，来货时和最后来的 C 配对">
+          <text class="t-b" x="10" y="20">同样的顺序，换成栈</text>
+          <rect x="10" y="40" width="70" height="40" rx="8" class="b-pd"/><text class="t-s" x="45" y="65" text-anchor="middle">C</text>
+          <path class="e-mut" d="M82 60 H104" marker-end="url(#ah-mut)"/>
+          <rect x="108" y="40" width="70" height="40" rx="8" class="b-pd"/><text class="t-s" x="143" y="65" text-anchor="middle">B</text>
+          <path class="e-mut" d="M180 60 H202" marker-end="url(#ah-mut)"/>
+          <rect x="206" y="40" width="70" height="40" rx="8" class="b-pd"/><text class="t-s" x="241" y="65" text-anchor="middle">A</text>
+          <text class="t-bk" x="45" y="104" text-anchor="middle">← 货给 C</text>
+          <text class="t-m" x="290" y="65">head 就是栈顶</text>
+        </svg>
+      </div>
+    </div>
+    <figcaption>不公平模式把同一个 <code>head</code> 字段当栈顶用，<code>tail</code> 永远是 null；压栈、配对都只碰栈顶。源码注释说栈在竞争小时通常更快，而且更适合线程池这类“管资源”的场景（最近用过的线程还热着），但不适合消息传递。⑤ 和 ⑥ 都会实测这一点。</figcaption>
+  </figure>
+
+  <div class="sub" id="k-design">
+    <h3>为什么这样设计：把“会合”压成一次 CAS</h3>
+    <div class="design">
+      <div class="way" data-role="other">
+        <h4>被放弃的：锁 + 槽位 + 回信</h4>
+        <ul class="pains">
+          <li>放的人放进槽位后还得等回信，一次交接至少两次唤醒</li>
+          <li>所有交接共用一把锁，并发越高越挤</li>
+          <li class="ok">好写，好懂，用不着想内存可见性</li>
+        </ul>
+      </div>
+      <div class="way" data-role="bk">
+        <h4>双重队列：等的人就是节点</h4>
+        <ul class="pains">
+          <li class="ok">配对的人 CAS 成功，交接就完成了，只用叫醒对方一次，自己不等回信</li>
+          <li class="ok">不同的交接各 CAS 各的节点；head、tail 允许落后，热点竞争更少</li>
+          <li>代价是复杂：死节点的清理、超时取消、旧节点的垃圾链，源码里一大半在处理这些</li>
+        </ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="bk"><b>决定胜负的约束：</b>交接是两个线程的会合，最贵的是线程切换（微秒级），CAS 只要几十纳秒。锁的方案天生要两次唤醒；双重队列让等待者把“回信”写在自己的节点上，配对者一次 CAS 就同时完成了交货和回信。② 的实测：每次交接的线程切换从 2～3 次降到 1 次以内，吞吐高 2～40 倍。</p>
+    <p class="tip">JDK 21.0.2 之后还有一个设计取舍：原来 SynchronousQueue 自己有一套 <code>TransferStack</code> / <code>TransferQueue</code>，和 LinkedTransferQueue 各写各的。现在 SynchronousQueue 的内部类 <code>Transferer</code> 直接继承 LinkedTransferQueue：公平模式用父类的 <code>xfer</code>，不公平模式只加了一个 <code>xferLifo</code>，节点和等待逻辑共用。SynchronousQueue.java 从 1168 行（JDK 17）缩到 590 行。代价见 <a href="#ver">⑥ 版本差异</a>。</p>
+  </div>
+
+  <div class="sub" id="k-api">
+    <h3>最少的 API</h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">API</span><b>两个类最常用的方法</b></div>
+<pre><code>var sq = new SynchronousQueue&lt;Task&gt;();        <span class="cm">// 默认不公平（栈）；new SynchronousQueue&lt;&gt;(true) 是公平（队列）</span>
+sq.put(t);                 <span class="cm">// 等到有人取走</span>
+boolean ok = sq.offer(t);  <span class="cm">// 现在就有人在等才成功，否则 false</span>
+Task x = sq.take();        <span class="cm">// 等到有人放</span>
+Task y = sq.poll(1, SECONDS);   <span class="cm">// 最多等 1 秒，超时返回 null</span>
+
+var q = new LinkedTransferQueue&lt;Task&gt;();      <span class="cm">// 无界，先来先得</span>
+q.put(t);                  <span class="cm">// 放下就走，从不阻塞</span>
+q.transfer(t);             <span class="cm">// 等到有人取走（像 SQ.put）</span>
+boolean got = q.tryTransfer(t, 1, SECONDS);   <span class="cm">// 1 秒内没人取就撤回</span>
+boolean someone = q.hasWaitingConsumer();     <span class="cm">// 有没有人停在 take/poll 上</span></code></pre>
+    </div>
+    <p class="tip">超时取消后节点怎么摘、自旋的具体条件、各版本差在哪、哪些方法是 O(n)，放到 <a href="#s6">第⑥步</a>。</p>
+  </div>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>手推一遍：10 个操作，看链表怎么变</h2>
+    <p class="lead">下面的演示把 JDK 21u 的 <code>LinkedTransferQueue.xfer</code> 原样移植成了 JS，一次只走一个操作，所以每个 CAS 都会成功。节点编号、<code>head</code>、<code>tail</code>、谁指向自己，都和 JDK 里一模一样。</p>
+  </div>
+  <div class="stage" id="walk" tabindex="0" aria-label="LinkedTransferQueue 分步演示，左右方向键切换步骤">
+    <div class="st-top">
+      <div class="ctrl">
+        <button class="btn" type="button" id="wk-prev">← 上一步</button>
+        <button class="btn primary" type="button" id="wk-next">下一步 →</button>
+        <button class="btn" type="button" id="wk-play">自动播放</button>
+        <button class="btn" type="button" id="wk-reset">从头来</button>
+      </div>
+      <span class="st-pos" id="wk-pos">第 <b>0</b> / 10 步</span>
+    </div>
+    <p class="cap-txt" id="wk-cap">开始。</p>
+    <div class="dq" id="wk-board"></div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>这 10 步里看到的</th><th>对应 ④ 的哪一条</th></tr></thead>
+      <tbody>
+        <tr><td>第 3、4、7、9、10 步，来的人都是一次 CAS 就完成交接，不用排队</td><td><a href="#k-node">洞察 1</a></td></tr>
+        <tr><td>任何时刻，活着的节点要么全是请求（第 1～2 步），要么全是数据（第 5～8 步）</td><td><a href="#k-mode">洞察 2</a></td></tr>
+        <tr><td><code>put</code> 放下就走（第 5、6 步），<code>transfer</code> 要等到第 10 步才返回</td><td><a href="#k-xfer">洞察 3</a></td></tr>
+        <tr><td>第 3、9 步配对的就是 head，head 不动；第 4、7、10 步 head 才前移，旧 head 指向自己</td><td><a href="#k-slack">洞察 5</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sub" id="mini">
+    <h3>一段短实现：不到 60 行的双重队列</h3>
+    <p class="tip">照 JDK 6～8 里 SynchronousQueue 公平模式（<code>TransferQueue</code>）的经典结构写的，只保留一直等的 <code>put</code> 和 <code>take</code>，不支持超时和中断，也不做 slack。有一个哑节点当 head，判断“排着的是不是同类”看的是 tail。</p>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">1</span><b>MiniDualQueue.java</b>JDK 11+</div>
+<pre><code>import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
+
+<span class="cm">// 极简双重队列（FIFO）：只有 put（等到被取走才返回）和 take，不支持超时和中断</span>
+public class MiniDualQueue&lt;E&gt; {
+  static final class Node {
+    final boolean isData;                                  <span class="cm">// true：数据节点；false：请求节点</span>
+    final AtomicReference&lt;Object&gt; item;                    <span class="cm">// 数据节点 x→null、请求节点 null→x，就是“交接”</span>
+    final AtomicReference&lt;Node&gt; next = new AtomicReference&lt;&gt;();
+    volatile Thread waiter;
+    Node(Object x, boolean isData) { this.item = new AtomicReference&lt;&gt;(x); this.isData = isData; }
+  }
+  private final AtomicReference&lt;Node&gt; head, tail;
+  public MiniDualQueue() {
+    Node dummy = new Node(null, true);                     <span class="cm">// 哑节点：isData 却没数据，算“已配对”</span>
+    head = new AtomicReference&lt;&gt;(dummy); tail = new AtomicReference&lt;&gt;(dummy);
+  }
+  public void put(E e) { xfer(e); }
+  @SuppressWarnings("unchecked") public E take() { return (E) xfer(null); }
+
+  private Object xfer(Object e) {
+    boolean haveData = (e != null);
+    Node s = null;
+    for (;;) {
+      Node t = tail.get(), h = head.get();
+      if (h == t || t.isData == haveData) {                <span class="cm">// 空，或者排着的是同类：排到队尾</span>
+        Node tn = t.next.get();
+        if (t != tail.get()) continue;
+        if (tn != null) { tail.compareAndSet(t, tn); continue; }   <span class="cm">// tail 落后了，帮它往前推</span>
+        if (s == null) s = new Node(e, haveData);
+        if (!t.next.compareAndSet(null, s)) continue;      <span class="cm">// 别人先追加了，重来</span>
+        tail.compareAndSet(t, s);
+        Object x = await(s, e);
+        if (head.get() == t) head.compareAndSet(t, s);     <span class="cm">// 帮忙把 head 推过自己</span>
+        return (x != null) ? x : e;
+      } else {                                             <span class="cm">// 排着的是异类：和第一个配对</span>
+        Node m = h.next.get();
+        if (t != tail.get() || m == null || h != head.get()) continue;   <span class="cm">// 读到的不一致，重来</span>
+        Object x = m.item.get();
+        boolean ok = (haveData == (x == null)) &amp;&amp; m.item.compareAndSet(x, e);
+        head.compareAndSet(h, m);                          <span class="cm">// 不管成没成功，m 都不再是活节点了</span>
+        if (!ok) continue;                                 <span class="cm">// 被别人抢先配对了</span>
+        LockSupport.unpark(m.waiter);
+        return (x != null) ? x : e;
+      }
+    }
+  }
+  private Object await(Node s, Object e) {                 <span class="cm">// 先自旋，再挂起</span>
+    for (int spins = 128;;) {
+      Object x = s.item.get();
+      if (x != e) return x;
+      if (spins &gt; 0) { spins--; Thread.onSpinWait(); }
+      else if (s.waiter == null) s.waiter = Thread.currentThread();   <span class="cm">// 先登记，再复查一遍 item</span>
+      else LockSupport.park(this);
+    }
+  }
+}</code></pre>
+    </div>
+    <div class="exp-h"><span class="tag-real">实测</span><b>压力测试：P 个线程放、C 个线程取，检查一个不多、一个不少</b></div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>P 放 / C 取</th><th class="num">总个数</th><th>结果（JDK 21 和 11 各跑一次）</th><th class="num">每秒（JDK 21）</th></tr></thead>
+        <tbody>
+          <tr><th>1 / 1</th><td class="num">200,000</td><td class="good">全部取到，和对得上，没有重复</td><td class="num">40 万</td></tr>
+          <tr><th>4 / 4</th><td class="num">400,000</td><td class="good">同上</td><td class="num">77 万</td></tr>
+          <tr><th>16 / 16</th><td class="num">320,000</td><td class="good">同上</td><td class="num">44 万</td></tr>
+          <tr><th>1 / 8、8 / 1、3 / 5</th><td class="num">10～80 万</td><td class="good">同上</td><td class="num">28～57 万</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">和 JDK 21 的 <code>SynchronousQueue(true)</code>（同一台机器每秒 28～67 万次）在一个量级。JDK 的版本多出来的代码，几乎都花在超时取消、中断、摘掉死节点和防垃圾链上，见 <a href="#c3">⑥ 第三圈</a>。</p>
+  </div>
+
+  <div class="sub" id="peek">
+    <h3>在真 JDK 上对一遍</h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">2</span><b>SqPeek.java</b>单文件，<code>java SqPeek.java</code> 直接跑</div>
+<pre><code>import java.util.*;
+import java.util.concurrent.*;
+
+<span class="cm">// 看 SynchronousQueue 和 LinkedTransferQueue 的行为；JDK 11+ 直接 java SqPeek.java</span>
+public class SqPeek {
+  <span class="cm">// 让 n 个线程按 A、B、C… 的先后顺序停在 take() 上，再依次放入 1..n，看谁拿到几</span>
+  static String order(BlockingQueue&lt;Integer&gt; q, int n) throws Exception {
+    var got = new ConcurrentSkipListMap&lt;Integer, String&gt;();
+    var ts = new ArrayList&lt;Thread&gt;();
+    for (int i = 0; i &lt; n; i++) {
+      String name = String.valueOf((char) ('A' + i));
+      Thread t = new Thread(() -&gt; { try { got.put(q.take(), name); } catch (InterruptedException e) { } });
+      t.start(); ts.add(t);
+      while (t.getState() != Thread.State.WAITING) Thread.sleep(1);   <span class="cm">// 确认它已经停住</span>
+    }
+    for (int v = 1; v &lt;= n; v++) q.put(v);
+    for (Thread t : ts) t.join();
+    return got.toString();
+  }
+
+  public static void main(String[] args) throws Exception {
+    System.out.println("JDK " + Runtime.version());
+    var tr = Class.forName("java.util.concurrent.SynchronousQueue$Transferer");
+    System.out.println("① SynchronousQueue$Transferer 的父类：" + tr.getSuperclass().getName());
+
+    var sq = new SynchronousQueue&lt;String&gt;();
+    System.out.println("② 没人在取：offer(\"x\") = " + sq.offer("x") + "，poll() = " + sq.poll() + "，size() = " + sq.size());
+    Thread waiting = new Thread(() -&gt; { try { sq.take(); } catch (InterruptedException e) { } });
+    waiting.start(); while (waiting.getState() != Thread.State.WAITING) Thread.sleep(1);
+    System.out.println("   有人停在 take() 上：size() = " + sq.size() + "，isEmpty() = " + sq.isEmpty() + "，offer(\"x\") = " + sq.offer("x"));
+    waiting.join();
+
+    System.out.println("③ 默认（不公平）：" + order(new SynchronousQueue&lt;&gt;(), 3) + "  ← 值 → 拿到它的线程");
+    System.out.println("   公平 true：   " + order(new SynchronousQueue&lt;&gt;(true), 3));
+
+    var ltq = new LinkedTransferQueue&lt;String&gt;();
+    ltq.put("a"); ltq.put("b");
+    System.out.println("④ LTQ put 两次就返回：size() = " + ltq.size() + "；tryTransfer(\"c\") = " + ltq.tryTransfer("c") + "（没人在等）");
+    ltq.clear();
+    Thread consumer = new Thread(() -&gt; { try { Thread.sleep(300); System.out.println("   消费者 300 ms 后 take() = " + ltq.take()); } catch (InterruptedException e) { } });
+    consumer.start();
+    long t0 = System.nanoTime(); ltq.transfer("d");
+    System.out.println("   transfer(\"d\") 等了 " + (System.nanoTime() - t0) / 1_000_000 + " ms 才返回");
+    consumer.join();
+    Thread c2 = new Thread(() -&gt; { try { ltq.take(); } catch (InterruptedException e) { } });
+    c2.start(); while (c2.getState() != Thread.State.WAITING) Thread.sleep(1);
+    System.out.println("   有人在等：hasWaitingConsumer() = " + ltq.hasWaitingConsumer() + "，getWaitingConsumerCount() = " + ltq.getWaitingConsumerCount() + "，size() = " + ltq.size());
+    ltq.put("e"); c2.join();
+  }
+}</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">3</span><b>输出</b>上面 JDK 21.0.12，下面 JDK 11.0.32，只有第 ① 行不同</div>
+<pre class="console"><code><span class="w">$ java SqPeek.java</span>
+JDK 21.0.12.1+1-1-22.04.4-Ubuntu
+<b>① SynchronousQueue$Transferer 的父类：java.util.concurrent.LinkedTransferQueue</b>
+② 没人在取：offer("x") = false，poll() = null，size() = 0
+   有人停在 take() 上：size() = 0，isEmpty() = true，offer("x") = true
+<b>③ 默认（不公平）：{1=C, 2=B, 3=A}</b>  ← 值 → 拿到它的线程
+<b>   公平 true：   {1=A, 2=B, 3=C}</b>
+④ LTQ put 两次就返回：size() = 2；tryTransfer("c") = false（没人在等）
+   消费者 300 ms 后 take() = d
+   transfer("d") 等了 300 ms 才返回
+   有人在等：hasWaitingConsumer() = true，getWaitingConsumerCount() = 1，size() = 0
+
+JDK 11.0.32.1+1-post-1ubuntu1-22.04-Ubuntu
+<b>① SynchronousQueue$Transferer 的父类：java.lang.Object</b>      <span class="cm">← 老实现：自己的 TransferStack / TransferQueue</span>
+（②～④ 和上面一字不差）</code></pre>
+    </div>
+  </div>
+  <div class="done-box"><b>到这里已经能交差了：</b>能画出链表里两种节点、说清“配对就是 CAS item”，能解释为什么 <code>offer</code> 没人等就失败、为什么默认模式后到先得，面试里关于这两个类的大部分问题都答得上。</div>
+  <div class="todo">
+    <b>已知还没处理的细节</b>
+    <ul>
+      <li>线程池用 SynchronousQueue 时线程为什么会暴涨、什么时候直接拒绝：<a href="#pit-cached">⑥ 坑 1、坑 2</a></li>
+      <li>LinkedTransferQueue 无界，<code>size()</code> 是遍历出来的：<a href="#pit-unbounded">⑥ 坑 4</a>、<a href="#pit-ltqsize">坑 6</a></li>
+      <li>超时取消后节点怎么摘、自旋多久、JDK 11 和 21 差在哪：<a href="#c3">⑥ 第三圈</a></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>边界和变体：线程池里的后果、源码细节、版本差异</h2>
+    <p class="lead">第一圈是用错就出事的边界，第二圈是团队里该怎么用，第三圈读源码、在沙盘里自己摆操作、对比 JDK 11 和 21。</p>
+  </div>
+
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-cached">
+        <b><em>坑 1</em>newCachedThreadPool 遇到突发流量，线程数暴涨<a class="root" href="#k-xfer">← ④ offer 是 ns = 0</a></b>
+        <dl>
+          <dt>现象</dt><dd>1000 个任务一下子进来、每个跑 200 ms：线程池开了 1000 个线程，<code>getQueue().size()</code> 一直是 0。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>线程池提交任务用的是 <code>offer</code>，在 SynchronousQueue 上就是“立即”模式：此刻没有空闲线程停在 <code>poll</code> 上，就失败，线程池接着新建线程。<code>newCachedThreadPool</code> 的上限是 <code>Integer.MAX_VALUE</code>。</dd>
+          <dt>做法</dt><dd class="fix">自己 new <code>ThreadPoolExecutor</code>，给 <code>maximumPoolSize</code> 一个上限，配上拒绝策略；或者换成有界队列，让任务排队。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-reject">
+        <b><em>坑 2</em>有上限 + SynchronousQueue：满了直接拒绝，不排队<a class="root" href="#k-xfer">← ④ offer 是 ns = 0</a></b>
+        <dl>
+          <dt>现象</dt><dd>上限 50 个线程，同样 1000 个任务：开到 50 个线程，其余 950 个全抛 <code>RejectedExecutionException</code>。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>同上：SynchronousQueue 不存东西，线程到上限后 <code>offer</code> 必然失败，只剩拒绝策略可走。</dd>
+          <dt>做法</dt><dd class="fix">想“满了先排一会儿”，就别用 SynchronousQueue；用它就要接受“满了立刻拒”，并用 <code>CallerRunsPolicy</code> 之类的策略把压力推回给调用方。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-size">
+        <b><em>坑 3</em>SynchronousQueue 的 size、isEmpty、迭代器永远是空的<a class="root" href="#k-node">← ④ 等着的是节点，不是元素</a></b>
+        <dl>
+          <dt>现象</dt><dd>有线程停在 <code>take()</code> 上时，<code>size()</code> 仍是 0、<code>isEmpty()</code> 仍是 true（⑤ 第 ② 段）。监控线程池的“队列长度”永远是 0。</dd>
+          <dt>根源</dt><dd>链表里挂着的是等待者，不是可以拿走的元素。源码直接把这些方法写死了：<code>size()</code> 返回 0、<code>isEmpty()</code> 返回 true。</dd>
+          <dt>做法</dt><dd class="fix">监控线程池看 <code>getActiveCount()</code>、<code>getPoolSize()</code>、<code>getLargestPoolSize()</code> 和拒绝次数。LinkedTransferQueue 能用 <code>getWaitingConsumerCount()</code> 看有几个人在等。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-unbounded">
+        <b><em>坑 4</em>LinkedTransferQueue 的 put 从不阻塞，队列无界<a class="root" href="#k-xfer">← ④ put 是 ns = -1</a></b>
+        <dl>
+          <dt>现象</dt><dd>拿它当“能交接的队列”，生产比消费快时一直 <code>put</code>，内存越涨越高，最后 OOM。<code>remainingCapacity()</code> 永远是 <code>Integer.MAX_VALUE</code>。</dd>
+          <dt>根源</dt><dd>异步模式配不上就追加一个数据节点，然后马上返回，没有任何上限。</dd>
+          <dt>做法</dt><dd class="fix">要背压，生产者用 <code>transfer</code> 或 <code>tryTransfer(e, timeout)</code>；或者干脆用有界的 <code>ArrayBlockingQueue</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-lifo">
+        <b><em>坑 5</em>默认模式后到先得：最早来等的人可能等最久<a class="root" href="#k-lifo">← ④ 不公平是栈</a></b>
+        <dl>
+          <dt>现象</dt><dd>做消息传递时，几个消费者都在 <code>poll(timeout)</code>，新来的消费者总是先拿到，最早来的那个一直等到超时。放进线程池里却是好事：每 100 ms 来一个短任务，6 秒后不公平模式只剩 1 个线程，公平模式 10 个线程都还活着。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>不公平模式是栈，总是和栈顶（最后来的）配对。线程池里最后闲下来的线程一直接活，其他线程闲满 keepAlive 就被回收。</dd>
+          <dt>做法</dt><dd class="fix">线程池保持默认；做消息传递、要按先后服务时，用 <code>new SynchronousQueue&lt;&gt;(true)</code> 或 LinkedTransferQueue。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-ltqsize">
+        <b><em>坑 6</em>LinkedTransferQueue.size() 是从头数一遍<a class="root" href="#k-mode">← ④ 链上混着死节点</a></b>
+        <dl>
+          <dt>现象</dt><dd>在高频路径上调 <code>size()</code> 打日志或做判断，队列一长就明显变慢；并发修改时数出来的也只是个大概。</dd>
+          <dt>根源</dt><dd>链表里混着已配对的节点，没有计数器，<code>size()</code> 和 <code>getWaitingConsumerCount()</code> 都是 <code>countOfMode</code> 从 head 遍历一遍。javadoc 也写着它不是常数时间。</dd>
+          <dt>做法</dt><dd class="fix">判断空不空用 <code>isEmpty()</code>（找到第一个活数据节点就停）；要计数就自己在外面维护一个 <code>LongAdder</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-bugs">
+        <b><em>坑 7</em>新实现早期版本的两个 bug<a class="root env" href="#ver">历史原因 · 看版本</a></b>
+        <dl>
+          <dt>现象</dt><dd>① 21.0.2～21.0.4、JDK 22 上，不公平 SynchronousQueue 有内存泄漏（JDK-8332154），21.0.5 和 JDK 23 修复。② JDK 21.0.2 起到 JDK 25，<code>LinkedTransferQueue.poll()</code> 在极少数竞争下，队列不空也可能返回 null（JDK-8371740），JDK 26 修复。</dd>
+          <dt>根源</dt><dd>① 栈模式配对后没把节点的 item 改成指向自己，用户对象被留住了，修复就是补上那两行 <code>selfLinkItem()</code>。② <code>xfer</code> 里 CAS 失败后没有重来，而是接着往后走，碰到链尾就当成“没有可配对的”。</dd>
+          <dt>做法</dt><dd class="fix">用 JDK 21 的至少升到 21.0.5。② 截至 2026-11，21u-dev 和 25u-dev 的这个文件里还没有回移，依赖 <code>poll()</code> 结果做判断的代码要能容忍偶尔的假空。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>线程池用 SynchronousQueue，一定配线程上限和拒绝策略</b><p>别直接用 <code>Executors.newCachedThreadPool()</code>，自己 new <code>ThreadPoolExecutor</code>。</p><p class="guard">突发流量把线程开到几千个（坑 1）</p></div>
+      <div class="rl"><b>要背压就用 transfer / tryTransfer，或有界队列</b><p>LinkedTransferQueue 的 <code>put</code> 只在“消费一定跟得上”时用。</p><p class="guard">无界堆积到 OOM（坑 4）</p></div>
+      <div class="rl"><b>等待一律带超时，并处理 null / false</b><p><code>poll(timeout)</code>、<code>offer(e, timeout)</code>、<code>tryTransfer(e, timeout)</code>。</p><p class="guard">对面的线程挂了，自己永远停在 take / put 上</p></div>
+      <div class="rl"><b>要先来先得就显式写 fair</b><p><code>new SynchronousQueue&lt;&gt;(true)</code>，代码里能看出是故意的。</p><p class="guard">最早来的等待者被一直插队（坑 5）</p></div>
+      <div class="rl"><b>监控不看 queue.size()</b><p>看线程池的活跃数、线程数、最大线程数、拒绝次数；LTQ 的 <code>size()</code> 不放热路径。</p><p class="guard">“队列长度 0”的假象，和 O(n) 的统计开销（坑 3、坑 6）</p></div>
+      <div class="rl"><b>JDK 21 至少 21.0.5</b><p>新实现是 21.0.2 回移进来的，21.0.2～21.0.4 有内存泄漏。</p><p class="guard">不公平 SynchronousQueue 留住已交接的对象（坑 7）</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>读源码：xfer、await、xferLifo</h3></div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">xfer</span><b>LinkedTransferQueue.java</b>JDK 21u，行号和源码一致（OpenJDK 里按 GPLv2 分发；原作者把最初版本放入了公有领域）</div>
+<pre class="src"><code><span class="l"><span class="no">574</span>    final Object xfer(Object e, long ns) {</span><span class="l"><span class="no">575</span>        boolean haveData = (e != null);</span><span class="l"><span class="no">576</span>        Object m;                           <span class="cm">// the match or e if none</span></span><span class="l"><span class="no">577</span>        DualNode s = null, p;               <span class="cm">// enqueued node and its predecessor</span></span><span class="l"><span class="no">578</span>        restart: for (DualNode prevp = null;;) {</span><span class="l"><span class="no">579</span>            DualNode h, t, q;</span><span class="l hl"><span class="no">580</span>            if ((h = head) == null &amp;&amp;       <span class="cm">// initialize unless immediate</span><span class="tag">❶</span></span><span class="l"><span class="no">581</span>                (ns == 0L ||</span><span class="l"><span class="no">582</span>                 (h = cmpExHead(null, s = new DualNode(e, haveData))) == null)) {</span><span class="l"><span class="no">583</span>                p = null;                   <span class="cm">// no predecessor</span></span><span class="l"><span class="no">584</span>                break;                      <span class="cm">// else lost init race</span></span><span class="l"><span class="no">585</span>            }</span><span class="l hl"><span class="no">586</span>            p = (t = tail) != null &amp;&amp; t.isData == haveData &amp;&amp; t != prevp ? t : h;<span class="tag">❷</span></span><span class="l"><span class="no">587</span>            prevp = p;                      <span class="cm">// avoid known self-linked tail path</span></span><span class="l"><span class="no">588</span>            do {</span><span class="l"><span class="no">589</span>                m = p.item;</span><span class="l"><span class="no">590</span>                q = p.next;</span><span class="l hl"><span class="no">591</span>                if (p.isData != haveData &amp;&amp; haveData != (m != null) &amp;&amp;<span class="tag">❸</span></span><span class="l hl"><span class="no">592</span>                    p.cmpExItem(m, e) == m) {<span class="tag">❹</span></span><span class="l"><span class="no">593</span>                    Thread w = p.waiter;    <span class="cm">// matched complementary node</span></span><span class="l hl"><span class="no">594</span>                    if (p != h &amp;&amp; h == cmpExHead(h, (q == null) ? p : q))<span class="tag">❺</span></span><span class="l"><span class="no">595</span>                        h.next = h;         <span class="cm">// advance head; self-link old</span></span><span class="l hl"><span class="no">596</span>                    LockSupport.unpark(w);<span class="tag">❻</span></span><span class="l"><span class="no">597</span>                    return m;</span><span class="l"><span class="no">598</span>                } else if (q == null) {</span><span class="l hl"><span class="no">599</span>                    if (ns == 0L)           <span class="cm">// try to append unless immediate</span><span class="tag">❼</span></span><span class="l"><span class="no">600</span>                        break restart;</span><span class="l"><span class="no">601</span>                    if (s == null)</span><span class="l"><span class="no">602</span>                        s = new DualNode(e, haveData);</span><span class="l hl"><span class="no">603</span>                    if ((q = p.cmpExNext(null, s)) == null) {<span class="tag">❽</span></span><span class="l hl"><span class="no">604</span>                        if (p != t)<span class="tag">❾</span></span><span class="l"><span class="no">605</span>                            cmpExTail(t, s);</span><span class="l"><span class="no">606</span>                        break restart;</span><span class="l"><span class="no">607</span>                    }</span><span class="l"><span class="no">608</span>                }</span><span class="l hl"><span class="no">609</span>            } while (p != (p = q));         <span class="cm">// restart if self-linked</span><span class="tag">❿</span></span><span class="l"><span class="no">610</span>        }</span><span class="l"><span class="no">611</span>        if (s == null || ns &lt;= 0L)</span><span class="l"><span class="no">612</span>            m = e;                          <span class="cm">// don't wait</span></span><span class="l hl"><span class="no">613</span>        else if ((m = s.await(e, ns, this,  <span class="cm">// spin if at or near head</span><span class="tag">undefined</span></span><span class="l"><span class="no">614</span>                              p == null || p.waiter == null)) == e)</span><span class="l"><span class="no">615</span>            unsplice(p, s);                 <span class="cm">// cancelled</span></span><span class="l"><span class="no">616</span>        else if (m != null)</span><span class="l"><span class="no">617</span>            s.selfLinkItem();</span><span class="l"><span class="no">618</span></span><span class="l"><span class="no">619</span>        return m;</span><span class="l"><span class="no">620</span>    }</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>链表还没建（head 为 null）：不是“立即”模式，就把自己的节点直接 CAS 成 head。tail 先不设，懒得设。</span></li>
+      <li><b>2</b><span>从哪开始走：tail 和自己同类，说明大概率要追加，从 tail 走；否则大概率要配对，从 head 走。<code>prevp</code> 防止反复从一个已经自链接的 tail 出发。</span></li>
+      <li><b>3</b><span>判断能不能配：节点和自己不同类（<code>p.isData != haveData</code>），并且它还活着（<code>haveData != (m != null)</code>，即数据节点有货、请求节点没货）。</span></li>
+      <li><b>4</b><span>配对就是这一个 CAS：把 item 从 <code>m</code> 换成 <code>e</code>。取的人把货换成 null，放的人把 null 换成货。</span></li>
+      <li><b>5</b><span>配对的不是 head 时，才把 head 推到下一个节点（没有下一个就推到 p），旧 head 的 next 改成指向自己。这就是 slack：配对的就是 head 时，head 不动。</span></li>
+      <li><b>6</b><span>唤醒等在这个节点上的线程，返回对方的 item（取的人拿到货，放的人拿到 null 表示成功）。</span></li>
+      <li><b>7</b><span>走到链尾也没配上：“立即”模式到此为止，返回失败。</span></li>
+      <li><b>8</b><span>否则 CAS 链尾的 <code>next</code>，把自己挂上去。</span></li>
+      <li><b>9</b><span>追加的地方不是 tail，才顺手把 tail 推过来；是 tail 就不改，又一处 slack。</span></li>
+      <li><b>10</b><span><code>p != (p = q)</code>：往后走一步；如果 <code>q == p</code>（节点指向自己），说明自己落后了，从头重来。</span></li>
+      <li><b>11</b><span>异步（<code>ns = -1</code>）或立即模式不等；其余在自己的节点上 <code>await</code>，只有前驱为空或前驱还没睡（<code>p.waiter == null</code>）时才允许自旋。等到的是自己的 <code>e</code>，说明被取消了，去 <code>unsplice</code> 摘掉；等到的是货，就把 item 改成指向自己，不留住用户对象。</span></li>
+    </ul>
+
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">await</span><b>DualNode.await</b>所有等待都走这里</div>
+<pre class="src"><code><span class="l"><span class="no">423</span>        final Object await(Object e, long ns, Object blocker, boolean spin) {</span><span class="l"><span class="no">424</span>            Object m;                      <span class="cm">// the match or e if none</span></span><span class="l"><span class="no">425</span>            boolean timed = (ns != Long.MAX_VALUE);</span><span class="l"><span class="no">426</span>            long deadline = (timed) ? System.nanoTime() + ns : 0L;</span><span class="l"><span class="no">427</span>            boolean upc = isUniprocessor;  <span class="cm">// don't spin but later recheck</span></span><span class="l"><span class="no">428</span>            Thread w = Thread.currentThread();</span><span class="l hl"><span class="no">429</span>            if (w.isVirtual())             <span class="cm">// don't spin</span><span class="tag">❶</span></span><span class="l"><span class="no">430</span>                spin = false;</span><span class="l hl"><span class="no">431</span>            int spins = (spin &amp; !upc) ? SPINS : 0; <span class="cm">// negative when may park</span><span class="tag">❷</span></span><span class="l"><span class="no">432</span>            while ((m = item) == e) {</span><span class="l"><span class="no">433</span>                if (spins &gt;= 0) {</span><span class="l"><span class="no">434</span>                    if (--spins &gt;= 0)</span><span class="l hl"><span class="no">435</span>                        Thread.onSpinWait();<span class="tag">❸</span></span><span class="l"><span class="no">436</span>                    else {                 <span class="cm">// prepare to park</span></span><span class="l"><span class="no">437</span>                        if (spin)          <span class="cm">// occasionally recheck</span></span><span class="l"><span class="no">438</span>                            checkForUniprocessor(upc);</span><span class="l"><span class="no">439</span>                        LockSupport.setCurrentBlocker(blocker);</span><span class="l hl"><span class="no">440</span>                        waiter = w;        <span class="cm">// ensure ordering</span><span class="tag">❹</span></span><span class="l"><span class="no">441</span>                        VarHandle.fullFence();</span><span class="l"><span class="no">442</span>                    }</span><span class="l"><span class="no">443</span>                } else if (w.isInterrupted() ||</span><span class="l"><span class="no">444</span>                           (timed &amp;&amp;       <span class="cm">// try to cancel with impossible match</span></span><span class="l"><span class="no">445</span>                            ((ns = deadline - System.nanoTime()) &lt;= 0L))) {</span><span class="l hl"><span class="no">446</span>                    m = cmpExItem(e, (e == null) ? this : null);<span class="tag">❺</span></span><span class="l"><span class="no">447</span>                    break;</span><span class="l"><span class="no">448</span>                } else if (timed) {</span><span class="l hl"><span class="no">449</span>                    if (ns &lt; SPIN_FOR_TIMEOUT_THRESHOLD)<span class="tag">❻</span></span><span class="l"><span class="no">450</span>                        Thread.onSpinWait();</span><span class="l"><span class="no">451</span>                    else</span><span class="l"><span class="no">452</span>                        LockSupport.parkNanos(ns);</span><span class="l hl"><span class="no">453</span>                } else if (w instanceof ForkJoinWorkerThread) {<span class="tag">❼</span></span><span class="l"><span class="no">454</span>                    try {</span><span class="l"><span class="no">455</span>                        ForkJoinPool.managedBlock(this);</span><span class="l"><span class="no">456</span>                    } catch (InterruptedException cannotHappen) { }</span><span class="l"><span class="no">457</span>                } else</span><span class="l"><span class="no">458</span>                    LockSupport.park();</span><span class="l"><span class="no">459</span>            }</span><span class="l"><span class="no">460</span>            if (spins &lt; 0) {</span><span class="l"><span class="no">461</span>                LockSupport.setCurrentBlocker(null);</span><span class="l"><span class="no">462</span>                waiter = null;</span><span class="l"><span class="no">463</span>            }</span><span class="l"><span class="no">464</span>            return m;</span><span class="l"><span class="no">465</span>        }</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">xferLifo</span><b>SynchronousQueue.Transferer</b>不公平模式，只多了这一个方法</div>
+<pre class="src"><code><span class="l"><span class="no">167</span>        final Object xferLifo(Object e, long ns) {</span><span class="l"><span class="no">168</span>            boolean haveData = (e != null);</span><span class="l"><span class="no">169</span>            Object m;                              <span class="cm">// the match or e if none</span></span><span class="l"><span class="no">170</span>            outer: for (DualNode s = null, p = head;;) {</span><span class="l"><span class="no">171</span>                while (p != null) {</span><span class="l"><span class="no">172</span>                    boolean isData; DualNode n, u; <span class="cm">// help collapse</span></span><span class="l hl"><span class="no">173</span>                    if ((isData = p.isData) != ((m = p.item) != null))<span class="tag">❶</span></span><span class="l"><span class="no">174</span>                        p = (p == (u = cmpExHead(p, (n = p.next)))) ? n : u;</span><span class="l hl"><span class="no">175</span>                    else if (isData == haveData)   <span class="cm">// same mode; push below</span><span class="tag">❷</span></span><span class="l"><span class="no">176</span>                        break;</span><span class="l hl"><span class="no">177</span>                    else if (p.cmpExItem(m, e) != m)<span class="tag">❸</span></span><span class="l"><span class="no">178</span>                        p = head;                  <span class="cm">// missed; restart</span></span><span class="l"><span class="no">179</span>                    else {                         <span class="cm">// matched complementary node</span></span><span class="l"><span class="no">180</span>                        Thread w = p.waiter;</span><span class="l hl"><span class="no">181</span>                        cmpExHead(p, p.next);<span class="tag">❹</span></span><span class="l"><span class="no">182</span>                        LockSupport.unpark(w);</span><span class="l"><span class="no">183</span>                        break outer;</span><span class="l"><span class="no">184</span>                    }</span><span class="l"><span class="no">185</span>                }</span><span class="l"><span class="no">186</span>                if (ns == 0L) {                    <span class="cm">// no match, no wait</span></span><span class="l"><span class="no">187</span>                    m = e;</span><span class="l"><span class="no">188</span>                    break;</span><span class="l"><span class="no">189</span>                }</span><span class="l"><span class="no">190</span>                if (s == null)                     <span class="cm">// try to push node and wait</span></span><span class="l"><span class="no">191</span>                    s = new DualNode(e, haveData);</span><span class="l"><span class="no">192</span>                s.next = p;</span><span class="l hl"><span class="no">193</span>                if (p == (p = cmpExHead(p, s))) {<span class="tag">❺</span></span><span class="l"><span class="no">194</span>                    if ((m = s.await(e, ns, this,  <span class="cm">// spin if (nearly) empty</span></span><span class="l"><span class="no">195</span>                                     p == null || p.waiter == null)) == e)</span><span class="l"><span class="no">196</span>                        unspliceLifo(s);           <span class="cm">// cancelled</span></span><span class="l hl"><span class="no">197</span>                    else if (m != null)<span class="tag">❻</span></span><span class="l"><span class="no">198</span>                        s.selfLinkItem();</span><span class="l"><span class="no">199</span>                    break;</span><span class="l"><span class="no">200</span>                }</span><span class="l"><span class="no">201</span>            }</span><span class="l"><span class="no">202</span>            return m;</span><span class="l"><span class="no">203</span>        }</span></code></pre>
+      </div>
+    </div>
+    <div class="two">
+      <ul class="callouts">
+        <li><b>1</b><span>虚拟线程不自旋：它 park 只是把栈卸下来，不走操作系统的线程切换，比自旋划算。</span></li>
+        <li><b>2</b><span>可以自旋、又不是单核时，最多转 128 圈；否则直接准备睡。</span></li>
+        <li><b>3</b><span>每圈一次 <code>Thread.onSpinWait()</code>，提示 CPU“我在忙等”。</span></li>
+        <li><b>4</b><span>转完了：登记 <code>waiter = 自己</code>，再来一道全屏障，然后回到循环开头复查 item。这就是 ④ 里“不会漏叫”的那一半。</span></li>
+        <li><b>5</b><span>被中断或超时：用一个“不可能的值”CAS 掉自己的 item（请求节点改成指向自己，数据节点改成 null），算取消。</span></li>
+        <li><b>6</b><span>限时等待剩下不到约 1 µs（1024 ns）时，转着等，不再 park。</span></li>
+        <li><b>7</b><span>不限时等待时，ForkJoinPool 的工作线程用 <code>managedBlock</code> 等，让池子有机会补一个线程；普通线程直接 <code>park</code>。</span></li>
+      </ul>
+      <ul class="callouts">
+        <li><b>1</b><span>栈顶已经配对过（或取消了）：帮忙弹掉，接着看下一个。</span></li>
+        <li><b>2</b><span>栈顶和自己同类：压在它上面等。</span></li>
+        <li><b>3</b><span>栈顶是反方向的活节点：直接 CAS 它的 item 完成配对，失败就从新栈顶重来。</span></li>
+        <li><b>4</b><span>配对成功：弹掉栈顶，唤醒对方。老实现要先压一个“正在配对”的节点再去配，新实现不建节点。</span></li>
+        <li><b>5</b><span>没人可配、也不是立即模式：新节点压到栈顶，等着。</span></li>
+        <li><b>6</b><span>等到货就把 item 改成指向自己。JDK-8332154 的修复就是补上这里的两行。</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="sub" id="lab-wrap">
+    <h3>沙盘：自己摆操作，先猜再看 <small>上面三段代码的 JS 移植版</small></h3>
+    <p class="tip">选一个剧本，先猜结果，再一步步点“按剧本走一步”。也可以随时用下面的按钮自己加操作，让等着的线程超时，看节点怎么被摘掉。每个操作在模拟里是一口气做完的，不会被别的线程打断。</p>
+    <div class="lab" id="lab">
+      <div class="presets" id="lab-presets">
+        <button type="button" data-k="lifo" aria-pressed="true"><b>1 · 谁先拿到</b><span>三个人先后来等，默认模式下来了一份货</span></button>
+        <button type="button" data-k="offer" aria-pressed="false"><b>2 · offer 没人等</b><span>SynchronousQueue.offer 会不会先放着</span></button>
+        <button type="button" data-k="transfer" aria-pressed="false"><b>3 · transfer 何时返回</b><span>LTQ 里先 put 后 transfer</span></button>
+        <button type="button" data-k="poll" aria-pressed="false"><b>4 · 请求碰请求</b><span>有人在等 take，再来一个 poll()</span></button>
+        <button type="button" data-k="cancel" aria-pressed="false"><b>5 · 超时以后</b><span>两人在等，一人超时，然后来货</span></button>
+        <button type="button" data-k="slack" aria-pressed="false"><b>6 · head 指向谁</b><span>取走第一份货之后</span></button>
+      </div>
+      <div class="guess" id="lab-guess"></div>
+      <div class="run-row">
+        <span class="seg-btns" id="lab-kind" role="group" aria-label="队列类型">
+          <button type="button" data-v="sqlifo" aria-pressed="true">SQ 默认（栈）</button>
+          <button type="button" data-v="sqfair" aria-pressed="false">SQ 公平</button>
+          <button type="button" data-v="ltq" aria-pressed="false">LinkedTransferQueue</button>
+        </span>
+        <button class="btn primary" type="button" id="lab-step">按剧本走一步</button>
+        <button class="btn" type="button" id="lab-run">跑完剧本</button>
+        <button class="btn" type="button" id="lab-reset">从头来</button>
+        <span class="tip" id="lab-pos"></span>
+      </div>
+      <div class="op-pad" id="lab-pad"></div>
+      <div class="dq" id="lab-board"></div>
+      <div class="lab-res" id="lab-res" data-role="other">先在上面选一个猜测，再开始点。</div>
+    </div>
+  </div>
+
+  <div class="sub" id="ver">
+    <h3>版本差异：三代实现</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>JDK</th><th>SynchronousQueue</th><th>LinkedTransferQueue</th><th>等待策略</th></tr></thead>
+        <tbody>
+          <tr><th>5</th><td>一把 <code>ReentrantLock</code> + 等待队列</td><td>没有</td><td>锁的条件变量</td></tr>
+          <tr><th>6 ～ 16<br><small>含 8、11</small></th><td>自己的 <code>TransferStack</code>（栈顶压“正在配对”节点）和 <code>TransferQueue</code></td><td>JDK 7 加入，自己的 <code>Node</code> 和 <code>xfer(e, haveData, how, nanos)</code></td><td>固定次数自旋：SQ 限时 32 次、不限时 512 次（单核 0 次）；LTQ 最多 128 + 64 次，期间随机 <code>yield</code></td></tr>
+          <tr><th>17 ～ 21.0.1</th><td>结构不变</td><td>结构不变</td><td>JDK-8246677 改成：自己是唯一的等待者就 <code>yield</code> 一次，然后 park；ForkJoin 线程用 <code>managedBlock</code></td></tr>
+          <tr class="hl"><th>21.0.2+、22+</th><td><code>Transferer extends LinkedTransferQueue</code>，公平用 <code>xfer</code>，不公平用 <code>xferLifo</code></td><td>重写成 <code>DualNode</code> + <code>xfer(e, ns)</code>，head / tail 懒初始化</td><td>JDK-8301341 统一成 <code>DualNode.await</code>：符合条件时自旋 ≤128 次；虚拟线程、单核不自旋</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">这几行对着 jdk8u、jdk11u、jdk17u、jdk21u、jdk25u 和主线的源码逐个核过；“21.0.2 起”是用 GitHub 上 jdk21u 的提交和 <code>jdk-21.0.1-ga</code>、<code>jdk-21.0.2-ga</code> 标签比出来的。主线在 2026-10 还把配对时读 <code>waiter</code> 改成了 volatile 读（JDK-8386428，Windows ARM64 关掉 LSE 时测试超时），我查看时它还不在任何已发布的版本里。</p>
+    <div class="exp-h"><span class="tag-real">实测</span><b>同一个程序，JDK 11 和 JDK 21：每秒交接多少万次</b></div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>实现</th><th class="num">1 对 · JDK 11</th><th class="num">1 对 · JDK 21</th><th class="num">4 对 · JDK 11</th><th class="num">4 对 · JDK 21</th><th class="num">16 对 · JDK 11</th><th class="num">16 对 · JDK 21</th></tr></thead>
+        <tbody>
+          <tr><th>SynchronousQueue（默认）</th><td class="num">36～41</td><td class="num good">63～74</td><td class="num">221～237</td><td class="num">264～279</td><td class="num">267～297</td><td class="num">223～237</td></tr>
+          <tr><th>SynchronousQueue(true)</th><td class="num">25～30</td><td class="num">28～31</td><td class="num">146～155</td><td class="num bad">65～67</td><td class="num">114～130</td><td class="num bad">57～58</td></tr>
+          <tr><th>LTQ.transfer / take</th><td class="num">215～239</td><td class="num bad">22～32</td><td class="num">90～92</td><td class="num">69～70</td><td class="num">67～69</td><td class="num">57～59</td></tr>
+          <tr><th>朴素做法（一把锁）</th><td class="num">11～11</td><td class="num">10～12</td><td class="num">7～7</td><td class="num">7～8</td><td class="num">6～7</td><td class="num">6～7</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">各跑两遍取范围。新实现不是全面更快：在这台 2 核 ARM 机器上，公平模式和 <code>transfer</code> 慢了，1 对 <code>transfer</code> 时 JDK 11 每次交接只有 0.04 次线程切换，JDK 21 有 0.73～0.86 次。老实现自旋更久、中间还会 <code>yield</code> 让对方先跑，对方往往在它睡下之前就来了；新实现最多 128 次 <code>onSpinWait</code>，在这台机器上大多等不到就睡了。换一台核多的 x86 机器结果可能不同，这里只说明“自旋多久”这个参数确实会左右结果。</p>
+    <figure>
+      <div class="exp-h"><span class="tag-real">实测</span><b>JDK 21，4 对：平台线程和虚拟线程</b></div>
+      <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 200" role="img" aria-label="JDK 21 上 4 对交接：公平 SynchronousQueue 平台线程 71 万次每秒、虚拟线程 294 万；transfer 平台线程 69 万、虚拟线程 301 万"><line class="e-grid" x1="200" y1="8" x2="200" y2="178"/><text class="t-xs" x="200" y="194" text-anchor="middle">0</text><line class="e-grid" x1="324.24242424242425" y1="8" x2="324.24242424242425" y2="178"/><text class="t-xs" x="324.24242424242425" y="194" text-anchor="middle">100 万</text><line class="e-grid" x1="448.4848484848485" y1="8" x2="448.4848484848485" y2="178"/><text class="t-xs" x="448.4848484848485" y="194" text-anchor="middle">200 万</text><line class="e-grid" x1="572.7272727272727" y1="8" x2="572.7272727272727" y2="178"/><text class="t-xs" x="572.7272727272727" y="194" text-anchor="middle">300 万</text><text class="t-s" x="188" y="31" text-anchor="end">公平模式 · 平台线程</text><rect x="200" y="14" width="88.21212121212125" height="26" rx="5" class="f-neu"/><line class="e-ink" x1="288.21212121212125" y1="18" x2="288.21212121212125" y2="36" style="stroke-width:1.5"/><text class="t-b" x="296.21212121212125" y="26">71 万次/秒</text><text class="t-m" x="296.21212121212125" y="39">0.77 次切换</text><text class="t-s" x="188" y="71" text-anchor="end">公平模式 · 虚拟线程</text><rect x="200" y="54" width="365.27272727272725" height="26" rx="5" class="f-cg"/><line class="e-ink" x1="565.2727272727273" y1="58" x2="565.2727272727273" y2="76" style="stroke-width:1.5"/><text class="t-cg" x="573.2727272727273" y="66">294 万次/秒</text><text class="t-m" x="573.2727272727273" y="79">≈0 次切换</text><text class="t-s" x="188" y="111" text-anchor="end">transfer · 平台线程</text><rect x="200" y="94" width="85.72727272727275" height="26" rx="5" class="f-neu"/><line class="e-ink" x1="285.72727272727275" y1="98" x2="285.72727272727275" y2="116" style="stroke-width:1.5"/><text class="t-b" x="293.72727272727275" y="106">69 万次/秒</text><text class="t-m" x="293.72727272727275" y="119">0.81 次切换</text><text class="t-s" x="188" y="151" text-anchor="end">transfer · 虚拟线程</text><rect x="200" y="134" width="373.969696969697" height="26" rx="5" class="f-cg"/><line class="e-ink" x1="573.969696969697" y1="138" x2="573.969696969697" y2="156" style="stroke-width:1.5"/><text class="t-cg" x="581.969696969697" y="146">301 万次/秒</text><text class="t-m" x="581.969696969697" y="159">≈0 次切换</text></svg></div>
+      <figcaption>虚拟线程在 <code>await</code> 里不自旋，直接 park；它的 park 只是把栈卸下来，载体线程接着跑别的虚拟线程，操作系统层面几乎没有线程切换。1 对时公平模式 112 万次/秒，平台线程只有 24 万次。所以新实现给虚拟线程关掉自旋是对的。</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub">
+    <h3>再往深一点</h3>
+    <div class="deep">
+      <div class="dp" data-role="bk">
+        <h4>为什么旧 head 要指向自己</h4>
+        <ul>
+          <li>节点之间只有 <code>next</code> 单向链接。一个早就出队的旧节点如果还被谁引用着（比如一个停在半路的迭代器），它后面所有更新的节点都会顺着 <code>next</code> 被留住。</li>
+          <li>源码注释引用了 Boehm 的论文：GC 晚一点发现某个老节点是垃圾，后面一串都回收不了。把旧 head 的 <code>next</code> 改成指向自己，链就在这里断开。</li>
+          <li>代价是所有遍历都要处理“读到自链接就从头重来”，迭代器、<code>size()</code>、<code>remove(o)</code> 里都有这段。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="cg">
+        <h4>取消的节点怎么摘：unsplice 和 sweepVotes</h4>
+        <ul>
+          <li>超时的节点如果在链头附近，直接把 head 推过去；在中间，就 CAS 前驱的 <code>next</code> 跳过它。</li>
+          <li>两种情况摘不掉：它是链尾（新节点还要往它后面挂），或者前驱自己也死了（前驱可能已经不在链上）。这时记一票 <code>sweepVotes</code>，攒够 16 票（<code>SWEEP_THRESHOLD = 15</code>，按位与判断）就从头扫一遍，统一摘掉。老实现的阈值是 32。</li>
+          <li>典型触发场景：队尾的人反复 <code>poll(短超时)</code> 又超时，队首却有一个一直不超时的 <code>take()</code> 堵着。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="warn">
+        <h4>自旋多少才合适</h4>
+        <ul>
+          <li>源码注释写得很直白：太少，对方马上就来时也白白切换了一次线程；太多，烧 CPU，还挡着对方上 CPU。最优值“不可知”，现在的 128 是在测试过的平台上取的折中。</li>
+          <li>只有自己是第一个等的人、或前一个等待者还没睡时才转：前面的人都睡了，说明对方一时半会儿来不了，转也白转。</li>
+          <li>上面 JDK 11 / 21 的对比就是这个折中在一台 2 核机器上的样子。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="pd">
+        <h4>Exchanger 为什么不用双重队列</h4>
+        <ul>
+          <li>双重队列里两边身份不同：一边给、一边拿。<code>Exchanger</code> 两边都既给又拿，谁先到谁等，后到的把自己的东西放下、拿走对方的。</li>
+          <li>它用一个槽位，竞争大时改用一组槽位（arena），让不同的线程对在不同的槽位上配对，减少对同一个地址的 CAS。</li>
+          <li>JDK-8338146 改进了 Exchanger 在虚拟线程下的性能，改动也落在 LinkedTransferQueue.java 里，可见这套节点和等待代码已经是 j.u.c 的公共件。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>SynchronousQueue 容量是 0，那等着的线程排在哪？</summary><p>排在一个无锁链表里：每个等着的线程对应一个节点，节点上记着它要放的东西（数据节点）或者一个空位（请求节点）。“容量为 0”说的是没有可以被拿走、却没人等着交接的元素。默认模式这个链表当栈用，公平模式当队列用。</p></details>
+      <details><summary>put 和 take 是怎么配对的？</summary><p>来的人顺着链表找第一个反方向的活节点，对它的 <code>item</code> 做一次 CAS：取的人把货换成 null，放的人把 null 换成货。CAS 成功就算交接完成，然后 <code>unpark</code> 节点上等着的线程。找不到就把自己挂上去，先自旋一会儿再 park。</p></details>
+      <details><summary>newCachedThreadPool 为什么用 SynchronousQueue？有什么风险？</summary><p>它要的语义是“有闲线程就交给它，没有就新建”，SynchronousQueue 的 <code>offer</code> 正好是“此刻有人在 <code>poll</code> 才成功”。默认的栈模式让最近闲下来的线程先接活，其余的闲满 60 秒被回收。风险是线程上限为 <code>Integer.MAX_VALUE</code>，突发流量下线程数会暴涨。</p></details>
+      <details><summary>LinkedTransferQueue 和 SynchronousQueue、LinkedBlockingQueue 有什么区别？</summary><p>它和 SynchronousQueue 是同一个双重队列算法，多了异步模式：<code>put</code> 放下就走，像无界的 LinkedBlockingQueue；<code>transfer</code> 等到被取走，像 SynchronousQueue 的 <code>put</code>。和 LinkedBlockingQueue 比，它不用锁，取的人在等时来货可以直接交到手里。从 JDK 21.0.2 起，SynchronousQueue 的内部类直接继承了它。</p></details>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>ThreadPoolExecutor 的 <code>execute</code>：核心线程、队列、最大线程三段判断和 <code>Worker</code> 的生命周期</li>
+      <li>Michael &amp; Scott 队列和 <code>ConcurrentLinkedQueue</code>：ABA、帮忙推 tail、为什么 Java 不怕 ABA</li>
+      <li>AQS：<code>ReentrantLock</code> 和 <code>Condition</code> 内部的 CLH 队列，和双重队列对比着看</li>
+      <li><code>Exchanger</code> 的 arena 和 <code>ForkJoinPool.managedBlock</code> 的补偿线程</li>
+      <li>用 jcstress 验证并发数据结构：怎么写出能抓到 JDK-8371740 这类竞争的测试</li>
+      <li>虚拟线程的 park / unpark：continuation 怎么卸下和挂回载体线程</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 MiniDualQueue 和 SqPeek</h2>
+    <p class="lead">每个练习都写了做对时会看到什么。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="of">
+      <h4>练习 1 · 改成栈</h4>
+      <p>照 <code>xferLifo</code> 的思路，给 MiniDualQueue 加一个不公平模式：新节点压到 head 上，来的人只看栈顶。用 SqPeek 第 ③ 段的办法测顺序。</p>
+      <p><b>做对了会看到：</b>三个先后停在 take 上的线程 A、B、C，依次放 1、2、3，拿到的是 C=1、B=2、A=3；压力测试仍然一个不多一个不少。</p>
+      <p class="uses">用到：④ 洞察 6，⑥ 坑 5</p>
+    </div>
+    <div class="exc" data-role="cg">
+      <h4>练习 2 · 加上 poll(timeout)</h4>
+      <p>给 MiniDualQueue 的 <code>await</code> 加一个截止时间：到点就把自己的 item 从 null CAS 成节点自己。CAS 失败说明刚好被配上了，要把货收下。</p>
+      <p><b>做对了会看到：</b>没人放时 <code>poll(100ms)</code> 约 100 ms 后返回 null；在第 99 ms 放进来的货不会丢，要么被这次 poll 拿到，要么留给下一个取的人。</p>
+      <p class="uses">用到：④ 洞察 1 的“取消也是 CAS”，⑥ await 第 5 条</p>
+    </div>
+    <div class="exc" data-role="bk">
+      <h4>练习 3 · 去掉自旋看看</h4>
+      <p>把 MiniDualQueue 的 <code>spins = 128</code> 改成 0，再改成 4096，各跑一对生产者 / 消费者，同时读 <code>/proc/self/task/*/status</code> 数线程切换。</p>
+      <p><b>做对了会看到：</b>本机 1 对时，0 圈每次交接约 1.06 次切换、每秒 19 万次；128 圈 0.24 次、65 万次；4096 圈几乎不切换、153 万次。一直有活时转得越久越快；代价要在“对方很久才来”时才显出来：每个等着的线程都要先空转完才睡，等的人一多就把 CPU 占满。</p>
+      <p class="uses">用到：④ 洞察 4，⑥ 版本差异</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出双重队列的精华。</summary><p>等着的线程自己就是链表里的一个节点，来配对的人对它的 <code>item</code> 做一次 CAS 就完成了交接，只需要叫醒对方一次。</p><p class="from">← ② 精华</p></details>
+    <details><summary>2. 用一把锁加条件变量做交接点，痛在哪？</summary><p>放的人放下后还要等回信，一次交接至少两次唤醒；所有交接挤在一把锁上。实测每次交接 2～3 次线程切换，吞吐只有双重队列的几分之一到几十分之一。</p><p class="from">← ② 实测</p></details>
+    <details><summary>3. newCachedThreadPool 线程暴涨，根源是 ④ 里的哪一条？</summary><p>线程池用 <code>offer</code> 提交，SynchronousQueue 的 <code>offer</code> 是 <code>ns = 0</code> 的立即模式：此刻没有空闲线程停在 poll 上就失败，线程池只能新建线程。</p><p class="from">← ④ 洞察 3</p></details>
+    <details><summary>4. 预测：一个 LinkedTransferQueue 里已经有 3 份 put 进来、没人取的货，这时来一个 transfer(x)，它什么时候返回？</summary><p>要等到 3 份旧货都被取走、x 也被取走之后。transfer 发现排着的全是同类（数据），只能追加到队尾，按先来先得，前面 3 份先被取。</p><p class="from">← ④ 洞察 2 + 洞察 3</p></details>
+    <details><summary>5. 预测：公平的 SynchronousQueue 上 A 在 take，B 调 poll()（不带超时），会怎样？</summary><p>B 立刻拿到 null。B 也是请求，和 A 同类，没法配对；<code>poll()</code> 是立即模式，配不上就走，不会把自己挂到链上。A 继续等。</p><p class="from">← ④ 洞察 2 + 洞察 3</p></details>
+    <details><summary>6. 预测：线程池用 <code>new SynchronousQueue&lt;&gt;(true)</code> 代替默认的，每 100 ms 来一个很短的任务，keepAlive 2 秒，池里原本有 10 个空闲线程，过一会儿还剩几个？</summary><p>10 个都在。公平模式按先来先得把任务交给等得最久的线程，10 个线程轮流接活，每个每秒都有活干，没有一个闲满 2 秒。默认的栈模式则总是交给最后闲下来的那个，其余 9 个会被回收。本机实测正是 10 和 1。</p><p class="from">← ④ 洞察 6</p></details>
+    <details><summary>7. 预测：如果去掉“旧 head 的 next 指向自己”这一步，功能会错吗？</summary><p>功能不会错，配对和顺序都靠 item 的 CAS 和链表顺序保证。受影响的是内存：只要还有人引用某个很老的节点，它后面所有出过队的节点都回收不了。</p><p class="from">← ④ 洞察 5</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>源码以 JDK 21u（21.0.2 之后）的 <code>LinkedTransferQueue</code> 和 <code>SynchronousQueue</code> 为准，版本差异对照了 jdk8u、jdk11u、jdk17u、jdk21u、jdk25u 和主线。这两个类出自 JSR-166，作者是 Doug Lea、Bill Scherer、Michael Scott，最初版本放入了公有领域（CC0），OpenJDK 里的文件按 GPLv2 分发。标“实测”的数字在 2 核 ARM 虚拟机上用 JDK 11.0.32 和 21.0.12 测得，绝对值只供参考。</p>
+  <p>相关：<a href="../database/hikari-concurrentbag.html">HikariCP ConcurrentBag 源码</a> · <a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a> · <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a></p>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+// JDK 21u LinkedTransferQueue.xfer / SynchronousQueue.Transferer.xferLifo 的顺序版移植。
+// 一次只走一个操作（没有并发），所以每个 CAS 都会成功；节点、head、tail、自链接和 JDK 一模一样。
+var DQ = (function(){
+  var MAX = Infinity;
+  function clone(s){ return JSON.parse(JSON.stringify(s)); }
+  function make(kind){ return {kind: kind, nodes: {}, head: null, tail: null, votes: 0, seq: 0, threads: {}, log: [], gone: []}; }
+  function N(s, id){ return id == null ? null : s.nodes[id]; }
+  function newNode(s, e, isData){ var id = 'n' + (++s.seq); s.nodes[id] = {id: id, item: e, isData: isData, next: null, waiter: null, v0: e, by: null}; return id; }
+  function SELF(id){ return '@' + id; }                       // item 自链接：指向节点自己
+  function matched(n){ return n.isData !== (n.item !== null); }
+  function say(s, t, text, kind){ s.log.push({t: t, text: text, kind: kind || ''}); }
+  function selfLinkNext(s, id){ var n = N(s, id); n.next = id; if (s.gone.indexOf(id) < 0) s.gone.push(id); }
+  function wake(s, nid, how){                                 // 被配对或取消的等待者醒来
+    var n = N(s, nid), tn = n.waiter; if (!tn) return null;
+    var t = s.threads[tn]; n.waiter = null;
+    if (how === 'match'){
+      var m = n.item;                                         // 请求节点拿到数据；数据节点 item 变成 null
+      t.status = 'done'; t.result = n.isData ? 'ok' : m;
+      if (m !== null) n.item = SELF(nid);                    // s.selfLinkItem()
+    }
+    return tn;
+  }
+  // ---- FIFO：LinkedTransferQueue.xfer ----
+  function xfer(s, e, ns, tn){
+    var haveData = (e !== null), m, sid = null, p = null;
+    restart: for (var prevp = null;;){
+      var h = s.head, t, q;
+      if (h === null){
+        if (ns === 0){ p = null; break; }
+        sid = sid || newNode(s, e, haveData); s.head = sid; p = null; break;   // cmpExHead(null, s) 成功
+      }
+      t = s.tail;
+      p = (t !== null && N(s, t).isData === haveData && t !== prevp) ? t : h;
+      prevp = p;
+      do {
+        var pn = N(s, p); m = pn.item; q = pn.next;
+        if (pn.isData !== haveData && haveData !== (m !== null)){
+          pn.item = e;                                        // cmpExItem(m, e) 成功：配对
+          var w = wake(s, p, 'match');
+          var moved = false;
+          if (p !== h){ s.head = (q === null) ? p : q; selfLinkNext(s, h); moved = true; }
+          say(s, tn, (haveData ? '把 ' + e + ' 填进 ' + p + '（请求）' : '取走 ' + p + ' 里的 ' + m) + '，一次 CAS 完成交接' + (w ? '，唤醒 ' + w : '') + (moved ? '；head 前移，旧 head ' + h + ' 的 next 指向自己' : (p === h ? '；配对的就是 head，head 不动（slack）' : '')), 'match');
+          return {m: m, matched: p};
+        } else if (q === null){
+          if (ns === 0){ break restart; }
+          sid = sid || newNode(s, e, haveData);
+          pn.next = sid;                                      // cmpExNext(null, s) 成功：追加
+          if (p !== t) s.tail = sid;                          // 只有 p 不是 tail 时才改 tail
+          break restart;
+        }
+      } while (p !== (p = q));
+    }
+    return finish(s, e, ns, tn, sid, p);
+  }
+  // ---- LIFO：SynchronousQueue.Transferer.xferLifo ----
+  function xferLifo(s, e, ns, tn){
+    var haveData = (e !== null), m, sid = null;
+    var p = s.head;
+    while (p !== null){
+      var pn = N(s, p);
+      if (pn.isData !== ((m = pn.item) !== null)){ s.head = pn.next; p = pn.next; continue; }  // 栈顶已配对：弹掉
+      if (pn.isData === haveData) break;                      // 同类：压在它上面
+      pn.item = e; var w = wake(s, p, 'match');
+      s.head = pn.next;                                       // 弹出（不自链接）
+      say(s, tn, (haveData ? '把 ' + e + ' 填进栈顶 ' + p : '取走栈顶 ' + p + ' 里的 ' + m) + '，CAS 成功后弹出' + (w ? '，唤醒 ' + w : ''), 'match');
+      return {m: m, matched: p};
+    }
+    if (ns === 0) return finish(s, e, ns, tn, null, null);
+    sid = newNode(s, e, haveData); N(s, sid).next = p; s.head = sid;
+    return finish(s, e, ns, tn, sid, p);
+  }
+  function finish(s, e, ns, tn, sid, p){
+    if (sid === null || ns <= 0){
+      if (sid !== null){ N(s, sid).by = tn; say(s, tn, '追加数据节点 ' + sid + '（' + e + '）就返回，不等人取（异步）', 'append'); }
+      else say(s, tn, '没有能配对的节点，立即返回' + (e === null ? ' null' : ' false'), 'fail');
+      return {m: e, node: sid};
+    }
+    var n = N(s, sid); n.waiter = tn; n.by = tn;
+    var tt = s.threads[tn]; tt.status = 'waiting'; tt.node = sid; tt.pred = p;
+    say(s, tn, (s.kind === 'sqlifo' ? '压栈 ' : '追加 ') + (n.isData ? '数据节点 ' : '请求节点 ') + sid + '，在节点上等（先自旋一会儿，再 park）', 'wait');
+    return {m: undefined, node: sid};
+  }
+  // ---- 取消：await 里的 cmpExItem(e, e == null ? this : null) + unsplice ----
+  function sweepNow(s){ s.votes++; return (s.votes & 15) === 15; }
+  function unsplice(s, pred, sid){
+    var seen = false;
+    for (var h = s.head, p = h, f; p !== null;){
+      var mt; if (p === sid) mt = seen = true; else mt = matched(N(s, p));
+      if ((f = N(s, p).next) === p) p = h = s.head;
+      else if (f !== null && mt) p = f;
+      else { if (p !== h && s.head === h){ s.head = p; selfLinkNext(s, h); } break; }
+    }
+    var sn, pr = N(s, pred);
+    if (!seen && pr && pr.next === sid && (sn = N(s, sid).next) !== sid){
+      var spliced = false;
+      if (sn !== null && pr.next === sid){ pr.next = sn; spliced = true; }
+      if ((sn === null || !spliced || matched(pr)) && sweepNow(s)){
+        for (var q = s.head, f2, n2; q !== null && (f2 = N(s, q).next) !== null && (n2 = N(s, f2).next) !== null;){
+          q = (f2 === q ? s.head : !matched(N(s, f2)) ? f2 : (N(s, q).next = n2, n2));
+        }
+      }
+    }
+  }
+  function unspliceLifo(s, sid){
+    var seen = false, p = s.head;
+    while (p !== null && matched(N(s, p))){ if (p === sid) seen = true; s.head = N(s, p).next; p = s.head; }
+    if (p !== null && !seen && sweepNow(s)){
+      for (var f; p !== null && (f = N(s, p).next) !== null;){
+        if (!matched(N(s, f))) p = f; else { N(s, p).next = N(s, f).next; p = N(s, f).next; }
+      }
+    }
+  }
+  function cancel(s0, tn){
+    var s = clone(s0), t = s.threads[tn];
+    if (!t || t.status !== 'waiting') return s;
+    var n = N(s, t.node), e = n.isData ? n.item : null;
+    n.item = n.isData ? null : SELF(n.id); n.waiter = null;
+    t.status = 'done'; t.result = n.isData ? 'false' : 'null';
+    say(s, tn, '等到超时：把 ' + n.id + ' 的 item 改成“不可能的值”（' + (n.isData ? 'null' : '指向自己') + '），再把它从链表上摘掉', 'cancel');
+    if (s.kind === 'sqlifo') unspliceLifo(s, n.id); else unsplice(s, t.pred, n.id);
+    return s;
+  }
+  // 操作 → xfer(e, ns)：ns = 0 立即，-1 异步（只有 LTQ 的 put/offer），T 限时，MAX 一直等
+  var NS = {
+    ltq:    {put: -1, offer: -1, transfer: MAX, tryTransfer: 0, tryTransferT: 5, take: MAX, poll: 0, pollT: 5},
+    sqfair: {put: MAX, offer: 0, offerT: 5, take: MAX, poll: 0, pollT: 5},
+    sqlifo: {put: MAX, offer: 0, offerT: 5, take: MAX, poll: 0, pollT: 5}
+  };
+  function op(s0, tn, name, val){
+    var s = clone(s0), ns = NS[s.kind][name];
+    if (ns === undefined) throw new Error('op ' + name + ' not in ' + s.kind);
+    var t = s.threads[tn];
+    if (t && t.status === 'waiting') return s0;
+    var e = /^(take|poll)/.test(name) ? null : (val || ('x' + (++s.seq)));
+    s.threads[tn] = {status: 'running', op: name, val: e, result: undefined, node: null, pred: null};
+    var r = (s.kind === 'sqlifo') ? xferLifo(s, e, ns, tn) : xfer(s, e, ns, tn);
+    t = s.threads[tn];
+    if (t.status === 'running'){
+      t.status = 'done';
+      t.result = (e === null) ? (r.m === null ? 'null' : r.m) : (r.m === null ? 'ok' : (ns < 0 ? 'ok' : 'false'));
+    }
+    return s;
+  }
+  function chain(s){ // 从 head 顺着 next 走到底
+    var out = [], seen = {};
+    for (var p = s.head; p !== null && !seen[p];){ seen[p] = 1; out.push(p); var nx = s.nodes[p].next; if (nx === p) break; p = nx; }
+    return out;
+  }
+  function live(s){ return chain(s).filter(function(id){ return !matched(s.nodes[id]); }); }
+  function stats(s){
+    var c = chain(s), l = live(s);
+    var modes = {}; l.forEach(function(id){ modes[s.nodes[id].isData ? 'D' : 'R'] = 1; });
+    return {reach: c.length, live: l.length, dead: c.length - l.length, mixed: Object.keys(modes).length > 1,
+      waiting: Object.keys(s.threads).filter(function(k){ return s.threads[k].status === 'waiting'; })};
+  }
+  return {make: make, op: op, cancel: cancel, chain: chain, live: live, stats: stats, matched: matched, NS: NS};
+})();
+/*SIM-END*/
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var KIND = {ltq: 'LinkedTransferQueue', sqfair: 'SynchronousQueue(true)', sqlifo: 'SynchronousQueue() 默认'};
+  var OPN = {put: 'put', offer: 'offer', offerT: 'offer(超时)', take: 'take', poll: 'poll', pollT: 'poll(超时)', transfer: 'transfer', tryTransfer: 'tryTransfer', tryTransferT: 'tryTransfer(超时)'};
+  function itemText(n){ if (n.item === null) return 'null'; if (typeof n.item === 'string' && n.item.charAt(0) === '@') return '↺ 指向自己'; return '"' + n.item + '"'; }
+  function render(el, s, hi){
+    var ch = DQ.chain(s), ids = {}; ch.forEach(function(id){ ids[id] = 1; });
+    var tailNote = s.tail === null ? 'null' : s.tail + (ids[s.tail] ? '' : '（已脱离链表）');
+    var waiting = Object.keys(s.threads).filter(function(k){ return s.threads[k].status === 'waiting'; });
+    var h = '<div class="dq-meta"><span>' + KIND[s.kind] + '</span><span>head = <b>' + (s.head || 'null') + '</b></span>' + (s.kind === 'sqlifo' ? '<span>tail 不用（栈）</span>' : '<span>tail = <b>' + tailNote + '</b></span>') + '<span>活节点 ' + DQ.live(s).length + ' 个</span></div>';
+    h += '<div class="dq-chain" role="img" aria-label="链表：' + (ch.length ? ch.map(function(id){ var n = s.nodes[id]; return id + (n.isData ? '数据' : '请求') + (DQ.matched(n) ? '已配对' : '活'); }).join('，') : '空') + '">';
+    if (!ch.length) h += '<span class="dq-null">head = null，链表是空的</span>';
+    ch.forEach(function(id, i){
+      var n = s.nodes[id], dead = DQ.matched(n), role = dead ? 'other' : (n.isData ? 'of' : 'pd');
+      var ptr = '';
+      if (s.head === id) ptr += '<span class="dq-ptr" style="left:0">head</span>';
+      if (s.tail === id && s.kind !== 'sqlifo') ptr += '<span class="dq-ptr tail" style="right:0">tail</span>';
+      h += (i ? '<span class="dq-arrow">→</span>' : '') + '<div class="dq-n' + (dead ? ' dead' : '') + (hi && hi.indexOf(id) >= 0 ? ' new' : '') + '" data-role="' + role + '">' + ptr +
+        '<div class="dq-box"><b>' + id + '</b><span>' + (n.isData ? '数据' : '请求') + '</span><span>' + esc(itemText(n)) + '</span><small>' + (dead ? '已配对' : '活') + '</small></div>' +
+        (n.waiter ? '<span class="dq-wait">' + n.waiter + ' 在等</span>' : (n.by && !dead && n.isData ? '<span class="dq-wait" style="color:var(--g2)">' + n.by + ' 放的，没人等</span>' : '')) + '</div>';
+    });
+    if (ch.length) h += '<span class="dq-arrow">→</span><span class="dq-null">null</span>';
+    h += '</div>';
+    if (s.gone.length) h += '<div class="dq-gone"><span>已脱离（next 指向自己）：</span>' + s.gone.map(function(g){ return '<code>' + g + '</code>'; }).join('') + '</div>';
+    var tn = Object.keys(s.threads);
+    if (tn.length) h += '<div class="thr-row">' + tn.map(function(k){ var t = s.threads[k];
+      var txt = t.status === 'waiting' ? '在 ' + t.node + ' 上等' : (t.val === null ? (t.result === 'null' ? '拿到 null' : '拿到 ' + t.result) : (t.result === 'ok' ? '放成功' : '返回 false'));
+      return '<span class="thr-chip ' + t.status + '"><b>' + k + '</b>' + esc((OPN[t.op] || t.op).replace('(超时)', '')) + (t.val ? '(' + esc(t.val) + ')' : '()') + (/T$/.test(t.op) ? ' 限时' : '') + ' · ' + esc(txt) + '</span>'; }).join('') + '</div>';
+    h += '<ol class="oplog" aria-live="polite">' + (s.log.length ? s.log.map(function(l, i){ return '<li class="k-' + l.kind + (i === s.log.length - 1 ? ' new' : '') + '"><b>' + l.t + '</b><span>' + esc(l.text) + '</span></li>'; }).join('') : '<li><b></b><span class="empty-note">还没有操作</span></li>') + '</ol>';
+    el.innerHTML = h;
+    var lg = el.querySelector('.oplog'); if (lg) lg.scrollTop = lg.scrollHeight;
+  }
+  function newIds(prev, s){ return Object.keys(s.nodes).filter(function(id){ return !prev.nodes[id]; }); }
+
+  /* ---------- ⑤ 分步演示 ---------- */
+  var STEPS = [['A', 'take'], ['B', 'take'], ['C', 'put', 'x'], ['D', 'transfer', 'y'], ['E', 'put', 'z'], ['F', 'put', 'w'], ['G', 'poll'], ['H', 'transfer', 'v'], ['I', 'take'], ['J', 'take']];
+  var CAPS = ['开始：一个空的 LinkedTransferQueue，head 和 tail 都是 null。下面 10 个操作按顺序发生，每次一个。',
+    '<b>A take()</b>：链表是空的。新建一个请求节点 n1，直接 CAS 成 head（tail 先不设）。A 在 n1 上等。',
+    '<b>B take()</b>：tail 是 null，从 head 往后走。n1 也是请求，同类，走到底把 n2 挂上去。挂的位置不是 tail，于是顺手把 tail 设成 n2。B 在 n2 上等。',
+    '<b>C put(x)</b>：tail 是请求，和自己不同类，从 head 找。n1 是活请求，CAS 把 item 从 null 改成 x，交接完成，A 被叫醒。配对的正是 head，<b>head 不动</b>：链上留着已配对的 n1。C 立刻返回。',
+    '<b>D transfer(y)</b>：从 head 走，n1 已配对，跳过；n2 是活请求，CAS 填进 y，B 醒来。这次配对的不是 head，<b>head 前移到 n2</b>，旧 head n1 的 next 改成指向自己，从链上脱离。D 一来就配上了，不用等。',
+    '<b>E put(z)</b>：从 head n2（已配对）走到底，挂上数据节点 n3。挂的位置就是 tail（n2），所以 <b>tail 不改</b>，落后一步。E 不等，直接返回：这就是 LinkedTransferQueue 的异步 put。',
+    '<b>F put(w)</b>：tail n2 是请求、不同类，从 head 走：n2 死，n3 同类，走到底挂上 n4。挂的位置 n3 不是 tail，于是 tail 改成 n4。现在两份货排着，没有人在等。',
+    '<b>G poll()</b>：从 head 走，n2 死，n3 是活数据，CAS 把 z 改成 null，G 拿到 z。配对的不是 head，head 直接跳到 n3 后面的 n4，n2 自链接脱离。',
+    '<b>H transfer(v)</b>：tail n4 是数据、同类，从 tail 出发，挂上 n5。挂的位置就是 tail，tail 不改。H 在 n5 上等，直到有人取走 v。',
+    '<b>I take()</b>：从 head n4 走，活数据 w，CAS，I 拿到 w。配对的是 head，head 不动。',
+    '<b>J take()</b>：n4 已配对，往后 n5 是活数据 v，CAS，J 拿到 v，<b>H 的 transfer 这才返回</b>。head 前移到 n5，n4 自链接。注意 tail 还指着已经脱离的 n4：tail 可以落后到 head 后面，下一次从 tail 出发时会发现它指向自己，改从 head 走。'];
+  var walk = [DQ.make('ltq')];
+  STEPS.forEach(function(st){ walk.push(DQ.op(walk[walk.length - 1], st[0], st[1], st[2] || null)); });
+  var wk = {i: 0, timer: null};
+  function wkShow(){
+    render($('wk-board'), walk[wk.i], wk.i ? newIds(walk[wk.i - 1], walk[wk.i]) : []);
+    $('wk-cap').innerHTML = CAPS[wk.i];
+    $('wk-pos').innerHTML = '第 <b>' + wk.i + '</b> / ' + STEPS.length + ' 步';
+    $('wk-prev').disabled = wk.i === 0; $('wk-next').disabled = wk.i === STEPS.length;
+  }
+  function wkStop(){ if (wk.timer){ clearInterval(wk.timer); wk.timer = null; $('wk-play').textContent = '自动播放'; } }
+  $('wk-prev').onclick = function(){ wkStop(); if (wk.i > 0){ wk.i--; wkShow(); } };
+  $('wk-next').onclick = function(){ wkStop(); if (wk.i < STEPS.length){ wk.i++; wkShow(); } };
+  $('wk-reset').onclick = function(){ wkStop(); wk.i = 0; wkShow(); };
+  $('wk-play').onclick = function(){
+    if (wk.timer){ wkStop(); return; }
+    if (wk.i === STEPS.length) wk.i = 0;
+    $('wk-play').textContent = '暂停'; wkShow();
+    wk.timer = setInterval(function(){ if (wk.i >= STEPS.length){ wkStop(); return; } wk.i++; wkShow(); }, 2200);
+  };
+  $('walk').addEventListener('keydown', function(e){ if (e.key === 'ArrowRight'){ e.preventDefault(); $('wk-next').click(); } else if (e.key === 'ArrowLeft'){ e.preventDefault(); $('wk-prev').click(); } });
+  wkShow();
+
+  /* ---------- ⑥ 沙盘 ---------- */
+  function wokeBy(s, who){ for (var i = 0; i < s.log.length; i++){ var l = s.log[i]; if (l.kind === 'match' && l.text.indexOf('唤醒 ' + who) >= 0) return l.t; } return null; }
+  function holderOf(s, v){ var k = Object.keys(s.threads).filter(function(x){ var t = s.threads[x]; return t.val === null && t.result === v; }); return k.length ? k[0] : null; }
+  var PRE = {
+    lifo: {kind: 'sqlifo', script: [['A', 'take'], ['B', 'take'], ['C', 'take'], ['D', 'put', 'a']],
+      q: 'A、B、C 依次 take() 等着，然后 D put(a)。谁拿到 a？', opts: [['A', '最早来的 A'], ['C', '最后来的 C'], ['rnd', '说不准，看调度']], answer: 'C',
+      out: function(s){ return holderOf(s, 'a'); },
+      why: '默认模式是栈：A、B、C 依次压栈，C 在栈顶。D 只看栈顶，和 C 配对。切到“SQ 公平”再跑一遍，拿到的就是 A。'},
+    offer: {kind: 'sqfair', script: [['A', 'offer', 'x'], ['B', 'take'], ['C', 'offer', 'y']],
+      q: 'A 先 offer(x)，这时没人在等。之后 B 来 take()，再之后 C offer(y)。B 最后拿到什么？', opts: [['x', 'x：A 先放下的那份'], ['y', 'y：C 后来 offer 的'], ['wait', '什么也没拿到，还在等']], answer: 'y',
+      out: function(s){ var b = s.threads.B; if (!b) return null; return b.status === 'waiting' ? 'wait' : b.result; },
+      why: 'offer 是立即模式（ns = 0）：此刻没人在等，就直接返回 false，什么也不留下。B 来 take 时链上是空的，只能挂一个请求节点等着；C 的 offer 碰上了 B 的请求，才交接成功。'},
+    transfer: {kind: 'ltq', script: [['A', 'put', 'a'], ['B', 'transfer', 'b'], ['C', 'take'], ['D', 'take']],
+      q: 'A put(a)，B transfer(b)，然后 C、D 先后 take()。B 的 transfer 什么时候返回？', opts: [['now', '一调就返回'], ['C', 'C 取完之后'], ['D', 'D 取完之后']], answer: 'D',
+      out: function(s){ var b = s.threads.B; if (!b) return null; if (b.status === 'waiting') return 'never'; var w = wokeBy(s, 'B'); return w || 'now'; },
+      why: 'put 是异步的，a 先挂在链上没人等。B 的 transfer 发现排着的是同类（数据），只能挂在 a 后面等。C 取走的是排在前面的 a，D 才取到 b，B 这时才被叫醒。'},
+    poll: {kind: 'sqfair', script: [['A', 'take'], ['B', 'poll']],
+      q: 'A 在 take() 上等着。B 来调 poll()（不带超时）。B 会怎样？', opts: [['null', '立刻返回 null'], ['wait', '和 A 一起排着等'], ['take', '把 A 的位置占了']], answer: 'null',
+      out: function(s){ var b = s.threads.B; if (!b) return null; return b.status === 'waiting' ? 'wait' : (b.result === 'null' ? 'null' : 'take'); },
+      why: 'B 也是请求，和 A 同类，配不上；poll() 是立即模式，配不上就走，不会把自己挂到链上。链上始终只有 A 一个请求节点。'},
+    cancel: {kind: 'ltq', script: [['A', 'pollT'], ['B', 'pollT'], ['A', 'cancel'], ['C', 'put', 'x']],
+      q: 'A、B 先后 poll(超时) 等着。A 先超时了，然后 C put(x)。谁拿到 x？', opts: [['A', 'A'], ['B', 'B'], ['none', '没人拿，x 挂在链上']], answer: 'B',
+      out: function(s){ if (!s.threads.C) return null; return holderOf(s, 'x') || 'none'; },
+      why: 'A 超时时把自己节点的 item 改成“指向自己”，从此算已配对，并且被摘掉（这里它正好在链头，head 直接推过去）。C 来的时候碰到的第一个活请求就是 B 的。'},
+    slack: {kind: 'ltq', script: [['A', 'put', 'a'], ['B', 'put', 'b'], ['C', 'take']],
+      q: 'A put(a)、B put(b)，然后 C take() 拿走了 a。现在 head 指向哪个节点？', opts: [['a', 'a 的节点（已配对）'], ['b', 'b 的节点'], ['null', 'null']], answer: 'a',
+      out: function(s){ if (!s.threads.C) return null; if (s.head === null) return 'null'; return s.nodes[s.head].v0 === 'a' ? 'a' : s.nodes[s.head].v0 === 'b' ? 'b' : '?'; },
+      why: '配对的正好是 head 节点（源码里 p == h），这时 head 不动：链上留着已配对的 a 节点，真正的队首是它后面的 b。这就是 slack = 1，后面的操作路过时会顺手把 head 推过去。'}
+  };
+  var OPS = {
+    sqlifo: [['put', 'put'], ['offer', 'offer'], ['offerT', 'offer(超时)'], ['take', 'take'], ['poll', 'poll'], ['pollT', 'poll(超时)']],
+    ltq: [['put', 'put'], ['transfer', 'transfer'], ['tryTransfer', 'tryTransfer'], ['tryTransferT', 'tryTransfer(超时)'], ['take', 'take'], ['poll', 'poll'], ['pollT', 'poll(超时)']]
+  };
+  OPS.sqfair = OPS.sqlifo;
+  var lab = {k: 'lifo', kind: 'sqlifo', s: null, pos: 0, guess: null, off: false, vseq: 0};
+  function apply(s, st){ return st[1] === 'cancel' ? DQ.cancel(s, st[0]) : DQ.op(s, st[0], st[1], st[2] || null); }
+  function labReset(){ lab.s = DQ.make(lab.kind); lab.pos = 0; lab.off = false; lab.bad = null; lab.vseq = 0; lab.hi = []; labPaint(); }
+  function labGuess(){
+    var p = PRE[lab.k], h = '<p><b>先猜：</b>' + esc(p.q) + '</p><div class="opts">';
+    p.opts.forEach(function(o){ h += '<button type="button" data-g="' + o[0] + '" aria-pressed="' + (lab.guess === o[0]) + '">' + esc(o[1]) + '</button>'; });
+    $('lab-guess').innerHTML = h + '</div>';
+  }
+  function nextName(){ var used = lab.s.threads; for (var i = 0; i < 26; i++){ var c = String.fromCharCode(65 + i); if (!used[c]) return c; }
+    for (var j = 0; j < 26; j++){ var d = String.fromCharCode(65 + j); if (used[d].status !== 'waiting') return d; } return null; }
+  function padHTML(){
+    var h = '<div class="row"><span>加一个操作</span>' + OPS[lab.kind].map(function(o){ return '<button class="btn" type="button" data-op="' + o[0] + '"' + (lab.guess ? '' : ' disabled') + '>' + o[1] + '</button>'; }).join('') + '</div>';
+    var w = Object.keys(lab.s.threads).filter(function(k){ return lab.s.threads[k].status === 'waiting'; });
+    if (w.length) h += '<div class="row"><span>超时 / 中断</span>' + w.map(function(k){ return '<button class="btn" type="button" data-cancel="' + k + '"' + (lab.guess ? '' : ' disabled') + '>让 ' + k + ' 超时</button>'; }).join('') + '</div>';
+    return h;
+  }
+  function labPaint(){
+    var p = PRE[lab.k], locked = !lab.guess, done = lab.pos >= p.script.length;
+    render($('lab-board'), lab.s, lab.hi);
+    $('lab-pad').innerHTML = padHTML();
+    $('lab-step').disabled = locked || done || lab.off;
+    $('lab-run').disabled = locked || done || lab.off;
+    $('lab-pos').textContent = lab.bad ? '这个剧本要用 ' + lab.bad + '，' + KIND[lab.kind] + ' 没有这个方法；可以用下面的按钮自己摆' : lab.off ? '你加了自己的操作，剧本按钮已停用，点“从头来”恢复' : '剧本 ' + lab.pos + ' / ' + p.script.length + ' 步' + (done ? '' : '，下一步：' + p.script[lab.pos][0] + ' ' + p.script[lab.pos][1].replace('T', '(超时)').replace('cancel', '超时') + (p.script[lab.pos][2] ? '(' + p.script[lab.pos][2] + ')' : ''));
+    var res = $('lab-res');
+    if (locked){ res.dataset.role = 'other'; res.innerHTML = '先在上面选一个猜测，再开始点。'; return; }
+    if (lab.bad){ res.dataset.role = 'other'; res.innerHTML = '这个剧本只适用于 ' + KIND[p.kind] + '。'; return; }
+    if (!done){ res.dataset.role = 'other'; res.innerHTML = '继续点。日志里绿色是配对，紫色是挂上去等，棕色是放下就走，灰色是立即失败，红色是超时取消。'; return; }
+    var out = p.out(lab.s), label = function(k){ for (var i = 0; i < p.opts.length; i++) if (p.opts[i][0] === k) return p.opts[i][1]; return k; };
+    if (lab.off || lab.kind !== p.kind){
+      res.dataset.role = 'other';
+      res.innerHTML = (lab.kind !== p.kind ? '换成了 ' + KIND[lab.kind] + '，这次不计对错。' : '你加了自己的操作，这次不计对错。') + ' 结果：<b>' + esc(label(out)) + '</b>。';
+      return;
+    }
+    var right = out === lab.guess;
+    $('lab-guess').querySelectorAll('button').forEach(function(b){ b.classList.toggle('right', b.dataset.g === out); b.classList.toggle('wrong', b.dataset.g === lab.guess && !right); });
+    res.dataset.role = right ? 'done' : 'bad';
+    res.innerHTML = (right ? '<b>猜对了。</b>' : '<b>猜错了，结果是：' + esc(label(out)) + '。</b>') + esc(p.why);
+  }
+  function stepTo(st){ var prev = lab.s; lab.s = apply(lab.s, st); lab.hi = newIds(prev, lab.s); }
+  $('lab-presets').addEventListener('click', function(e){ var b = e.target.closest('button[data-k]'); if (!b) return;
+    lab.k = b.dataset.k; lab.kind = PRE[lab.k].kind; lab.guess = null;
+    $('lab-presets').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x === b); });
+    $('lab-kind').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x.dataset.v === lab.kind); });
+    labGuess(); labReset(); });
+  $('lab-guess').addEventListener('click', function(e){ var b = e.target.closest('button[data-g]'); if (!b || lab.guess) return; lab.guess = b.dataset.g; labGuess(); labPaint(); });
+  $('lab-kind').addEventListener('click', function(e){ var b = e.target.closest('button[data-v]'); if (!b) return;
+    var p = PRE[lab.k];
+    var ok = OPS[b.dataset.v].map(function(o){ return o[0]; });
+    lab.kind = b.dataset.v;
+    $('lab-kind').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x === b); });
+    labReset();
+    var miss = p.script.filter(function(st){ return st[1] !== 'cancel' && ok.indexOf(st[1]) < 0; });
+    if (miss.length){ lab.off = true; lab.bad = OPN[miss[0][1]]; labPaint(); }
+  });
+  $('lab-step').onclick = function(){ var p = PRE[lab.k]; if (lab.pos < p.script.length){ stepTo(p.script[lab.pos]); lab.pos++; labPaint(); } };
+  $('lab-run').onclick = function(){ var p = PRE[lab.k]; while (lab.pos < p.script.length){ stepTo(p.script[lab.pos]); lab.pos++; } labPaint(); };
+  $('lab-reset').onclick = function(){ labReset(); };
+  $('lab-pad').addEventListener('click', function(e){
+    var o = e.target.closest('button[data-op]'), c = e.target.closest('button[data-cancel]');
+    if (!lab.guess) return;
+    if (o){ var name = nextName(); if (!name) return; var v = /^(take|poll)/.test(o.dataset.op) ? null : 'v' + (++lab.vseq); lab.off = true; stepTo([name, o.dataset.op, v]); labPaint(); }
+    if (c){ lab.off = true; stepTo([c.dataset.cancel, 'cancel']); labPaint(); }
+  });
+  labGuess(); labReset();
+})();
+</script>
+
+</body>
+</html>
