@@ -42,6 +42,7 @@
 | # | 页面 | 内容 |
 |---|------|------|
 | 01 | [系统压测](https://archeu.github.io/study-notes/perf/load-testing.html) | 看哪五个数、六种压测、吞吐为什么会到顶、八类常见瓶颈的原理和解法、方案优劣和工具对比，压测曲线和瓶颈实验台 |
+| 02 | [响应时间为什么越压越长](https://archeu.github.io/study-notes/perf/response-time-queueing.html) | 六步排查：RT 的账单、四问排查路线、一串窗口和浴缸、开环积压与出口变窄、超时重试的反馈环、排队还是拒绝，四个本机实验和排队实验台 |
 
 ## Redis
 

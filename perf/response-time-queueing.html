@@ -1,0 +1,1711 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>响应时间越压越长</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a troubleshooting topic (① 现象 ② 常见误判 ③ 排查路线 ④ 背后的机制 ⑤ 复现一次 ⑥ 根治和预防 ↺). Metaphor: a bathtub (tap = arrivals, drain = c ÷ S, water level = requests waiting). Colors: load generator / client blue (pd), windows doing work (threads, connections) and the chosen design teal (bk), queue / waiting amber (of), things piling up over time (data, heap, leaks) purple (cg), database / downstream brown (g2), wasted work orange (warn), wrong red, right green, old ways grey. Interactives: concurrency stepper (④), queue lab with guess-first scenarios (④). Charts in ①②⑤ are drawn from measurements on the author's 2-vCPU VM. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:640px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-on{font-size:11.5px;font-weight:700;fill:var(--on-accent)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)}
+.f-oft{fill:var(--of-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-card{fill:var(--card)} .f-paper{fill:var(--code-bg)}
+.c-empty{fill:var(--card);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-bkd{stroke:var(--bk);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-pdd{stroke:var(--pd);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+.mk{fill:var(--of)}
+.mk-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+.dot-q{fill:var(--of)}
+.dot-s{fill:var(--bk)}
+.dot-t{fill:var(--warn)}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.need{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need b i{font-style:normal;font-family:var(--font-display);color:var(--of);margin-right:6px}
+.need p{font-size:14px;color:var(--muted)}
+.need .to{font-size:12.5px;align-self:flex-start;padding:2px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev{color:var(--ink)}
+.mj dd.ev b{color:var(--bad)}
+.mj .go{font-size:12.5px;align-self:flex-start;color:var(--muted)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- ③ route ---------- */
+.qflow{display:flex;flex-direction:column;gap:0}
+.qstep{display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;align-items:start}
+.qstep .qn{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-display);font-size:20px;background:var(--ink);color:var(--paper);position:relative;z-index:1}
+.qstep .qbody{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.qstep .qbody > b{font-size:17px}
+.qstep .qbody > p{font-size:14px;color:var(--muted)}
+.qstep .qbody > p code{color:var(--ink);overflow-wrap:anywhere}
+.qline{width:2px;height:22px;background:var(--line-strong);margin-left:21px}
+.ans{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.an{border:1.5px solid var(--rc);background:var(--rt);border-radius:12px;padding:8px 12px;font-size:14px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.an > span{font-size:12.5px;color:var(--muted)}
+.an > b{font-weight:700}
+.an a{font-size:12.5px}
+.an code{overflow-wrap:anywhere}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.exp-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.exp-h .n{font-family:var(--font-display);font-size:22px;color:var(--of)}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.fact .to6{margin-top:auto;font-size:12.5px;color:var(--muted)}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:21px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way .cfg{font-family:var(--font-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.way svg{display:block;width:100%;height:auto}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b code{font-size:.9em}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:4.6em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--bad)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:620px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+.ctl.off{opacity:.45}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg-btns button:disabled{opacity:.4;cursor:not-allowed}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:18px;height:3px;border-radius:2px;display:inline-block}
+.lg i.d{height:0;border-top:2px dashed}
+.notes{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.notes li{font-size:14.5px;padding:8px 12px;border-radius:10px;background:var(--rt);border-left:4px solid var(--rc)}
+
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts,.metaphor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ledger{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras,.ex{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+}
+@media (max-width:520px){
+  .facts,.metaphor,.presets,.ctl-grid{grid-template-columns:1fr}
+  .tiles,.ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+  .qstep{grid-template-columns:34px minmax(0,1fr);gap:10px}
+  .qstep .qn{width:34px;height:34px;font-size:17px}
+  .qline{margin-left:16px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-pd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-pd" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-cg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-cg" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>性能</span><span aria-hidden="true">/</span><span class="tb-here">响应时间为什么越压越长</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">LOAD TEST · RT · QUEUEING · LITTLE'S LAW · TOMCAT · HIKARICP · BACKLOG · GC · RETRY</p>
+  <h1>多出来的响应时间，大多是在排队</h1>
+  <p class="lead">压测时响应时间（RT）往上涨，大多数时候每个请求真正干活的时间没变，多出来的全是<b>排队</b>。并发往上加：线程、连接这些“窗口”早就满了，多来的人只能排着，RT ≈ 并发数 ÷ 吞吐上限，跟着并发线性涨。时间往后走：要么<b>来得比走得快</b>，队伍每秒都在变长；要么<b>出口在变窄</b>，表越来越大、堆越来越满、连接被漏掉。排查就是找出：哪一个队在变长，它为什么变长。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>现象</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>常见误判</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>排查路线</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>背后的机制</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>复现一次</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>根治和预防</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>下单服务上线前压测。JMeter 从 10 个线程一级级加到 400 个：吞吐到 500 左右就不涨了，RT 却一级比一级高；最后一级保持半小时，RT 还在慢慢往上爬，服务器 CPU 才三成。领导问“接口是不是写得有问题，到底能扛多少”。这类问题工作里常碰到，面试也常问，所以本页按排查顺序讲，第⑥步末尾附面试题。标“实测”的数字都在本机跑过：Spring Boot 3.5.16、Tomcat 10.1.55、HikariCP 6.3.3、H2 内存库，2 核虚拟机。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>现象：两种“越来越长”</h2>
+    <p class="lead">先把现象拆开。“随着并发增长”和“随着时间增长”是两件事，背后的原因不一样，排查的方向也不一样。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 336" role="img" aria-label="左：并发从 5 加到 400，吞吐在 20 并发时到顶约 495 次每秒，P50 从 21 毫秒涨到 810 毫秒。右：20 个用户压下单接口近 3 分钟，吞吐从约 800 降到约 280，P50 从 22 毫秒涨到 68 毫秒。"><text class="t-h" x="20" y="24">问题 1 · 加并发：吞吐到顶，RT 一级比一级高</text><text class="t-m" x="20" y="42">闭环压测，每级 10 秒，接口每次查一条 20 ms 的 SQL</text><text class="t-b" x="20" y="66">吞吐（次/秒）</text><line class="e-axis" x1="36" y1="146" x2="360" y2="146"/><line class="e-bkd" x1="36" y1="91" x2="360" y2="91"/><text class="t-bk" x="360" y="86" text-anchor="end">到顶 ≈ 500</text><rect class="f-bk" x="49" y="120.7" width="26" height="25.3" rx="3"/><text class="t-on" x="62" y="134.7" text-anchor="middle" style="font-size:10px">230</text><rect class="f-bk" x="95" y="94.5" width="26" height="51.5" rx="3"/><text class="t-on" x="108" y="108.5" text-anchor="middle" style="font-size:10px">468</text><rect class="f-bk" x="141" y="91.6" width="26" height="54.4" rx="3"/><text class="t-on" x="154" y="105.6" text-anchor="middle" style="font-size:10px">495</text><rect class="f-bk" x="187" y="91.6" width="26" height="54.4" rx="3"/><text class="t-on" x="200" y="105.6" text-anchor="middle" style="font-size:10px">495</text><rect class="f-bk" x="233" y="91.7" width="26" height="54.3" rx="3"/><text class="t-on" x="246" y="105.7" text-anchor="middle" style="font-size:10px">494</text><rect class="f-bk" x="279" y="91.6" width="26" height="54.4" rx="3"/><text class="t-on" x="292" y="105.6" text-anchor="middle" style="font-size:10px">495</text><rect class="f-bk" x="325" y="91.4" width="26" height="54.6" rx="3"/><text class="t-on" x="338" y="105.4" text-anchor="middle" style="font-size:10px">496</text><text class="t-b" x="20" y="176">P50 响应时间（毫秒）</text><line class="e-axis" x1="36" y1="292" x2="360" y2="292"/><rect class="f-of" x="49" y="289.7" width="26" height="2.3" rx="3"/><text class="t-mono" x="62" y="284.7" text-anchor="middle">21</text><text class="t-mono" x="62" y="310" text-anchor="middle">5</text><rect class="f-of" x="95" y="289.7" width="26" height="2.3" rx="3"/><text class="t-mono" x="108" y="284.7" text-anchor="middle">21</text><text class="t-mono" x="108" y="310" text-anchor="middle">10</text><rect class="f-of" x="141" y="287.6" width="26" height="4.4" rx="3"/><text class="t-mono" x="154" y="282.6" text-anchor="middle">40</text><text class="t-mono" x="154" y="310" text-anchor="middle">20</text><rect class="f-of" x="187" y="280.9" width="26" height="11.1" rx="3"/><text class="t-mono" x="200" y="275.9" text-anchor="middle">100</text><text class="t-mono" x="200" y="310" text-anchor="middle">50</text><rect class="f-of" x="233" y="269.7" width="26" height="22.3" rx="3"/><text class="t-mono" x="246" y="264.7" text-anchor="middle">201</text><text class="t-mono" x="246" y="310" text-anchor="middle">100</text><rect class="f-of" x="279" y="247.2" width="26" height="44.8" rx="3"/><text class="t-mono" x="292" y="242.2" text-anchor="middle">403</text><text class="t-mono" x="292" y="310" text-anchor="middle">200</text><rect class="f-of" x="325" y="202" width="26" height="90" rx="3"/><text class="t-mono" x="338" y="197" text-anchor="middle">810</text><text class="t-mono" x="338" y="310" text-anchor="middle">400</text><text class="t-m" x="198" y="328" text-anchor="middle">并发数（同时在发请求的虚拟用户）</text><line class="e-dash" x1="384" y1="12" x2="384" y2="330"/><text class="t-h" x="404" y="24">问题 2 · 压力不变：越跑越慢</text><text class="t-m" x="404" y="42">一直是 20 个用户，压一个“下单”接口</text><text class="t-b" x="404" y="66">吞吐（次/秒）</text><line class="e-axis" x1="430" y1="146" x2="740" y2="146"/><polyline class="e-bk" points="441.8,118.8 443.6,103.8 445.4,96.1 447.2,97 449,89.3 450.8,85 452.6,82.9 454.4,85 456.1,88.4 457.9,85.3 459.7,86.2 461.5,86.4 463.3,87 465.1,89.8 466.9,99.2 468.7,91.1 470.5,92.2 472.3,92.8 474.1,93 475.9,97.7 477.7,95.6 479.5,96.4 481.3,98 483.1,97.8 484.8,104.2 486.6,100.3 488.4,102.3 490.2,103 492,102.8 493.8,108.5 495.6,104.1 497.4,104.1 499.2,105.6 501,105.4 502.8,111.4 504.6,106.8 506.4,107.6 508.2,108.2 510,108.3 511.8,111.4 513.6,107.1 515.3,106.9 517.1,109.6 518.9,108.5 520.7,111.2 522.5,112.5 524.3,107.9 526.1,112 527.9,111.5 529.7,111.9 531.5,114.3 533.3,110.2 535.1,109.6 536.9,109.9 538.7,111.2 540.5,113.7 542.3,111.1 544,112.5 545.8,111.6 547.6,111.8 549.4,115.8 551.2,112.2 553,112.3 554.8,114.1 556.6,113.4 558.4,115.6 560.2,113.1 562,114 563.8,113.7 565.6,113.8 567.4,117 569.2,114 571,113.7 572.8,115.1 574.5,114.1 576.3,115.3 578.1,118 579.9,114.9 581.7,115.9 583.5,116.2 585.3,115.8 587.1,117.8 588.9,116.2 590.7,117.3 592.5,115.7 594.3,115.7 596.1,119.4 597.9,118.7 599.7,116.7 601.5,116.1 603.2,117.7 605,118.8 606.8,116.8 608.6,116.8 610.4,117 612.2,118.1 614,120.2 615.8,120.2 617.6,120 619.4,118.3 621.2,119 623,121.4 624.8,118.4 626.6,118.4 628.4,118.9 630.2,118.3 632,120.3 633.7,122.7 635.5,120.8 637.3,120.1 639.1,120 640.9,120.8 642.7,122.7 644.5,120.4 646.3,120.3 648.1,120.5 649.9,120.7 651.7,123.6 653.5,120.6 655.3,121.5 657.1,122.1 658.9,121.1 660.7,123.4 662.4,121.7 664.2,121.8 666,122.1 667.8,121.8 669.6,124.1 671.4,122.2 673.2,121.9 675,122.3 676.8,122.9 678.6,124.8 680.4,122.5 682.2,123.1 684,122.8 685.8,123.6 687.6,126 689.4,123.5 691.2,123.3 692.9,123.3 694.7,123.3 696.5,123.6 698.3,126.1 700.1,123.9 701.9,123.4 703.7,124.5 705.5,124.7 707.3,126.2 709.1,124.4 710.9,124.5 712.7,124.6 714.5,124.1 716.3,126.4 718.1,124.7 719.9,124.1 721.6,125.2 723.4,124.9 725.2,127.2 727,124.9 728.8,125.1 730.6,124.4 732.4,125.4 734.2,127.3 736,125.2"/><text class="t-bk" x="446" y="79.3">约 800</text><text class="t-bk" x="740" y="117.2" text-anchor="end">约 280</text><text class="t-b" x="404" y="176">P50 响应时间（毫秒）</text><line class="e-axis" x1="430" y1="292" x2="740" y2="292"/><polyline class="e-of" points="441.8,243.3 443.6,250.8 445.4,258.3 447.2,258.3 449,260.8 450.8,264.5 452.6,264.5 454.4,264.5 456.1,262 457.9,264.5 459.7,263.3 461.5,263.3 463.3,260.8 465.1,260.8 466.9,257 468.7,259.5 470.5,258.3 472.3,259.5 474.1,258.3 475.9,257 477.7,257 479.5,257 481.3,255.8 483.1,255.8 484.8,253.3 486.6,254.5 488.4,252 490.2,253.3 492,252 493.8,248.3 495.6,250.8 497.4,250.8 499.2,249.5 501,249.5 502.8,245.8 504.6,248.3 506.4,247 508.2,245.8 510,247 511.8,242 513.6,248.3 515.3,247 517.1,244.5 518.9,245.8 520.7,243.3 522.5,240.8 524.3,245.8 526.1,240.8 527.9,240.8 529.7,242 531.5,239.5 533.3,243.3 535.1,243.3 536.9,243.3 538.7,243.3 540.5,239.5 542.3,243.3 544,239.5 545.8,240.8 547.6,242 549.4,235.8 551.2,240.8 553,239.5 554.8,237 556.6,238.3 558.4,234.5 560.2,238.3 562,238.3 563.8,238.3 565.6,237 567.4,235.8 569.2,238.3 571,237 572.8,235.8 574.5,235.8 576.3,235.8 578.1,233.3 579.9,234.5 581.7,234.5 583.5,234.5 585.3,234.5 587.1,233.3 588.9,233.3 590.7,230.8 592.5,233.3 594.3,234.5 596.1,228.3 597.9,230.8 599.7,232 601.5,232 603.2,230.8 605,229.5 606.8,230.8 608.6,233.3 610.4,230.8 612.2,229.5 614,225.8 615.8,224.5 617.6,224.5 619.4,229.5 621.2,229.5 623,224.5 624.8,228.3 626.6,228.3 628.4,229.5 630.2,227 632,225.8 633.7,217 635.5,223.3 637.3,223.3 639.1,224.5 640.9,224.5 642.7,219.5 644.5,223.3 646.3,222 648.1,223.3 649.9,223.3 651.7,219.5 653.5,223.3 655.3,220.8 657.1,217 658.9,220.8 660.7,215.8 662.4,218.3 664.2,218.3 666,218.3 667.8,219.5 669.6,214.5 671.4,218.3 673.2,218.3 675,219.5 676.8,215.8 678.6,210.8 680.4,217 682.2,215.8 684,218.3 685.8,214.5 687.6,208.3 689.4,209.5 691.2,215.8 692.9,213.3 694.7,213.3 696.5,214.5 698.3,208.3 700.1,212 701.9,213.3 703.7,210.8 705.5,210.8 707.3,208.3 709.1,210.8 710.9,209.5 712.7,210.8 714.5,210.8 716.3,204.5 718.1,210.8 719.9,212 721.6,208.3 723.4,205.8 725.2,203.3 727,209.5 728.8,208.3 730.6,210.8 732.4,205.8 734.2,200.8 736,207"/><text class="t-of" x="446" y="252.8">22 ms</text><text class="t-of" x="740" y="199" text-anchor="end">68 ms</text><line class="e-axis" x1="440" y1="292" x2="440" y2="297"/><text class="t-mono" x="440" y="310" text-anchor="middle">0</text><line class="e-axis" x1="547.6" y1="292" x2="547.6" y2="297"/><text class="t-mono" x="547.6" y="310" text-anchor="middle">1 分钟</text><line class="e-axis" x1="655.3" y1="292" x2="655.3" y2="297"/><text class="t-mono" x="655.3" y="310" text-anchor="middle">2 分钟</text><text class="t-m" x="590" y="328" text-anchor="middle">压测进行的时间</text></svg></div>
+    <figcaption>本机实测。左边每一级只多了并发，吞吐在 20 并发时就到顶了，之后 RT 和并发数成正比。右边并发一直是 20，什么都没改，RT 却随着时间涨到原来的三倍，吞吐跌到三分之一。</figcaption>
+  </figure>
+  <div class="trio">
+    <div class="need" data-role="of"><b><i>1</i>并发一高 RT 就涨，吞吐却不涨了</b><p>多出来的那些并发去哪了？为什么正好是“并发翻倍，RT 翻倍”？</p><a class="to" href="#s4-conc">④ 并发轴</a></div>
+    <div class="need" data-role="cg"><b><i>2</i>压力没变，RT 还在随时间涨</b><p>是来得比走得快，还是出口在变窄？内存泄漏只是其中一种。</p><a class="to" href="#s4-time">④ 时间轴</a></div>
+    <div class="need" data-role="bk"><b><i>3</i>到底能扛多少，该改哪</b><p>找到满了的那一站，算出上限，再决定是加窗口、缩短占用，还是限流。</p><a class="to" href="#s3">③ 排查路线</a></div>
+  </div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>常见误判：看起来都对，其实都没找到队</h2>
+    <p class="lead">先看一张账单：把压测机看到的 RT 拆开，看时间花在哪了。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 258" role="img" aria-label="三种并发下 P50 的组成：SQL 一直是 20 毫秒；200 并发时多出 368 毫秒在等连接；400 并发时又多出约 423 毫秒在等 Tomcat 线程，这一段服务端的 http.server.requests 里看不到。"><rect class="f-bk" x="20" y="12" width="14" height="10" rx="2"/><text class="t-s" x="40" y="21">SQL 自己</text><rect class="f-of" x="137" y="12" width="14" height="10" rx="2"/><text class="t-s" x="157" y="21">线程里等连接</text><rect class="f-warn" x="254" y="12" width="14" height="10" rx="2"/><text class="t-s" x="274" y="21">任务队列里等线程</text><rect class="f-mut" x="396" y="12" width="14" height="10" rx="2"/><text class="t-s" x="416" y="21">其他（网络、解析）</text><text class="t-b" x="110" y="69" text-anchor="end">10 并发</text><rect class="f-bk" x="120" y="50" width="12.4" height="28"/><rect class="f-mut" x="132.4" y="50" width="1.5" height="28"/><text class="t-b" x="141" y="69">压测机 P50 21 ms</text><text class="t-b" x="110" y="131" text-anchor="end">200 并发</text><rect class="f-bk" x="120" y="112" width="12.4" height="28"/><rect class="f-of" x="132.4" y="112" width="228.2" height="28"/><rect class="f-mut" x="360.6" y="112" width="9.3" height="28"/><text class="t-b" x="377.9" y="131">压测机 P50 403 ms</text><text class="t-b" x="110" y="209" text-anchor="end">400 并发</text><rect class="f-bk" x="120" y="190" width="12.4" height="28"/><rect class="f-of" x="132.4" y="190" width="227.5" height="28"/><rect class="f-warn" x="359.9" y="190" width="262.3" height="28"/><text class="t-b" x="630.2" y="209">压测机 P50 810 ms</text><path class="e-ink" d="M120 106 v-6 h241.2 v6"/><text class="t-m" x="240.6" y="95" text-anchor="middle">服务端 http.server.requests 平均 389 ms</text><path class="e-ink" d="M120 184 v-6 h239.9 v6"/><text class="t-m" x="240" y="173" text-anchor="middle">服务端只看到 387 ms</text><path class="e-ink" d="M359.9 184 v-6 h262.3 v6"/><text class="t-warn" x="491.1" y="173" text-anchor="middle">这一段服务端指标里没有</text><text class="t-s" x="136.4" y="69"></text><line class="e-axis" x1="120" y1="232" x2="647" y2="232"/><line class="e-axis" x1="120" y1="232" x2="120" y2="237"/><text class="t-mono" x="120" y="250" text-anchor="middle">0 ms</text><line class="e-axis" x1="244" y1="232" x2="244" y2="237"/><text class="t-mono" x="244" y="250" text-anchor="middle">200 ms</text><line class="e-axis" x1="368" y1="232" x2="368" y2="237"/><text class="t-mono" x="368" y="250" text-anchor="middle">400 ms</text><line class="e-axis" x1="492" y1="232" x2="492" y2="237"/><text class="t-mono" x="492" y="250" text-anchor="middle">600 ms</text><line class="e-axis" x1="616" y1="232" x2="616" y2="237"/><text class="t-mono" x="616" y="250" text-anchor="middle">800 ms</text></svg></div>
+    <figcaption>本机实测（⑤ 实验 1）。并发从 10 加到 400，SQL 自己一直是 20 ms。多出来的全是等：先在线程里等连接，线程用完以后，请求连线程都拿不到，在 Tomcat 的任务队列里等。服务端的 <code>http.server.requests</code> 从线程接手请求才开始计时，最后那一段它看不到。</figcaption>
+  </figure>
+  <div class="essence">
+    <span class="big">RT = 干活 + 排队</span>
+    <p>干活的时间（这里是 SQL 的 20 ms）通常不变，变的是排队。</p>
+    <p>所以别先问“代码哪里慢”，先问“请求在哪个队里等、那个队为什么越来越长”。</p>
+  </div>
+  <div class="misj">
+    <div class="mj"><b><i>1</i>“接口代码慢，要优化代码”</b>
+      <dl><dt>为什么像</dt><dd>RT 确实高，代码是最容易想到的地方。</dd>
+      <dt>证据说</dt><dd class="ev">在方法里打点：SQL 一直 20 ms，方法本身没变慢。<b>变的是等待</b>，优化代码最多省下那 20 ms。</dd></dl>
+      <span class="go">→ ④ 一个请求要过好几道窗口</span></div>
+    <div class="mj"><b><i>2</i>“CPU 才三成，机器还没到瓶颈”</b>
+      <dl><dt>为什么像</dt><dd>CPU 是最先看、最常看的指标。</dd>
+      <dt>证据说</dt><dd class="ev">满的是连接池：10 个连接全借出去，190 个线程停在 <code>getConnection()</code>。<b>CPU 只是众多窗口里的一个</b>，线程、连接、锁、下游都能先满。</dd></dl>
+      <span class="go">→ ③ 每一站去哪看</span></div>
+    <div class="mj"><b><i>3</i>“把线程池、连接池调大就好了”</b>
+      <dl><dt>为什么像</dt><dd>调大以后，这一站的队确实变短了。</dd>
+      <dt>证据说</dt><dd class="ev">队伍会挪到下一站。连接给到 50，数据库就要同时跑 50 条 SQL，锁和 CPU 更挤，每条更慢。<b>只有最窄的那一站变宽，上限才会涨</b>，而且要它下游接得住。</dd></dl>
+      <span class="go">→ <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a> 讲过池子开多大</span></div>
+    <div class="mj"><b><i>4</i>“越跑越慢，肯定是内存泄漏”</b>
+      <dl><dt>为什么像</dt><dd>泄漏确实会让服务越跑越慢。</dd>
+      <dt>证据说</dt><dd class="ev">来得比走得快、表越来越大、连接被漏掉，看起来都一样。<b>三种修法完全不同</b>：限流、加索引、修代码。先用“停压后低压重测”分开它们。</dd></dl>
+      <span class="go">→ ③ 第 4 问</span></div>
+    <div class="mj"><b><i>5</i>“压测报告上的 RT 就是服务的 RT”</b>
+      <dl><dt>为什么像</dt><dd>压测工具就是干这个的。</dd>
+      <dt>证据说</dt><dd class="ev">压测机自己也会排队：GUI 模式、结果监听器、它自己的 GC、客户端连接池。另一头，闭环压测会把卡顿藏起来。<b>先确认数可信</b>，再分析服务。</dd></dl>
+      <span class="go">→ ⑥ 坑 9、坑 2</span></div>
+    <div class="mj"><b><i>6</i>“服务端监控 P99 还好，是网络问题”</b>
+      <dl><dt>为什么像</dt><dd>服务端说自己 300 ms，客户端说 3 秒，中间只剩网络。</dd>
+      <dt>证据说</dt><dd class="ev">差的那段在 Tomcat 的任务队列里。<b>服务端的计时从线程接手才开始</b>，在队里等的时间它不算。看 <code>tomcat.threads.busy</code> 是不是顶在最大值。</dd></dl>
+      <span class="go">→ ⑥ 坑 1</span></div>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>排查路线：四个问题，找到正在变长的那个队</h2>
+    <p class="lead">按顺序问。每个问题都有能拿到手的证据，不靠猜。</p>
+  </div>
+  <div class="qflow">
+    <div class="qstep"><span class="qn">1</span><div class="qbody">
+      <b>压测机靠得住吗？</b>
+      <p>看压测机自己的 CPU、GC、报错；对比压测机的 RT 和服务端入口（Nginx 的 <code>$request_time</code>、网关）的 RT。</p>
+      <div class="ans">
+        <div class="an" data-role="bad"><span>压测机 CPU 很高，或设定的并发打不满</span><b>先修压测机</b><a href="#pit-gen">⑥ 坑 9</a></div>
+        <div class="an" data-role="done"><span>压测机很闲，两边 RT 对得上</span><b>往下问</b></div>
+      </div></div></div>
+    <div class="qline" aria-hidden="true"></div>
+    <div class="qstep"><span class="qn">2</span><div class="qbody">
+      <b>吞吐还跟着并发涨吗？</b>
+      <p>把每一级的吞吐和 RT 放在一起看，就是 ① 左边那张图。</p>
+      <div class="ans">
+        <div class="an" data-role="other"><span>吞吐还在涨，RT 也在涨</span><b>没饱和，但某一站自己变慢了</b><span>锁竞争、下游变慢、慢 SQL。看链路追踪里各段耗时。</span></div>
+        <div class="an" data-role="of"><span>吞吐平了，RT 和并发成正比</span><b>饱和了，多出来的全在排队</b><span>RT ≈ 并发 ÷ 吞吐上限。去找满了的那一站（下表）。</span><a href="#s4-conc">④ 并发轴</a></div>
+      </div></div></div>
+    <div class="qline" aria-hidden="true"></div>
+    <div class="qstep"><span class="qn">3</span><div class="qbody">
+      <b>压力不变，RT 还在随时间涨吗？看“在途数”和“每次处理时间”。</b>
+      <p>在途数：压测机上还没回来的请求数，或者服务端 <code>tomcat.connections.current</code>。每次处理时间 S：方法里自己打点，比如 SQL 耗时。</p>
+      <div class="ans">
+        <div class="an" data-role="of"><span>在途一直涨，S 不变</span><b>来得比走得快</b><span>开环压测超过上限，或者某个无界队列在攒。</span><a href="#s4-time">④ 时间轴 (a)</a></div>
+        <div class="an" data-role="cg"><span>S 自己在变长，或窗口在变少</span><b>有东西在累积</b><span>数据、堆、漏掉的连接。闭环压测里只会是这一种。</span><a href="#s4-time">④ 时间轴 (b)</a></div>
+      </div></div></div>
+    <div class="qline" aria-hidden="true"></div>
+    <div class="qstep"><span class="qn">4</span><div class="qbody">
+      <b>停压一分钟，再用低压测一次。</b>
+      <p>把并发降到饱和点以下，比如原来的十分之一，看 RT 回不回到基线。</p>
+      <div class="ans">
+        <div class="an" data-role="of"><span>马上回到基线</span><b>只是积压</b><span>队伍消化完就好，服务没坏。要的是限流和有界队列。</span></div>
+        <div class="an" data-role="cg"><span>低压也慢，重启 JVM 就好</span><b>JVM 里在累积</b><span>堆、本地缓存、ThreadLocal、漏掉的连接和线程。</span></div>
+        <div class="an" data-role="g2"><span>重启也没用</span><b>JVM 外面在累积</b><span>表变大了、索引失效、磁盘满了、下游变慢了。</span></div>
+      </div></div></div>
+  </div>
+
+  <div class="sub">
+    <h3>满了的那一站，去哪看 <small>“满了”指窗口全忙，而且有人在等</small></h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>站</th><th>满了的样子</th><th>看什么指标</th><th>拿证据的命令</th></tr></thead>
+        <tbody>
+          <tr><th>压测机</th><td>CPU 高、自己在 GC、实际并发达不到设定值</td><td>压测机的 CPU、内存、报错数</td><td><code>top</code>、<code>jstat -gcutil &lt;JMeter 的 pid&gt; 1000</code></td></tr>
+          <tr><th>Tomcat 线程</th><td>忙线程顶在 <code>threads.max</code>（默认 200），连接数远大于 200</td><td><code>tomcat.threads.busy</code>、<code>tomcat.connections.current</code></td><td>要先开 <code>server.tomcat.mbeanregistry.enabled=true</code></td></tr>
+          <tr><th>业务线程池</th><td>队列长度一直涨，活跃线程顶满</td><td><code>executor.queued</code>、<code>executor.active</code></td><td>Micrometer 的 <code>ExecutorServiceMetrics</code>；Spring Boot 会给容器里的 <code>ThreadPoolTaskExecutor</code> 自动绑定</td></tr>
+          <tr><th>连接池</th><td>pending 一直大于 0，借连接要等很久</td><td><code>hikaricp.connections.pending</code>、<code>.active</code>、<code>.acquire</code>、<code>.timeout</code></td><td><code>jstack</code> 里大量线程停在 <code>ConcurrentBag.borrow</code></td></tr>
+          <tr><th>锁</th><td>很多线程 BLOCKED，等同一把锁</td><td>线程状态分布</td><td><code>jstack</code> 里的 <code>waiting to lock &lt;0x…&gt;</code>；Arthas <code>thread -b</code></td></tr>
+          <tr><th>CPU</th><td>可运行的线程比核多，长期排队</td><td>CPU 使用率、运行队列</td><td><code>vmstat 1</code> 的 r 列长期大于核数；<code>top -H</code>；async-profiler</td></tr>
+          <tr><th>GC</th><td>老年代每次回收后还在涨，Full GC 越来越密</td><td><code>jvm.gc.pause</code>、老年代占用</td><td><code>jstat -gcutil &lt;pid&gt; 1000</code>、<code>-Xlog:gc*</code></td></tr>
+          <tr><th>数据库</th><td>同一条 SQL 越来越慢，活跃会话多</td><td>慢查询数、行锁等待</td><td>慢查询日志、<code>EXPLAIN</code>、<code>SHOW PROCESSLIST</code></td></tr>
+          <tr><th>下游 HTTP</th><td>线程停在 socket 读，客户端连接池要等</td><td>HTTP 客户端连接池的指标</td><td><code>jstack</code> 里的 <code>socketRead</code>；链路追踪</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="pick-line">本页的例子里，满的是 <b>HikariCP 的 10 个连接</b>：每次占 20 ms，上限 10 ÷ 0.02 s = <b>500 次/秒</b>。下面就拿它讲透“为什么会排、排在哪、怎么越排越长”。</p>
+  </div>
+</section>
+
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>背后的机制：一串窗口，一个浴缸</h2>
+    <p class="lead">只用三样东西就能推出 ① 里的两种现象：窗口有几个（c），每次占多久（S），请求来得多快。</p>
+  </div>
+
+  <div class="sub">
+    <h3>先知道这些 <small>都是一两句话的前置知识</small></h3>
+    <div class="facts">
+      <div class="fact" data-role="other"><h4>利特尔法则</h4><p>系统里的请求数 = 吞吐 × 响应时间，写成 <code>L = X × R</code>。不管里面怎么排，长期看都成立。</p><a class="to6" href="load-testing.html">系统压测那页讲过 →</a></div>
+      <div class="fact" data-role="pd"><h4>闭环和开环</h4><p>闭环：每个虚拟用户等回来再发下一个（JMeter 线程组）。开环：按固定速度发，不管回没回来，真实用户就是这样。</p><a class="to6" href="load-testing.html">系统压测 · 压测机怎么发请求 →</a></div>
+      <div class="fact" data-role="bk"><h4>Tomcat 怎么收请求</h4><p>Acceptor 接连接，Poller 等数据到了，交给工作线程（最多 <code>threads.max</code>=200）。线程都忙时，请求在线程池的任务队列里等；连接最多 8192 个，再多就在内核的 accept 队列等（100）。</p></div>
+      <div class="fact" data-role="g2"><h4>HikariCP 借连接</h4><p>最多 <code>maximum-pool-size</code>=10 个连接。全借出去时，<code>getConnection()</code> 阻塞等别人还，最多等 <code>connection-timeout</code>=30 秒，等不到就抛异常。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="s4-chain">
+    <h3>一个请求要过好几道窗口</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 760 244" role="img" aria-label="请求从压测机出发，依次经过内核 accept 队列、Tomcat 任务队列、200 个 Tomcat 线程、等连接、10 个数据库连接、数据库，再原路返回。黄色的是只等不干活的队，绿色的是真正干活的窗口。连接这一站最窄，上限 500 次每秒。">
+          <path class="e-ink" d="M96 30 v-8 h592 v8"/>
+          <text class="t-b" x="392" y="16" text-anchor="middle">压测机看到的 RT：从发出到收到，全程</text>
+          <path class="e-warn" d="M300 60 v-8 h388 v8"/>
+          <text class="t-warn" x="494" y="46" text-anchor="middle">服务端 http.server.requests：从线程接手才开始算</text>
+          <rect class="b-pd" x="10" y="88" width="80" height="64" rx="12"/>
+          <text class="t-b" x="50" y="114" text-anchor="middle">压测机</text>
+          <text class="t-m" x="50" y="134" text-anchor="middle">N 个用户</text>
+          <line class="e-ink" x1="90" y1="120" x2="106" y2="120" marker-end="url(#ah-ink)"/>
+          <rect class="b-of" x="108" y="96" width="58" height="48" rx="8"/>
+          <text class="t-s" x="137" y="116" text-anchor="middle">accept</text>
+          <text class="t-s" x="137" y="133" text-anchor="middle">队列</text>
+          <text class="t-xs" x="137" y="160" text-anchor="middle">内核 · 100</text>
+          <line class="e-ink" x1="166" y1="120" x2="180" y2="120" marker-end="url(#ah-ink)"/>
+          <rect class="b-of" x="182" y="96" width="102" height="48" rx="8"/>
+          <text class="t-s" x="233" y="114" text-anchor="middle">任务队列</text>
+          <circle class="dot-q" cx="203" cy="130" r="4"/><circle class="dot-q" cx="216" cy="130" r="4"/><circle class="dot-q" cx="229" cy="130" r="4"/><circle class="dot-q" cx="242" cy="130" r="4"/><circle class="dot-q" cx="255" cy="130" r="4"/><circle class="dot-q" cx="268" cy="130" r="4"/>
+          <text class="t-xs" x="233" y="160" text-anchor="middle">连接最多 8192</text>
+          <line class="e-ink" x1="284" y1="120" x2="298" y2="120" marker-end="url(#ah-ink)"/>
+          <rect class="b-bk" x="300" y="84" width="104" height="72" rx="10"/>
+          <text class="t-b" x="352" y="102" text-anchor="middle">Tomcat 线程</text>
+          <rect class="f-bk" x="314" y="112" width="12" height="12" rx="2"/><rect class="f-bk" x="330" y="112" width="12" height="12" rx="2"/><rect class="f-bk" x="346" y="112" width="12" height="12" rx="2"/><rect class="f-bk" x="362" y="112" width="12" height="12" rx="2"/><rect class="f-bk" x="378" y="112" width="12" height="12" rx="2"/>
+          <rect class="f-bk" x="314" y="128" width="12" height="12" rx="2"/><rect class="f-bk" x="330" y="128" width="12" height="12" rx="2"/><rect class="f-bk" x="346" y="128" width="12" height="12" rx="2"/><rect class="f-bk" x="362" y="128" width="12" height="12" rx="2"/><rect class="f-bk" x="378" y="128" width="12" height="12" rx="2"/>
+          <text class="t-xs" x="352" y="170" text-anchor="middle">200 个 · 每个占约 21 ms</text>
+          <line class="e-ink" x1="404" y1="120" x2="418" y2="120" marker-end="url(#ah-ink)"/>
+          <rect class="b-of" x="420" y="96" width="78" height="48" rx="8"/>
+          <text class="t-s" x="459" y="116" text-anchor="middle">等连接</text>
+          <text class="t-xs" x="459" y="134" text-anchor="middle">线程停着</text>
+          <text class="t-xs" x="459" y="160" text-anchor="middle">最多等 30 秒</text>
+          <line class="e-ink" x1="498" y1="120" x2="512" y2="120" marker-end="url(#ah-ink)"/>
+          <rect class="b-bk" x="514" y="84" width="88" height="72" rx="10"/>
+          <text class="t-b" x="558" y="102" text-anchor="middle">连接</text>
+          <rect class="f-bk" x="526" y="112" width="11" height="11" rx="2"/><rect class="f-bk" x="540" y="112" width="11" height="11" rx="2"/><rect class="f-bk" x="554" y="112" width="11" height="11" rx="2"/><rect class="f-bk" x="568" y="112" width="11" height="11" rx="2"/><rect class="f-bk" x="582" y="112" width="11" height="11" rx="2"/>
+          <rect class="f-bk" x="526" y="128" width="11" height="11" rx="2"/><rect class="f-bk" x="540" y="128" width="11" height="11" rx="2"/><rect class="f-bk" x="554" y="128" width="11" height="11" rx="2"/><rect class="f-bk" x="568" y="128" width="11" height="11" rx="2"/><rect class="f-bk" x="582" y="128" width="11" height="11" rx="2"/>
+          <text class="t-xs" x="558" y="170" text-anchor="middle">10 个 · 每个占 20 ms</text>
+          <line class="e-ink" x1="602" y1="120" x2="616" y2="120" marker-end="url(#ah-ink)"/>
+          <rect class="b-g2" x="618" y="88" width="76" height="64" rx="12"/>
+          <text class="t-b" x="656" y="114" text-anchor="middle">数据库</text>
+          <text class="t-m" x="656" y="134" text-anchor="middle">SQL 20 ms</text>
+          <text class="t-bk" x="352" y="188" text-anchor="middle">200 ÷ 21 ms ≈ 9500/s</text>
+          <text class="t-bad" x="558" y="188" text-anchor="middle">10 ÷ 20 ms = 500/s</text>
+          <text class="t-bad" x="704" y="188">← 最窄</text>
+          <path class="e-mut" d="M656 152 V214 H50 V156" marker-end="url(#ah-mut)"/>
+          <text class="t-m" x="352" y="232" text-anchor="middle">响应原路返回</text>
+        </svg>
+      </div>
+      <figcaption>黄色的是队：请求在这里只等，不干活。绿色的是窗口：每个窗口一次服务一个请求。每一站的上限是 <b>窗口数 c ÷ 每次占用 S</b>，整条链路的吞吐上限是最小的那个，这里是连接池的 500/s。RT 是每一站的“排队 + 占用”加起来。线程这一站自己的上限很高，可连接不够时，线程要停着等连接，每个线程被占住的时间从 21 ms 变成几百 ms，所以线程也会被用完：窄的那一站满了，队伍会倒灌到前一站。</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub" id="s4-conc">
+    <h3>并发轴：窗口满了以后，多来的人只能排队</h3>
+    <div class="formula">
+      <span class="f">饱和以后：吞吐 X = c ÷ S = <em>500/s</em>，不再涨；响应时间 R = N ÷ X</span>
+      <p>第二个式子就是利特尔法则 <code>L = X × R</code> 倒过来：闭环里系统中的请求数固定是 N。所以每多 1 个并发，RT 多 1 ÷ 500 秒 = 2 ms，线性涨，不会自己停。</p>
+    </div>
+    <div class="stage" id="cs" tabindex="0" aria-label="并发从 5 加到 400 时请求排在哪里的分步演示，可以用左右方向键切换">
+      <div class="st-top"><h3>动手：一级级加并发，看队排在哪</h3><span class="st-pos" id="csPos"></span></div>
+      <div class="svg-scroll"><svg class="sv" id="csSvg" viewBox="0 0 760 236" role="img" aria-label="当前这一步：请求分别在 Tomcat 任务队列、线程里等连接、10 个连接里的数量"></svg></div>
+      <div class="ledger" id="csLedger"></div>
+      <p class="cap-txt" id="csCap" aria-live="polite"></p>
+      <div class="ctrl">
+        <button class="btn" id="csPrev" type="button">← 上一步</button>
+        <button class="btn primary" id="csNext" type="button">下一步 →</button>
+        <button class="btn" id="csAuto" type="button">自动播放</button>
+        <button class="btn" id="csReset" type="button">从头来</button>
+      </div>
+    </div>
+    <p class="tip">“理论”按上面的式子算，“实测”来自 ⑤ 实验 1。实测吞吐略低于 500，是因为每次借还连接、走一遍 Spring MVC 还要多花零点几毫秒。</p>
+  </div>
+
+  <div class="sub" id="s4-time">
+    <h3>时间轴：浴缸里的水，为什么一直涨</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 760 300" role="img" aria-label="两个浴缸。左边：进水每秒 600 个，下水口最多每秒 500 个，水位每秒涨 100，等待等于水位除以出水速度。右边：进水不变，下水口被表变大、GC 停顿、连接泄漏一点点堵住，出水越来越慢。">
+          <text class="t-h" x="20" y="24">(a) 进得比出得快</text>
+          <path class="e-pd" d="M30 52 H120 V70"/>
+          <text class="t-pd" x="30" y="44">进：每秒 600 个（λ）</text>
+          <line class="e-pdd" x1="120" y1="74" x2="120" y2="128"/>
+          <rect class="f-oft" x="72" y="128" width="226" height="106"/>
+          <line class="e-of" x1="72" y1="128" x2="298" y2="128"/>
+          <line class="e-ofd" x1="72" y1="172" x2="298" y2="172"/>
+          <text class="t-m" x="292" y="166" text-anchor="end">10 秒前的水位</text>
+          <path class="e-ink" d="M70 84 V222 Q70 236 84 236 H286 Q300 236 300 222 V84"/>
+          <line class="e-of" x1="318" y1="190" x2="318" y2="132" marker-end="url(#ah-of)"/>
+          <text class="t-of" x="326" y="150">水位</text>
+          <text class="t-of" x="326" y="166">每秒</text>
+          <text class="t-of" x="326" y="182">+100</text>
+          <text class="t-b" x="185" y="198" text-anchor="middle">等待 = 水位 ÷ 出水速度</text>
+          <text class="t-s" x="185" y="218" text-anchor="middle">30 秒后：约 3000 ÷ 500 = 6 秒</text>
+          <path class="e-bk" d="M262 236 V262 H330" marker-end="url(#ah-bk)"/>
+          <text class="t-bk" x="250" y="286" text-anchor="end">出：最多每秒 500 个（c ÷ S）</text>
+          <line class="e-dash" x1="380" y1="12" x2="380" y2="292"/>
+          <text class="t-h" x="404" y="24">(b) 出口在变窄</text>
+          <path class="e-pd" d="M414 52 H504 V70"/>
+          <text class="t-pd" x="414" y="44">进：不变</text>
+          <line class="e-pdd" x1="504" y1="74" x2="504" y2="150"/>
+          <rect class="f-oft" x="456" y="150" width="226" height="84"/>
+          <line class="e-of" x1="456" y1="150" x2="682" y2="150"/>
+          <path class="e-ink" d="M454 84 V222 Q454 236 468 236 H670 Q684 236 684 222 V84"/>
+          <circle class="f-cg" cx="646" cy="244" r="5"/><circle class="f-cg" cx="656" cy="250" r="4"/><circle class="f-cg" cx="642" cy="256" r="4"/>
+          <path class="e-bk" d="M650 236 V262 H700" marker-end="url(#ah-bk)" stroke-width="1.5"/>
+          <text class="t-b" x="569" y="190" text-anchor="middle">开环：水位跟着涨</text>
+          <text class="t-s" x="569" y="210" text-anchor="middle">闭环：水量不变，每滴等得更久</text>
+          <text class="t-cg" x="404" y="270">S 变长：表变大、GC 停顿</text>
+          <text class="t-cg" x="404" y="288">c 变少：连接漏了、线程卡死</text>
+          <text class="t-bk" x="742" y="286" text-anchor="end">出：c ÷ S，越来越小</text>
+        </svg>
+      </div>
+      <figcaption>水龙头是请求来的速度，下水口是吞吐上限 c ÷ S，水位是系统里的请求数。RT 就是一滴水从进到出的时间，等于水位 ÷ 出水速度。</figcaption>
+    </figure>
+    <div class="metaphor">
+      <div class="mp"><span>水龙头</span><b>到达率 λ</b>每秒来多少个请求</div>
+      <div class="mp"><span>下水口</span><b>吞吐上限 X = c ÷ S</b>最窄那一站说了算</div>
+      <div class="mp"><span>水位</span><b>在途请求数 L</b>排队的加上正在处理的</div>
+      <div class="mp"><span>一滴水待多久</span><b>响应时间 R = L ÷ X</b>利特尔法则</div>
+    </div>
+    <p class="mismatch">比喻对不上的地方：真实系统是好几个浴缸串起来，最窄的那个先满，水会倒灌到前一个（上面那张窗口图里，连接满了，线程就停着等，线程用完，请求就在 Tomcat 的任务队列里等）。闭环压测也不是开着的水龙头，而是固定 N 滴水在转圈，水位最多到 N。</p>
+    <div class="formula">
+      <span class="f">(a) 开环、λ &gt; X：积压(t) = (λ − X) × t，等待(t) ≈ 积压(t) ÷ X</span>
+      <p>⑤ 实验 2 实测：每秒发 600 个，实际出 490 个，30 秒后在途 3993 个，P50 6.4 秒，和 (600 − 490) × 30 ÷ 490 ≈ 6.7 秒对得上。没有上限，直到连接数满、超时或 OOM。</p>
+      <span class="f">(b) X(t) = c(t) ÷ S(t) 在变小：闭环里 R = N ÷ X(t) 跟着涨；开环里一旦 X(t) 掉到 λ 以下，就变成 (a)</span>
+      <p>S 变长：表里行数变多而 SQL 走全表扫描、堆越来越满导致 GC 越来越频繁、缓存命中率掉下来。c 变少：连接借了没还、线程卡在一个没设超时的下游上。</p>
+    </div>
+    <p class="note-box"><b>一条推论</b><span>闭环压测（JMeter 线程组）里，系统中的请求最多就是线程数 N，(a) 不会发生。所以<b>线程数不变、RT 随时间涨，一定是 (b)：出口在变窄</b>，去找在累积的东西。</span></p>
+  </div>
+
+  <div class="sub" id="s4-loop">
+    <h3>为什么是“越来越”：两个会自己加速的环</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 760 262" role="img" aria-label="中间是排队变长。左边的环：等着的请求占着内存和连接，GC 更频繁、处理变慢，出口变窄，排队更长。右边的环：客户端等到超时放弃，立刻重试，进水变多，排队更长。被放弃的请求服务端照样处理，白做。">
+          <rect class="b-of" x="300" y="104" width="160" height="54" rx="12"/>
+          <text class="t-h" x="380" y="127" text-anchor="middle">排队变长</text>
+          <text class="t-m" x="380" y="146" text-anchor="middle">每个人等得更久</text>
+          <rect class="b-cg" x="30" y="18" width="230" height="48" rx="10"/>
+          <text class="t-s" x="145" y="38" text-anchor="middle">等着的请求占着内存、线程、连接</text>
+          <text class="t-m" x="145" y="56" text-anchor="middle">请求对象、缓冲区都还活着</text>
+          <rect class="b-cg" x="30" y="196" width="230" height="48" rx="10"/>
+          <text class="t-s" x="145" y="216" text-anchor="middle">GC 更频繁，每次处理更慢</text>
+          <text class="t-m" x="145" y="234" text-anchor="middle">S 变长，上限 c ÷ S 变小</text>
+          <path class="e-cg" d="M300 116 C 280 90, 270 60, 262 46" marker-end="url(#ah-cg)"/>
+          <line class="e-cg" x1="145" y1="66" x2="145" y2="192" marker-end="url(#ah-cg)"/>
+          <text class="t-cg" x="155" y="134">出口变窄</text>
+          <path class="e-cg" d="M262 222 C 280 205, 290 175, 304 160" marker-end="url(#ah-cg)"/>
+          <rect class="b-bad" x="500" y="18" width="230" height="48" rx="10"/>
+          <text class="t-s" x="615" y="38" text-anchor="middle">客户端等到超时，放弃这一次</text>
+          <text class="t-warn" x="615" y="56" text-anchor="middle">服务端不知道，照样处理：白做</text>
+          <rect class="b-bad" x="500" y="196" width="230" height="48" rx="10"/>
+          <text class="t-s" x="615" y="216" text-anchor="middle">立刻重试，同一个请求又来一次</text>
+          <text class="t-m" x="615" y="234" text-anchor="middle">重试 2 次，最多 3 倍的量</text>
+          <path class="e-bad" d="M460 116 C 480 90, 490 60, 498 46" marker-end="url(#ah-bad)"/>
+          <line class="e-bad" x1="615" y1="66" x2="615" y2="192" marker-end="url(#ah-bad)"/>
+          <text class="t-bad" x="605" y="134" text-anchor="end">进水变多</text>
+          <path class="e-bad" d="M498 222 C 480 205, 470 175, 456 160" marker-end="url(#ah-bad)"/>
+        </svg>
+      </div>
+      <figcaption>两个环都从“排队变长”出发，又回到“排队变长”，所以会自己加速。右边的环更危险：卡顿本身已经过去了，系统还停在过载里出不来（⑥ 第三圈的“亚稳态故障”）。实测：客户端 1 秒超时、每秒 600 个跑 30 秒，发出的 18000 个请求服务端全都执行了（4175 个是压测机停下以后才轮到的），客户端只拿到 1099 个成功响应。</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub" id="s4-design">
+    <h3>为什么这样设计：默认让请求排队，而不是满了就拒</h3>
+    <p class="tip">Tomcat 的任务队列默认几乎无限长，HikariCP 借不到连接默认等 30 秒。这是有意的选择：它们不知道你的延迟预算，对大多数应用来说，偶尔多等一会儿比直接报错好。下面是同一台机器、同样每秒 600 个请求时，两种设计的实测对比。</p>
+    <div class="design">
+      <div class="way" data-role="other">
+        <h4>大队列，慢慢等<small>默认</small></h4>
+        <span class="cfg">threads.max-queue-capacity = 2147483647 · max-connections = 8192 · connection-timeout = 30s</span>
+        <svg class="sv" viewBox="0 0 340 182" role="img" aria-label="开环每秒 600 个、上限约 500/s 时的 P50：30 秒后到 6.4 秒，还在线性上涨"><line class="e-grid" x1="44" y1="158" x2="328" y2="158"/><text class="t-monos" x="38" y="162" text-anchor="end">0 s</text><line class="e-grid" x1="44" y1="119.1" x2="328" y2="119.1"/><text class="t-monos" x="38" y="123.1" text-anchor="end">2 s</text><line class="e-grid" x1="44" y1="80.3" x2="328" y2="80.3"/><text class="t-monos" x="38" y="84.3" text-anchor="end">4 s</text><line class="e-grid" x1="44" y1="41.4" x2="328" y2="41.4"/><text class="t-monos" x="38" y="45.4" text-anchor="end">6 s</text><text class="t-monos" x="44" y="174" text-anchor="middle">0 秒</text><text class="t-monos" x="138.7" y="174" text-anchor="middle">10 秒</text><text class="t-monos" x="233.3" y="174" text-anchor="middle">20 秒</text><text class="t-monos" x="328" y="174" text-anchor="end">30 秒</text><line class="e-badd" x1="44" y1="138.6" x2="328" y2="138.6"/><text class="t-bad" x="48" y="133.6" style="font-size:11px">用户只肯等 1 秒</text><polyline class="e-of" points="53.5,150.9 62.9,151.1 72.4,145.7 81.9,140.8 91.3,135.5 100.8,130.1 110.3,126.1 119.7,121.8 129.2,117.4 138.7,112.7 148.1,107.7 157.6,101.4 167.1,99.6 176.5,92.3 186,91.7 195.5,84.6 204.9,80 214.4,79.7 223.9,72.2 233.3,71.6 242.8,63.5 252.3,64 261.7,56.1 271.2,56 280.7,49.2 290.1,48.7 299.6,40.6 309.1,41.8 318.5,34.8 328,34.5"/><text class="t-of" x="324" y="26.5" text-anchor="end">P50 6.4 s，还在涨</text></svg>
+        <ul class="pains">
+          <li class="ok">短时间的尖峰能接住，一个请求都不丢</li>
+          <li>持续超载时队伍没有上限：30 秒后 P50 6.4 秒，还在涨</li>
+          <li>0 个错误，可用户早走了，服务端在给没人要的请求干活</li>
+          <li>等到真报错，已经是连接数满了或者 OOM</li>
+        </ul>
+      </div>
+      <div class="way" data-role="bk">
+        <h4>按延迟预算限长，满了马上拒<small>本页推荐</small></h4>
+        <span class="cfg">--server.tomcat.threads.max-queue-capacity=300</span>
+        <svg class="sv" viewBox="0 0 340 182" role="img" aria-label="同样每秒 600 个、Tomcat 任务队列上限 300 时的 P50：稳在约 0.7 秒"><line class="e-grid" x1="44" y1="158" x2="328" y2="158"/><text class="t-monos" x="38" y="162" text-anchor="end">0 s</text><line class="e-grid" x1="44" y1="119.1" x2="328" y2="119.1"/><text class="t-monos" x="38" y="123.1" text-anchor="end">2 s</text><line class="e-grid" x1="44" y1="80.3" x2="328" y2="80.3"/><text class="t-monos" x="38" y="84.3" text-anchor="end">4 s</text><line class="e-grid" x1="44" y1="41.4" x2="328" y2="41.4"/><text class="t-monos" x="38" y="45.4" text-anchor="end">6 s</text><text class="t-monos" x="44" y="174" text-anchor="middle">0 秒</text><text class="t-monos" x="138.7" y="174" text-anchor="middle">10 秒</text><text class="t-monos" x="233.3" y="174" text-anchor="middle">20 秒</text><text class="t-monos" x="328" y="174" text-anchor="end">30 秒</text><line class="e-badd" x1="44" y1="138.6" x2="328" y2="138.6"/><text class="t-bad" x="48" y="133.6" style="font-size:11px">用户只肯等 1 秒</text><polyline class="e-bk" points="53.5,150 62.9,148.2 72.4,143.5 81.9,141 91.3,141.2 100.8,144 110.3,142.3 119.7,143 129.2,144.4 138.7,144.5 148.1,144.6 157.6,143 167.1,144.3 176.5,144.8 186,144.5 195.5,144.8 204.9,144.6 214.4,144.7 223.9,145.2 233.3,145.1 242.8,145 252.3,144.9 261.7,137.7 271.2,145.4 280.7,145.1 290.1,145.4 299.6,145.1 309.1,145.4 318.5,137.9 328,145.5"/><text class="t-bk" x="324" y="119.5" text-anchor="end">P50 稳在约 0.7 s</text></svg>
+        <ul class="pains">
+          <li class="ok">留在队里的 P50 稳在约 0.7 秒，不再随时间涨</li>
+          <li class="ok">约 22% 的请求 1～8 ms 就失败，客户端能马上换实例或降级</li>
+          <li class="ok">服务端只做还有人在等的活</li>
+          <li>短时尖峰也会拒掉一部分；P99 仍有 2.6～4 秒，剩下的队在连接池里（⑥ 第三圈）</li>
+        </ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="bk"><b>决定胜负的约束：</b>队列只能吸收短时间的波动，前提是平均进水小于出水。进水长期大于出水时，队再长也只是把失败往后推，推到用户已经走了。所以队长要按延迟预算来定：<b>上限 ≈ 吞吐 × 能容忍的排队时间</b>，比如 500/s × 1 s = 500。</p>
+  </div>
+
+  <div class="sub">
+    <h3>最少的公式和配置 <small>这几个值怎么定、版本差异，放到第⑥步</small></h3>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">算</span><b>三个式子够用</b></div>
+<pre><code><span class="cm"># 并发轴：闭环，N 个用户，每人思考 Z 秒</span>
+吞吐上限  X  = c ÷ S          <span class="cm"># 10 ÷ 0.02 s = 500/s</span>
+响应时间  R  = N ÷ X − Z      <span class="cm"># 200 ÷ 500 − 0 = 0.4 s</span>
+拐点      N* = X × (S + Z)    <span class="cm"># Z=1 s 时 500 × 1.02 ≈ 510 个线程</span>
+
+<span class="cm"># 时间轴：开环，λ &gt; X</span>
+积压(t)   = (λ − X) × t       <span class="cm"># 每秒多 100，30 秒积 3000</span>
+等待(t)   ≈ 积压(t) ÷ X       <span class="cm"># 3000 ÷ 500 = 6 s</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">配</span><code>application.yml</code><b>（下面都是默认值）</b></div>
+<pre><code>server.tomcat:
+  threads.max: 200                 <span class="cm"># 窗口：工作线程</span>
+  max-connections: 8192            <span class="cm"># 最多这么多连接在 Tomcat 里</span>
+  accept-count: 100                <span class="cm"># 再多，在内核里排</span>
+  threads.max-queue-capacity: 2147483647
+spring.datasource.hikari:
+  maximum-pool-size: 10            <span class="cm"># 窗口：连接</span>
+  connection-timeout: 30000        <span class="cm"># 借不到最多等 30 秒</span></code></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="lab">
+    <h3>排队实验台：先猜，再跑 <small>10 个窗口起步，每次占 20 ms，模拟 2 分钟</small></h3>
+    <div class="lab">
+      <div class="presets" id="labPresets" role="group" aria-label="选一个剧情">
+        <button type="button" data-p="1"><b>1 · 加并发</b><span>闭环 200 个用户</span></button>
+        <button type="button" data-p="2"><b>2 · 开环超载</b><span>每秒 600 个，上限 500</span></button>
+        <button type="button" data-p="3"><b>3 · 表越来越大</b><span>闭环 50 个用户，S 慢慢变长</span></button>
+        <button type="button" data-p="4"><b>4 · 堆泄漏</b><span>每个请求留下 8 KB 不删</span></button>
+        <button type="button" data-p="5"><b>5 · 抖一下 + 重试</b><span>每秒 400 个，第 30 秒卡 3 秒</span></button>
+        <button type="button" data-p="6"><b>6 · 给队伍设上限</b><span>每秒 600 个，最多排 500 个</span></button>
+      </div>
+      <div class="guess" id="labGuess" aria-live="polite"></div>
+      <div class="ctl-grid">
+        <div class="ctl"><span class="lbl">压测方式</span><div class="seg-btns" id="cMode"><button type="button" data-v="closed">闭环</button><button type="button" data-v="open">开环</button></div></div>
+        <div class="ctl" id="ctlUsers"><span class="lbl"><label for="cUsers">闭环：用户数 N</label><output id="cUsersO">50</output></span><input type="range" id="cUsers" min="5" max="400" step="5" value="50"></div>
+        <div class="ctl" id="ctlRate"><span class="lbl"><label for="cRate">开环：每秒来多少个 λ</label><output id="cRateO">400</output></span><input type="range" id="cRate" min="100" max="800" step="20" value="400"></div>
+        <div class="ctl"><span class="lbl">窗口数 c（连接）</span><div class="seg-btns" id="cC"><button type="button" data-v="5">5</button><button type="button" data-v="10">10</button><button type="button" data-v="20">20</button><button type="button" data-v="40">40</button></div></div>
+        <div class="ctl"><span class="lbl">时间里在累积什么</span><div class="seg-btns" id="cAcc"><button type="button" data-v="none">没有</button><button type="button" data-v="data">表变大</button><button type="button" data-v="conn">连接泄漏</button><button type="button" data-v="heap">堆泄漏</button></div></div>
+        <div class="ctl"><span class="lbl">第 30 秒卡 3 秒</span><div class="seg-btns" id="cStall"><button type="button" data-v="0">不卡</button><button type="button" data-v="1">卡一下</button></div></div>
+        <div class="ctl"><span class="lbl">客户端超时</span><div class="seg-btns" id="cTmo"><button type="button" data-v="0">不设</button><button type="button" data-v="1">1 秒</button><button type="button" data-v="2">1 秒 + 重试 2 次</button></div></div>
+        <div class="ctl" id="ctlCap"><span class="lbl">队列上限（开环）</span><div class="seg-btns" id="cCap"><button type="button" data-v="0">无界</button><button type="button" data-v="500">最多 500</button></div></div>
+      </div>
+      <div class="run-row"><button class="btn primary" id="labRun" type="button">运行 2 分钟（模拟）</button><span class="tip" id="labState"></span></div>
+      <div class="tiles" id="labTiles"></div>
+      <div class="svg-scroll"><svg class="sv" id="labSvg" viewBox="0 0 760 372" role="img" aria-label="模拟结果：响应时间、吞吐和系统里的请求数随时间的变化"></svg></div>
+      <div class="lg">
+        <span><i style="background:var(--of)"></i>P50</span><span><i class="d" style="border-color:var(--bad)"></i>P99</span>
+        <span><i style="background:var(--good)"></i>成功/秒</span><span><i style="background:var(--warn)"></i>白做/秒（客户端已放弃）</span><span><i style="background:var(--bad)"></i>失败/秒（超时 + 被拒）</span>
+        <span><i class="d" style="border-color:var(--bk)"></i>上限 c ÷ S</span><span><i class="d" style="border-color:var(--pd)"></i>开环到达率</span>
+      </div>
+      <ul class="notes" id="labNotes"></ul>
+    </div>
+    <p class="tip">模型：c 个窗口，先来先服务，每次占用在 10～30 ms 之间均匀分布（平均 20 ms），按毫秒推进。“表变大”每完成 2.5 万个请求，S 多 20 ms；“连接泄漏”每 10 秒少一个窗口；“堆泄漏”在完成 3 万个请求后老年代满，之后 95% 的时间在 Full GC。数字是示意，形状和 ⑤ 的实测一致。</p>
+  </div>
+</section>
+
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>复现一次：在自己机器上把队排出来</h2>
+    <p class="lead">一个 Spring Boot 小服务加一个 70 行的压测机。连接池 10 个连接，每条 SQL 固定占 20 ms（用 H2 的自定义函数模拟），所以上限算得出来：500 次/秒。四个实验分别对应 ④ 的并发轴、时间轴 (a)、时间轴 (b) 两种累积。</p>
+  </div>
+  <p class="note-box"><b>环境</b><span>服务端 JDK 17 以上、Spring Boot 3.5.16（Tomcat 10.1.55、HikariCP 6.3.3、H2 2.3.232）。压测机用了虚拟线程，要 JDK 21。下面的实测都在一台 2 核 11 GB 的云主机上，压测机和服务跑在同一台机器上，绝对数字只代表这台机器。</span></p>
+
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><span class="n">1</span><code>pom.xml</code><b>只要这四个依赖</b></div>
+<pre><code>&lt;parent&gt;
+  &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+  &lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;
+  &lt;version&gt;3.5.16&lt;/version&gt;
+&lt;/parent&gt;
+&lt;!-- groupId=demo, artifactId=rtdemo, version=1.0 --&gt;
+&lt;dependencies&gt;
+  &lt;dependency&gt;&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;&lt;artifactId&gt;spring-boot-starter-web&lt;/artifactId&gt;&lt;/dependency&gt;
+  &lt;dependency&gt;&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;&lt;artifactId&gt;spring-boot-starter-jdbc&lt;/artifactId&gt;&lt;/dependency&gt;
+  &lt;dependency&gt;&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;&lt;artifactId&gt;spring-boot-starter-actuator&lt;/artifactId&gt;&lt;/dependency&gt;
+  &lt;dependency&gt;&lt;groupId&gt;com.h2database&lt;/groupId&gt;&lt;artifactId&gt;h2&lt;/artifactId&gt;&lt;scope&gt;runtime&lt;/scope&gt;&lt;/dependency&gt;
+&lt;/dependencies&gt;
+<span class="cm">&lt;!-- build 里加 spring-boot-maven-plugin，打成可执行 jar --&gt;</span></code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">2</span><code>src/main/resources/</code><b>配置和建表</b></div>
+<pre><code><span class="cm"># application.properties</span>
+server.port=8090
+spring.datasource.url=jdbc:h2:mem:demo
+<span class="cm"># 下面两项就是默认值，写出来是为了看清楚</span>
+spring.datasource.hikari.maximum-pool-size=10
+server.tomcat.threads.max=200
+<span class="cm"># Tomcat 的线程指标默认不出，要打开这个</span>
+server.tomcat.mbeanregistry.enabled=true
+management.endpoints.web.exposure.include=health,metrics
+<span class="cm"># Actuator 单独一个端口：业务端口排满了，指标照样能查（⑥ 坑 1）</span>
+management.server.port=8091
+
+<span class="cm">-- schema.sql（H2 内存库启动时自动执行）</span>
+CREATE ALIAS IF NOT EXISTS SLEEP_MS FOR 'demo.DemoApp.sleepMs';
+CREATE TABLE IF NOT EXISTS orders (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_id BIGINT, amount INT);</code></pre>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">3</span><code>src/main/java/demo/DemoApp.java</code><b>四个接口：/work、/order、/admin/add-index、/leaky</b></div>
+<pre><code>package demo;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.bind.annotation.*;
+
+@SpringBootApplication
+@RestController
+public class DemoApp {
+    private final JdbcTemplate jdbc;
+    private final Timer sql;                       <span class="cm">// 只量“拿到连接以后”SQL 自己花的时间</span>
+
+    DemoApp(JdbcTemplate jdbc, MeterRegistry registry) {
+        this.jdbc = jdbc;
+        this.sql = registry.timer("demo.sql");
+    }
+
+    public static void main(String[] args) { SpringApplication.run(DemoApp.class, args); }
+
+    <span class="cm">/** 实验 1、2：每个请求占一个数据库连接 20 ms，模拟一条 20 ms 的 SQL */</span>
+    @GetMapping("/work")
+    public String work() {
+        jdbc.execute((ConnectionCallback&lt;Object&gt;) con -&gt; {      <span class="cm">// 进到这里时，已经从连接池拿到连接了</span>
+            long t0 = System.nanoTime();
+            con.createStatement().execute("CALL SLEEP_MS(20)");
+            sql.record(System.nanoTime() - t0, java.util.concurrent.TimeUnit.NANOSECONDS);
+            return null;
+        });
+        return "ok";
+    }
+
+    <span class="cm">/** 实验 3：下单 = 插一行，再数一数这个用户有几单（user_id 上没有索引） */</span>
+    @PostMapping("/order")
+    public Long order(@RequestParam long uid) {
+        jdbc.update("INSERT INTO orders(user_id, amount) VALUES (?, 1)", uid);
+        long t0 = System.nanoTime();
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM orders WHERE user_id = ?", Long.class, uid);
+        sql.record(System.nanoTime() - t0, java.util.concurrent.TimeUnit.NANOSECONDS);
+        return n;
+    }
+
+    <span class="cm">/** 实验 3 收尾：给 user_id 补上索引（演示用，真实项目在数据库客户端里执行） */</span>
+    @PostMapping("/admin/add-index")
+    public String addIndex() {
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)");
+        return "index added";
+    }
+
+    <span class="cm">/** 选做：和 /work 一样占连接 20 ms，但每次往一个“只放不删”的本地缓存里塞 8 KB */</span>
+    static final java.util.Map&lt;Long, byte[]&gt; CACHE = new java.util.concurrent.ConcurrentHashMap&lt;&gt;();
+    static final java.util.concurrent.atomic.AtomicLong SEQ = new java.util.concurrent.atomic.AtomicLong();
+    @GetMapping("/leaky")
+    public String leaky() {
+        CACHE.put(SEQ.incrementAndGet(), new byte[8 * 1024]);
+        return work();
+    }
+
+    <span class="cm">/** 给 H2 用的自定义函数：SLEEP_MS(20) 就是“这条 SQL 要跑 20 ms” */</span>
+    public static void sleepMs(int ms) throws InterruptedException { Thread.sleep(ms); }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">4</span><code>Load.java</code><b>最小压测机：闭环和开环两种发法</b></div>
+<pre><code>import java.net.URI;
+import java.net.http.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+
+<span class="cm">/**
+ * 最小压测机。两种发法：
+ *   java Load.java closed 50  30 http://localhost:8090/work      50 个用户，各自“等回来再发下一个”
+ *   java Load.java open   600 30 http://localhost:8090/work      每秒 600 个，到点就发，不管上一个回没回来
+ * 每秒打一行：这一秒完成了几个、它们的 P50 / P99、此刻还有几个没回来。
+ */</span>
+public class Load {
+    static final ConcurrentLinkedQueue&lt;Long&gt; done = new ConcurrentLinkedQueue&lt;&gt;();
+    static final AtomicInteger inflight = new AtomicInteger(), errors = new AtomicInteger();
+
+    public static void main(String[] a) throws Exception {
+        String mode = a[0];
+        int n = Integer.parseInt(a[1]), secs = Integer.parseInt(a[2]);
+        URI uri = URI.create(a[3]);
+        boolean post = a.length &gt; 4 &amp;&amp; a[4].equals("POST");
+        HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+        long start = System.nanoTime(), end = start + secs * 1_000_000_000L;
+
+        if (mode.equals("closed")) {
+            for (int i = 0; i &lt; n; i++)
+                Thread.ofVirtual().start(() -&gt; {
+                    while (System.nanoTime() &lt; end) call(http, uri, post, System.nanoTime());
+                });
+        } else {
+            Thread.ofPlatform().start(() -&gt; {
+                for (long k = 0; ; k++) {
+                    long due = start + k * 1_000_000_000L / n;          <span class="cm">// 第 k 个请求“应该”在这一刻发出</span>
+                    if (due &gt; end) break;
+                    while (System.nanoTime() &lt; due) Thread.onSpinWait();
+                    Thread.ofVirtual().start(() -&gt; call(http, uri, post, due)); <span class="cm">// 从计划时刻开始计时</span>
+                }
+            });
+        }
+        System.out.println("  秒   完成/s   P50(ms)   P99(ms)   在途   错误");
+        for (int s = 1; s &lt;= secs; s++) {
+            Thread.sleep(Math.max(0, (start + s * 1_000_000_000L - System.nanoTime()) / 1_000_000));
+            List&lt;Long&gt; l = new ArrayList&lt;&gt;();
+            for (Long x; (x = done.poll()) != null; ) l.add(x);
+            Collections.sort(l);
+            System.out.printf("%4d %8d %9d %9d %6d %6d%n", s, l.size(), pct(l, 50), pct(l, 99), inflight.get(), errors.getAndSet(0));
+        }
+        System.exit(0);
+    }
+
+    static void call(HttpClient http, URI uri, boolean post, long t0) {
+        inflight.incrementAndGet();
+        try {
+            URI u = post ? URI.create(uri + "?uid=" + ThreadLocalRandom.current().nextInt(1000)) : uri;
+            HttpRequest.Builder b = HttpRequest.newBuilder(u);
+            HttpResponse&lt;String&gt; r = http.send(post ? b.POST(HttpRequest.BodyPublishers.noBody()).build() : b.build(),
+                                               HttpResponse.BodyHandlers.ofString());
+            if (r.statusCode() != 200) errors.incrementAndGet();
+        } catch (Exception e) {
+            errors.incrementAndGet();
+        } finally {
+            inflight.decrementAndGet();
+            done.add((System.nanoTime() - t0) / 1_000_000);
+        }
+    }
+
+    static long pct(List&lt;Long&gt; l, int p) {
+        return l.isEmpty() ? 0 : l.get(Math.min(l.size() - 1, (int) Math.ceil(l.size() * p / 100.0) - 1));
+    }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">5</span><b>跑起来</b></div>
+<pre><code>mvn -q package -DskipTests
+java -jar target/rtdemo-1.0.jar              <span class="cm"># 业务在 8090，Actuator 在 8091</span>
+javac -d classes Load.java                   <span class="cm"># 压测机，另开一个终端</span>
+java -cp classes Load closed 20 5 http://localhost:8090/work   <span class="cm"># 先预热 5 秒</span></code></pre>
+  </div>
+  <p class="tip">开环的计时从“计划发出的那一刻”算，而不是从真正发出算。压测机自己卡了一下时，这段时间也算进 RT，不会被漏掉（⑥ 坑 2 的 coordinated omission）。</p>
+
+  <div class="sub" id="e1">
+    <div class="exp-h"><span class="n">实验 1</span><h3>加并发：吞吐到顶，队排在哪</h3><span class="tag-real">实测</span></div>
+    <div class="codebox">
+<pre><code>for N in 5 10 20 50 100 200 400; do
+  java -cp classes Load closed $N 10 http://localhost:8090/work | tail -5
+done
+<span class="cm"># 压测进行中，另一个终端看三样东西</span>
+curl -s localhost:8091/actuator/metrics/hikaricp.connections.pending
+curl -s localhost:8091/actuator/metrics/tomcat.threads.busy
+jstack &lt;pid&gt; | grep -c 'ConcurrentBag.borrow'</code></pre>
+    </div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th class="num">并发 N</th><th class="num">吞吐/s</th><th class="num">P50 ms</th><th class="num">P99 ms</th><th class="num">等连接的线程</th><th class="num">Tomcat 忙线程</th><th class="num">平均等连接 ms</th><th class="num">SQL 自己 ms</th><th class="num">服务端记录 ms</th></tr></thead>
+        <tbody>
+          <tr><td class="num">5</td><td class="num">230</td><td class="num">21</td><td class="num">25</td><td class="num">0</td><td class="num">6</td><td class="num">0.0</td><td class="num">20.3</td><td class="num">20.6</td></tr>
+          <tr><td class="num">10</td><td class="num">468</td><td class="num">21</td><td class="num">25</td><td class="num">0</td><td class="num">11</td><td class="num">0.0</td><td class="num">20.3</td><td class="num">20.5</td></tr>
+          <tr><td class="num">20</td><td class="num">495</td><td class="num">40</td><td class="num">60</td><td class="num">10</td><td class="num">21</td><td class="num">19.1</td><td class="num">20.2</td><td class="num">39.5</td></tr>
+          <tr><td class="num">50</td><td class="num">495</td><td class="num">100</td><td class="num">182</td><td class="num">39</td><td class="num">51</td><td class="num">79.1</td><td class="num">20.1</td><td class="num">99.4</td></tr>
+          <tr><td class="num">100</td><td class="num">494</td><td class="num">201</td><td class="num">387</td><td class="num">89</td><td class="num">101</td><td class="num">178.1</td><td class="num">20.2</td><td class="num">198.4</td></tr>
+          <tr><td class="num">200</td><td class="num">495</td><td class="num">403</td><td class="num">867</td><td class="num">189</td><td class="num bad">200</td><td class="num">368.4</td><td class="num">20.2</td><td class="num">388.6</td></tr>
+          <tr class="hl"><td class="num">400</td><td class="num">496</td><td class="num">810</td><td class="num">1505</td><td class="num">189</td><td class="num bad">200</td><td class="num">366.7</td><td class="num">20.2</td><td class="num bad">386.7</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">每级跑 10 秒，取最后 5 秒的平均。“等连接的线程”是 <code>hikaricp.connections.pending</code>，“平均等连接”来自 <code>hikaricp.connections.acquire</code>，“SQL 自己”是代码里的 <code>demo.sql</code>，“服务端记录”是 <code>http.server.requests</code>，后三个都是这一级的平均值。这一轮 Actuator 还和业务共用 8090 端口，查指标的那个请求自己也占一个线程，所以忙线程比 N 多 1。</p>
+    <pre class="console"><span class="w">$ jstack &lt;pid&gt;</span>     <span class="cm"># N=400 时：200 个 http-nio-8090-exec 线程，190 个停在这里</span>
+"http-nio-8090-exec-1" #30 daemon prio=5 ... waiting on condition
+   java.lang.Thread.State: <b>TIMED_WAITING (parking)</b>
+	at java.util.concurrent.SynchronousQueue.poll(SynchronousQueue.java:338)
+	at <b>com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:162)</b>
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:160)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:127)
+	at org.springframework.jdbc.datasource.DataSourceUtils.fetchConnection(DataSourceUtils.java:160)
+	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:342)
+<span class="w">另外 10 个停在 demo.DemoApp.sleepMs：正在“跑 SQL”。</span></pre>
+    <p class="done-box">读法：吞吐 20 并发就到顶，SQL 一直 20 ms，RT 的增长全是等连接；到 400 并发，线程也用完了，客户端 810 ms 里有约 420 ms 在 Tomcat 的任务队列里，服务端的 386.7 ms 看不到它。</p>
+  </div>
+
+  <div class="sub" id="e2">
+    <div class="exp-h"><span class="n">实验 2</span><h3>开环：每秒 400 个和每秒 600 个</h3><span class="tag-real">实测</span></div>
+    <div class="codebox">
+<pre><code>java -cp classes Load open 400 30 http://localhost:8090/work
+java -cp classes Load open 600 30 http://localhost:8090/work</code></pre>
+    </div>
+    <figure>
+      <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 262" role="img" aria-label="开环每秒 400 个时 P50 一直约 20 毫秒、在途约 8 个；每秒 600 个时 P50 30 秒内从 0.4 秒涨到 6.4 秒，在途从 271 涨到 3993。"><text class="t-h" x="20" y="22">P50 响应时间</text><line class="e-grid" x1="60" y1="220" x2="360" y2="220"/><text class="t-monos" x="54" y="224" text-anchor="end">0 s</text><line class="e-grid" x1="60" y1="168.6" x2="360" y2="168.6"/><text class="t-monos" x="54" y="172.6" text-anchor="end">2 s</text><line class="e-grid" x1="60" y1="117.1" x2="360" y2="117.1"/><text class="t-monos" x="54" y="121.1" text-anchor="end">4 s</text><line class="e-grid" x1="60" y1="65.7" x2="360" y2="65.7"/><text class="t-monos" x="54" y="69.7" text-anchor="end">6 s</text><text class="t-monos" x="60" y="238" text-anchor="middle">0 秒</text><text class="t-monos" x="160" y="238" text-anchor="middle">10 秒</text><text class="t-monos" x="260" y="238" text-anchor="middle">20 秒</text><text class="t-monos" x="360" y="238" text-anchor="middle">30 秒</text><polyline class="e-bk" points="70,213.4 80,215.3 90,219.3 100,219.4 110,219.4 120,219.4 130,219.4 140,219.5 150,219.5 160,219.5 170,219.4 180,219.5 190,219.5 200,219.4 210,219.5 220,219.5 230,219.5 240,219.5 250,219.5 260,219.5 270,219.5 280,219.5 290,219.5 300,219.5 310,219.5 320,219.5 330,219.5 340,219.5 350,219.5 360,219.5"/><polyline class="e-of" points="70,210.6 80,210.8 90,203.8 100,197.3 110,190.2 120,183.1 130,177.8 140,172.1 150,166.3 160,160 170,153.5 180,145 190,142.8 200,133 210,132.2 220,122.9 230,116.7 240,116.4 250,106.4 260,105.6 270,94.9 280,95.6 290,85.1 300,85 310,76 320,75.3 330,64.7 340,66.2 350,56.9 360,56.5"/><text class="t-bk" x="356" y="211.5" text-anchor="end">每秒 400 个：一直 20 ms</text><text class="t-of" x="354" y="48.5" text-anchor="end">每秒 600 个：6.4 s</text><text class="t-h" x="400" y="22">还没回来的请求（在途）</text><line class="e-grid" x1="440" y1="220" x2="740" y2="220"/><text class="t-monos" x="434" y="224" text-anchor="end">0</text><line class="e-grid" x1="440" y1="175" x2="740" y2="175"/><text class="t-monos" x="434" y="179" text-anchor="end">1000</text><line class="e-grid" x1="440" y1="130" x2="740" y2="130"/><text class="t-monos" x="434" y="134" text-anchor="end">2000</text><line class="e-grid" x1="440" y1="85" x2="740" y2="85"/><text class="t-monos" x="434" y="89" text-anchor="end">3000</text><line class="e-grid" x1="440" y1="40" x2="740" y2="40"/><text class="t-monos" x="434" y="44" text-anchor="end">4000</text><text class="t-monos" x="440" y="238" text-anchor="middle">0 秒</text><text class="t-monos" x="540" y="238" text-anchor="middle">10 秒</text><text class="t-monos" x="640" y="238" text-anchor="middle">20 秒</text><text class="t-monos" x="740" y="238" text-anchor="middle">30 秒</text><polyline class="e-bk" points="450,215.3 460,218.1 470,219.6 480,219.6 490,219.6 500,219.6 510,219.6 520,219.6 530,219.6 540,219.6 550,219.4 560,219.6 570,219.6 580,219.6 590,219.6 600,219.6 610,219.6 620,219.6 630,219.6 640,219.6 650,219.6 660,219.6 670,219.6 680,219.6 690,219.6 700,219.6 710,219.6 720,219.6 730,219.6 740,219.6"/><polyline class="e-of" points="450,207.8 460,200.6 470,193.5 480,185.9 490,178.6 500,172.8 510,167 520,160.6 530,154.8 540,148.4 550,141.8 560,135.9 570,130.4 580,125.1 590,118.5 600,113.1 610,108 620,102.1 630,97 640,91 650,85.8 660,80.6 670,75.4 680,70.2 690,65.2 700,60.2 710,55.3 720,50.1 730,45.2 740,40.3"/><text class="t-bk" x="736" y="211.6" text-anchor="end">约 8 个</text><text class="t-of" x="734" y="56.3" text-anchor="end">3993 个，每秒多约 120</text><text class="t-m" x="390" y="256" text-anchor="middle">横轴：压测进行的时间。吞吐两次都停在约 490/s 以下，图里没画。</text></svg></div>
+      <figcaption>每秒 400 个，低于上限：RT 一直 20 ms，在途约 8 个，正好是 400 × 0.02 s（利特尔法则）。每秒 600 个，超过上限：每秒多积约 120 个，P50 跟着时间直线往上走。</figcaption>
+    </figure>
+    <pre class="console"><span class="w">$ curl -s localhost:8091/actuator/metrics/…</span>    <span class="cm"># 每秒 600 个时，每 5 秒看一次</span>
+<span class="w">  第 5 秒   tomcat.threads.busy=200  hikaricp.connections.pending=190  tomcat.connections.current=</span><b>893</b>
+<span class="w">  第 15 秒  tomcat.threads.busy=200  hikaricp.connections.pending=190  tomcat.connections.current=</span><b>2291</b>
+<span class="w">  第 30 秒  tomcat.threads.busy=200  hikaricp.connections.pending=190  tomcat.connections.current=</span><b>3724</b></pre>
+    <p class="done-box">读法：线程和等连接的人数都顶住不动了，只有连接数在涨。涨出来的请求全在 Tomcat 的任务队列里，所以盯住 <code>tomcat.connections.current</code> 才看得到水位。</p>
+  </div>
+
+  <div class="sub" id="e3">
+    <div class="exp-h"><span class="n">实验 3</span><h3>压力不变，表越压越大</h3><span class="tag-real">实测</span></div>
+    <div class="codebox">
+<pre><code>java -cp classes Load closed 20 200 http://localhost:8090/order POST
+<span class="cm"># 跑到第 170 秒左右，另一个终端：</span>
+curl -X POST localhost:8090/admin/add-index</code></pre>
+    </div>
+    <figure>
+      <div class="fig-box wide"><svg class="sv" viewBox="0 0 760 314" role="img" aria-label="20 个用户压下单接口：P50 从 22 毫秒慢慢涨到 73 毫秒，吞吐从约 800 降到约 210；第 170 秒补上索引后 P50 降到 4 毫秒，吞吐到约 3800。"><text class="t-h" x="20" y="22">P50 响应时间（毫秒）</text><line class="e-grid" x1="60" y1="150" x2="730" y2="150"/><text class="t-monos" x="54" y="154" text-anchor="end">0</text><line class="e-grid" x1="60" y1="121" x2="730" y2="121"/><text class="t-monos" x="54" y="125" text-anchor="end">20</text><line class="e-grid" x1="60" y1="92" x2="730" y2="92"/><text class="t-monos" x="54" y="96" text-anchor="end">40</text><line class="e-grid" x1="60" y1="63" x2="730" y2="63"/><text class="t-monos" x="54" y="67" text-anchor="end">60</text><line class="e-grid" x1="60" y1="34" x2="730" y2="34"/><text class="t-monos" x="54" y="38" text-anchor="end">80</text><polyline class="e-of" points="63.4,93.5 66.7,102.2 70.1,110.9 73.4,110.9 76.8,113.8 80.1,118.1 83.5,118.1 86.8,118.1 90.2,115.2 93.5,118.1 96.9,116.7 100.2,116.7 103.6,113.8 106.9,113.8 110.3,109.4 113.6,112.3 117,110.9 120.3,112.3 123.7,110.9 127,109.4 130.4,109.4 133.7,109.4 137.1,108 140.4,108 143.8,105.1 147.1,106.5 150.5,103.6 153.8,105.1 157.1,103.6 160.5,99.3 163.9,102.2 167.2,102.2 170.6,100.7 173.9,100.7 177.3,96.4 180.6,99.3 184,97.8 187.3,96.4 190.7,97.8 194,92 197.4,99.3 200.7,97.8 204.1,94.9 207.4,96.4 210.8,93.5 214.1,90.6 217.5,96.4 220.8,90.6 224.2,90.6 227.5,92 230.9,89.1 234.2,93.5 237.6,93.5 240.9,93.5 244.3,93.5 247.6,89.1 251,93.5 254.3,89.1 257.7,90.6 261,92 264.4,84.8 267.7,90.6 271.1,89.1 274.4,86.2 277.8,87.7 281.1,83.3 284.5,87.7 287.8,87.7 291.2,87.7 294.5,86.2 297.9,84.8 301.2,87.7 304.5,86.2 307.9,84.8 311.3,84.8 314.6,84.8 318,81.9 321.3,83.3 324.7,83.3 328,83.3 331.4,83.3 334.7,81.9 338.1,81.9 341.4,78.9 344.8,81.9 348.1,83.3 351.5,76.1 354.8,78.9 358.2,80.4 361.5,80.4 364.9,78.9 368.2,77.5 371.6,78.9 374.9,81.9 378.3,78.9 381.6,77.5 385,73.2 388.3,71.7 391.7,71.7 395,77.5 398.4,77.5 401.7,71.7 405.1,76.1 408.4,76.1 411.8,77.5 415.1,74.6 418.5,73.2 421.8,63 425.2,70.3 428.5,70.3 431.9,71.7 435.2,71.7 438.6,65.9 441.9,70.3 445.2,68.8 448.6,70.3 452,70.3 455.3,65.9 458.7,70.3 462,67.4 465.4,63 468.7,67.4 472.1,61.6 475.4,64.4 478.8,64.4 482.1,64.4 485.5,65.9 488.8,60.1 492.2,64.4 495.5,64.4 498.9,65.9 502.2,61.6 505.6,55.8 508.9,63 512.3,61.6 515.6,64.4 519,60.1 522.3,52.9 525.7,54.3 529,61.6 532.3,58.7 535.7,58.7 539.1,60.1 542.4,52.9 545.8,57.2 549.1,58.7 552.5,55.8 555.8,55.8 559.2,52.9 562.5,55.8 565.9,54.3 569.2,55.8 572.6,55.8 575.9,48.5 579.3,55.8 582.6,57.2 586,52.9 589.3,49.9 592.7,47.1 596,54.3 599.4,52.9 602.7,55.8 606.1,49.9 609.4,44.2 612.8,51.4 616.1,51.4 619.4,48.5 622.8,49.9 626.2,44.2 629.5,44.2 632.9,137 636.2,139.9 639.6,141.3 642.9,141.3 646.3,142.8 649.6,142.8 653,142.8 656.3,142.8 659.7,144.2 663,144.2 666.4,144.2 669.7,142.8 673.1,142.8 676.4,144.2 679.8,144.2 683.1,144.2 686.5,144.2 689.8,144.2 693.2,144.2 696.5,144.2 699.9,144.2 703.2,144.2 706.6,144.2 709.9,144.2 713.3,144.2 716.6,144.2 720,144.2 723.3,144.2 726.7,144.2"/><text class="t-b" x="20" y="182">吞吐（次/秒）</text><line class="e-grid" x1="60" y1="290" x2="730" y2="290"/><text class="t-monos" x="54" y="294" text-anchor="end">0</text><line class="e-grid" x1="60" y1="258" x2="730" y2="258"/><text class="t-monos" x="54" y="262" text-anchor="end">1500</text><line class="e-grid" x1="60" y1="226" x2="730" y2="226"/><text class="t-monos" x="54" y="230" text-anchor="end">3000</text><line class="e-grid" x1="60" y1="194" x2="730" y2="194"/><text class="t-monos" x="54" y="198" text-anchor="end">4500</text><polyline class="e-bk" points="63.4,282.1 66.7,277.7 70.1,275.5 73.4,275.7 76.8,273.5 80.1,272.3 83.5,271.6 86.8,272.3 90.2,273.2 93.5,272.3 96.9,272.6 100.2,272.7 103.6,272.8 106.9,273.6 110.3,276.4 113.6,274 117,274.4 120.3,274.5 123.7,274.6 127,275.9 130.4,275.3 133.7,275.6 137.1,276 140.4,276 143.8,277.8 147.1,276.7 150.5,277.3 153.8,277.5 157.1,277.4 160.5,279.1 163.9,277.8 167.2,277.8 170.6,278.2 173.9,278.2 177.3,279.9 180.6,278.6 184,278.8 187.3,279 190.7,279 194,279.9 197.4,278.7 200.7,278.6 204.1,279.4 207.4,279.1 210.8,279.9 214.1,280.3 217.5,278.9 220.8,280.1 224.2,280 227.5,280.1 230.9,280.8 234.2,279.6 237.6,279.4 240.9,279.5 244.3,279.9 247.6,280.6 251,279.8 254.3,280.3 257.7,280 261,280 264.4,281.2 267.7,280.2 271.1,280.2 274.4,280.7 277.8,280.5 281.1,281.2 284.5,280.4 287.8,280.7 291.2,280.6 294.5,280.6 297.9,281.6 301.2,280.7 304.5,280.6 307.9,281 311.3,280.7 314.6,281.1 318,281.9 321.3,281 324.7,281.2 328,281.3 331.4,281.2 334.7,281.8 338.1,281.3 341.4,281.6 344.8,281.2 348.1,281.2 351.5,282.3 354.8,282.1 358.2,281.5 361.5,281.3 364.9,281.8 368.2,282.1 371.6,281.5 374.9,281.5 378.3,281.6 381.6,281.9 385,282.5 388.3,282.5 391.7,282.4 395,281.9 398.4,282.1 401.7,282.9 405.1,282 408.4,282 411.8,282.1 415.1,281.9 418.5,282.5 421.8,283.2 425.2,282.7 428.5,282.5 431.9,282.4 435.2,282.7 438.6,283.2 441.9,282.6 445.2,282.5 448.6,282.6 452,282.6 455.3,283.5 458.7,282.6 462,282.9 465.4,283 468.7,282.7 472.1,283.4 475.4,282.9 478.8,283 482.1,283 485.5,283 488.8,283.6 492.2,283.1 495.5,283 498.9,283.1 502.2,283.3 505.6,283.8 508.9,283.2 512.3,283.3 515.6,283.3 519,283.5 522.3,284.2 525.7,283.5 529,283.4 532.3,283.4 535.7,283.4 539.1,283.5 542.4,284.2 545.8,283.6 549.1,283.4 552.5,283.7 555.8,283.8 559.2,284.2 562.5,283.7 565.9,283.7 569.2,283.8 572.6,283.6 575.9,284.3 579.3,283.8 582.6,283.6 586,284 589.3,283.9 592.7,284.5 596,283.9 599.4,283.9 602.7,283.7 606.1,284 609.4,284.6 612.8,284 616.1,283.9 619.4,283.9 622.8,284.5 626.2,284.6 629.5,285.5 632.9,256.4 636.2,240.5 639.6,235.6 642.9,229.6 646.3,229.9 649.6,222.6 653,220.6 656.3,221.8 659.7,211 663,215.2 666.4,209.6 669.7,215.4 673.1,215.8 676.4,203.9 679.8,217.3 683.1,202 686.5,205.2 689.8,203.7 693.2,208 696.5,209.9 699.9,204.5 703.2,203.2 706.6,204.1 709.9,206 713.3,210.1 716.6,204.1 720,204.8 723.3,206.5 726.7,207.6"/><line class="e-ink" x1="629.5" y1="20" x2="629.5" y2="292" stroke-dasharray="4 3"/><text class="t-b" x="623.5" y="14" text-anchor="end">第 170 秒：表里约 7.4 万行</text><text class="t-good" x="635.5" y="14">补上 user_id 索引</text><text class="t-of" x="66.7" y="105.8">22 ms</text><text class="t-of" x="618.8" y="38.2" text-anchor="end">73 ms</text><text class="t-good" x="649.6" y="136.2">4 ms</text><text class="t-good" x="649.6" y="202.9">约 3800/s</text><text class="t-bk" x="66.7" y="266.3">约 800/s</text><text class="t-bk" x="618.8" y="279.5" text-anchor="end">约 210/s</text><text class="t-monos" x="60" y="308" text-anchor="middle">0 秒</text><text class="t-monos" x="261" y="308" text-anchor="middle">60 秒</text><text class="t-monos" x="462" y="308" text-anchor="middle">120 秒</text><text class="t-monos" x="629.5" y="308" text-anchor="middle">170 秒</text></svg></div>
+      <figcaption>每次下单插一行，再按 <code>user_id</code> 数一数，而 <code>user_id</code> 上没有索引，每次都要扫全表。表从 0 长到约 7.4 万行，每次处理时间 S 跟着变长，20 个用户一直没变，RT 却慢慢涨了三倍多。补上索引以后，P50 立刻掉到 4 ms。</figcaption>
+    </figure>
+    <p class="done-box">读法：这是 ④ 的 (b)，出口在变窄。闭环里在途固定是 20，所以不可能是积压。压测本身在往库里写数据，压得越久表越大；测试环境的表本来又小，上线后会更慢。</p>
+  </div>
+
+  <div class="sub" id="e4">
+    <div class="exp-h"><span class="n">实验 4</span><h3>选做：堆泄漏，前面一直正常</h3><span class="tag-real">实测</span></div>
+    <div class="codebox">
+<pre><code>java -Xmx256m -jar target/rtdemo-1.0.jar
+java -cp classes Load closed 10 120 http://localhost:8090/leaky
+jstat -gcutil &lt;pid&gt; 10000          <span class="cm"># 每 10 秒一行</span></code></pre>
+    </div>
+    <pre class="console"><span class="w">  秒  完成/s  P50(ms)  │  O(老年代%)  FGC(次)  FGCT(秒)</span>
+  10     450      21   │     67.07        0     0.000
+  30     483      20   │     79.87        0     0.000
+  40     480      20   │     81.62        0     0.000
+  50     480      20   │     <b>91.37</b>        0     0.000
+  60     474      20   │     96.98        1     0.072
+  65     230      21   │                                 <span class="cm">← 开始变慢</span>
+  70       <b>0</b>       -   │     99.91       <b>95</b>     5.554
+  80       0       -   │     99.90      259    15.371   <span class="cm">← 10 秒里 164 次 Full GC，停了 9.8 秒</span>
+<span class="w">之后日志里出现 java.lang.OutOfMemoryError: Java heap space</span></pre>
+    <p class="done-box">读法：RT 前 60 秒一直是 20 ms，看 RT 根本发现不了；能提前报警的是老年代一路往上爬（O 是占当前老年代容量的百分比，G1 扩容时会往回跳一下，所以要看趋势）。一满，Full GC 连成片，吞吐直接掉到 0。所以“随时间越来越慢”的堆泄漏，常常不是慢慢变慢，而是平稳一阵后突然掉下去。</p>
+  </div>
+
+  <div class="done-box"><b>到这里已经能交差了：</b>能说清 RT 是由哪几段组成的、哪一站最先满（连接池，10 个连接 × 20 ms，上限 500/s）、并发再加只会线性变慢；也能用“停压后低压重测”和在途数、S 这两个数，分清是积压、表变大还是堆泄漏。</div>
+  <div class="todo">
+    <b>已知还没处理的细节</b>
+    <ul>
+      <li>服务端的监控为什么对不上客户端，Actuator 自己也会排队 → <a href="#pit-mon">⑥ 坑 1</a></li>
+      <li>超载时该排队还是该拒绝，队长、超时设多少 → <a href="#pit-unbounded">⑥ 坑 3</a>、<a href="#r2">规范 2、3</a></li>
+      <li>客户端超时、重试以后会发生什么 → <a href="#pit-waste">⑥ 坑 4、5</a></li>
+      <li>P99 为什么是 P50 的两倍，连接池是不是先来先得 → <a href="#deep">⑥ 第三圈</a></li>
+    </ul>
+  </div>
+</section>
+
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>根治和预防</h2>
+    <p class="lead">按三圈来：先是不知道就会出事的坑，再是团队里该怎么配、怎么压，最后是排队论和源码里的深处。每个坑旁边的小标签指回 ④ 里推出它的那条原理。</p>
+  </div>
+
+  <div class="sub">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项：十个坑</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-mon"><b><em>坑 1</em>服务端 RT 看着正常，压测机的 RT 却很高<a class="root" href="#s4-chain">← ④ 一串窗口</a><span class="seen">实测</span></b>
+        <dl><dt>现象</dt><dd>监控上 <code>http.server.requests</code> 平均 387 ms，压测机 P50 810 ms；过载时连 Actuator 都查不动。</dd>
+        <dt>根源</dt><dd>服务端计时从工作线程接手才开始，在 Tomcat 任务队列里等的时间不算。Actuator 和业务共用端口时，查指标的请求也排在同一个队里：实测每秒 600 个时，同端口的指标请求 5 秒都没回来。</dd>
+        <dt>做法</dt><dd class="fix">以压测机或网关的 RT 为准；看 <code>tomcat.threads.busy</code> 是否顶在最大值、<code>tomcat.connections.current</code> 是否远大于线程数；<code>management.server.port</code> 单独开一个端口。</dd></dl></div>
+      <div class="pit" id="pit-closed"><b><em>坑 2</em>闭环压测看不到积压，报告比真实流量好看<a class="root" href="#s4-time">← ④ 时间轴推论</a></b>
+        <dl><dt>现象</dt><dd>JMeter 线程组压到上限，RT 平在 400 ms；上线后真实流量一超过上限，RT 涨到几秒。</dd>
+        <dt>根源</dt><dd>闭环里系统中的请求最多 N 个，系统一慢，压测机也跟着少发，卡顿只落在少数请求上，这叫 coordinated omission。真实用户不会因为你慢就少来。</dd>
+        <dt>做法</dt><dd class="fix">模拟互联网流量用开环：JMeter 5.5 起的 Open Model Thread Group、k6 的 <code>constant-arrival-rate</code>、Gatling 的开环注入、wrk2；RT 从计划发出的时刻算。</dd></dl></div>
+      <div class="pit" id="pit-unbounded"><b><em>坑 3</em>无界队列：超载变成越来越长的延迟，最后 OOM<a class="root" href="#s4-design">← ④ 为什么这样设计</a></b>
+        <dl><dt>现象</dt><dd>开始变慢以后没有任何报错，RT 一路涨，内存一路涨。</dd>
+        <dt>根源</dt><dd>Tomcat 的 <code>threads.max-queue-capacity</code> 默认 <code>Integer.MAX_VALUE</code>（实际被 8192 个连接挡住）；<code>Executors.newFixedThreadPool</code> 的 <code>LinkedBlockingQueue</code> 也是无界；Spring Boot 默认的 <code>applicationTaskExecutor</code> 队列无界，<code>max-size</code> 根本用不上。</dd>
+        <dt>做法</dt><dd class="fix">自己的线程池一律有界队列加拒绝策略（<a href="../spring/spring-async-pool.html">@Async 与线程池</a>）；入口按延迟预算限队长（规范 3）。</dd></dl></div>
+      <div class="pit" id="pit-waste"><b><em>坑 4</em>客户端超时以后，服务端还在白做<a class="root" href="#s4-loop">← ④ 反馈环</a><span class="seen">实测</span></b>
+        <dl><dt>现象</dt><dd>压测机满屏超时，服务端的连接池、CPU 却一直满负荷。</dd>
+        <dt>根源</dt><dd>服务端不知道客户端已经走了，队里的请求照样处理；先来先服务的队一旦比超时还长，每个请求轮到时都已经过期。实测每秒 600 个、客户端 1 秒超时、跑 30 秒：发出的 18000 个请求服务端全都执行了，其中 4175 个是压测机停下以后才轮到的；客户端只收到 1099 个成功。</dd>
+        <dt>做法</dt><dd class="fix">有界队列让请求早点失败；把截止时间往下传，排队已经超时的直接丢；下游的超时比上游短。</dd></dl></div>
+      <div class="pit" id="pit-retry"><b><em>坑 5</em>重试把一次抖动变成永远的过载<a class="root" href="#s4-loop">← ④ 反馈环</a></b>
+        <dl><dt>现象</dt><dd>一次 GC 或下游抖动之后，系统再也回不到正常，重启才好。</dd>
+        <dt>根源</dt><dd>抖动时积下的请求都超时，每个再重试 2 次，进水最多变 3 倍，永远追不上。实验台剧情 5：每秒 400 个、上限 500，卡 3 秒以后再也恢复不了；同样的抖动不重试，约 15 秒就恢复。</dd>
+        <dt>做法</dt><dd class="fix">只重试幂等请求，最多 1～2 次，指数退避加随机抖动；设重试预算（规范 5）；配断路器。</dd></dl></div>
+      <div class="pit" id="pit-data"><b><em>坑 6</em>压测数据越压越多，SQL 越来越慢<a class="root" href="#s4-time">← ④ 时间轴 (b)</a><span class="seen">实测</span></b>
+        <dl><dt>现象</dt><dd>同一个场景，第二轮比第一轮慢，跑久了越来越慢。</dd>
+        <dt>根源</dt><dd>写接口在往表里插数据，表一大，缺索引的查询、深分页、<code>count(*)</code> 都跟着变慢；热数据超出 InnoDB buffer pool 以后还要读盘。实测表到 7.4 万行，P50 从 22 涨到 73 ms，补索引后 4 ms。</dd>
+        <dt>做法</dt><dd class="fix">每轮压测前恢复数据量，或直接用和生产一样大的数据；压测时开慢查询日志，对可疑 SQL 看 <code>EXPLAIN</code>。</dd></dl></div>
+      <div class="pit" id="pit-heap"><b><em>坑 7</em>堆里只放不删：前面正常，然后突然掉崖<a class="root" href="#s4-time">← ④ 时间轴 (b)</a><span class="seen">实测</span></b>
+        <dl><dt>现象</dt><dd>跑几分钟到几小时都正常，然后 RT 突增、吞吐掉到 0，最后 OOM。</dd>
+        <dt>根源</dt><dd>本地缓存不设上限、静态 <code>Map</code> 只放不删、<code>ThreadLocal</code> 不清，老年代只涨不降；满了以后 Full GC 一个接一个，实测 10 秒里停了 9.8 秒。</dd>
+        <dt>做法</dt><dd class="fix">本地缓存用 Caffeine 设 <code>maximumSize</code> 和过期（<a href="../mybatis/mybatis-cache.html">缓存那页</a>）；压测时用 <code>jstat</code> 看老年代的趋势；加 <code>-XX:+HeapDumpOnOutOfMemoryError</code>。</dd></dl></div>
+      <div class="pit" id="pit-conn"><b><em>坑 8</em>连接借了不还，或者借着连接做慢事<a class="root" href="#s4-chain">← ④ 上限 = c ÷ S</a></b>
+        <dl><dt>现象</dt><dd>越跑能用的连接越少，pending 越来越高，最后都卡在 <code>getConnection()</code> 等满 30 秒。</dd>
+        <dt>根源</dt><dd>手写 JDBC 没 close，c 在变少；<code>@Transactional</code> 方法里调 HTTP、发消息，连接被占着等外部，S 在变长。两样都让 c ÷ S 变小。</dd>
+        <dt>做法</dt><dd class="fix">开 <code>leakDetectionThreshold</code>（比如 2000 ms），超时没还会打出借连接时的堆栈；外部调用挪到事务外（<a href="../database/db-pool-tx-perf.html">连接池与事务性能</a>）。</dd></dl></div>
+      <div class="pit" id="pit-gen"><b><em>坑 9</em>压测机自己先排队<a class="root" href="#s4-chain">← ④ 压测机也是一站</a></b>
+        <dl><dt>现象</dt><dd>服务端很闲，报告上的 RT 却越跑越长，或者设定的并发怎么也打不满。</dd>
+        <dt>根源</dt><dd>JMeter GUI 模式加“查看结果树”会把每个结果留在内存里，压测机的堆越来越满、GC 越来越多；压测机 CPU 打满；客户端连接池太小，比如 Apache HttpClient 4.x 默认每个目标地址只有 2 个连接。</dd>
+        <dt>做法</dt><dd class="fix">用 <code>jmeter -n -t plan.jmx -l result.jtl</code> 命令行跑，关掉监听器；同时监控压测机；一台不够就分布式压。</dd></dl></div>
+      <div class="pit" id="pit-cpu"><b><em>坑 10</em>云主机和容器的 CPU 被限<span class="root env">环境原因</span></b>
+        <dl><dt>现象</dt><dd>压了十几分钟后吞吐突然掉一截；或者 CPU 不高，P99 却一阵一阵地高。</dd>
+        <dt>根源</dt><dd>这条推不出来，是运行环境的规则：突发性能实例的 CPU 积分用完，会被降到基线性能；容器设了 CPU limit，一个调度周期（默认 100 ms）的配额用完，就被暂停到下一个周期。</dd>
+        <dt>做法</dt><dd class="fix">压测用和生产同规格、非突发的实例；看 cgroup <code>cpu.stat</code> 里的 <code>nr_throttled</code>；JVM 的 GC 线程、线程池按 limit 来算。</dd></dl></div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范：团队里该怎么配、怎么压</h3></div>
+    <div class="rules-list">
+      <div class="rl" id="r1"><b>1 · 池子大小用利特尔法则算</b><p>线程数 ≈ 目标吞吐 × 每个请求占线程的时间；连接数 ≈ 目标吞吐 × 每次占连接的时间。再确认数据库扛得住这么多条 SQL 同时跑。</p><p class="guard">拍脑袋调大，把队伍推给下游。</p></div>
+      <div class="rl" id="r2"><b>2 · 每一站都限时，从外往里越来越短</b><p>比如网关 3 s，服务处理 2 s，下游调用 1 s。HikariCP 的 <code>connection-timeout</code> 设到 1～3 秒（最小 250 ms）；HTTP 客户端一定设连接和读超时，<code>HttpURLConnection</code> 默认是 0，表示一直等。</p><p class="guard">请求在某一站一直等，用户早走了它还占着位置。</p></div>
+      <div class="rl" id="r3"><b>3 · 队列按延迟预算定上限</b><p>上限 ≈ 吞吐 × 能容忍的排队时间。Tomcat 用 <code>server.tomcat.threads.max-queue-capacity</code>，自己的线程池用 <code>ArrayBlockingQueue</code> 加拒绝策略。</p><p class="guard">超载变成没有上限的延迟（坑 3、坑 4）。</p></div>
+      <div class="rl" id="r4"><b>4 · 入口限流，按接口隔离</b><p>Sentinel、Resilience4j 的 RateLimiter 和 Bulkhead。限同时在处理的请求数，比限每秒请求数更贴近排队的本质。</p><p class="guard">一个慢接口吃光所有线程，别的接口一起慢。</p></div>
+      <div class="rl" id="r5"><b>5 · 重试要有预算</b><p>只重试幂等请求，最多 1～2 次，指数退避加随机抖动；全部重试加起来不超过正常请求量的一成，超了就不再重试。</p><p class="guard">重试风暴（坑 5）。</p></div>
+      <div class="rl" id="r6"><b>6 · 这样压出来的数才可信</b><p>先预热；阶梯加压，每级等指标稳了再加；上线前跑几个小时的稳定性压测；每轮前恢复数据量；互联网接口用开环。</p><p class="guard">拿到一个好看但不真的数（坑 2、坑 6）。</p></div>
+      <div class="rl" id="r7"><b>7 · 压测时一起记这几样</b><p>压测机 RT、服务端 RT、在途数、每个池子的 busy 和 pending、方法自己的耗时 S、老年代占用的趋势。</p><p class="guard">只看到 RT 涨，不知道哪个队在涨。</p></div>
+      <div class="rl" id="r8"><b>8 · 指标要先打开</b><p><code>server.tomcat.mbeanregistry.enabled=true</code>，不开就没有 <code>tomcat.threads.*</code>；<code>management.server.port</code> 单独端口；HikariCP 的指标 Spring Boot 会自动绑定。</p><p class="guard">出事时才发现没有数（坑 1）。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="deep">
+    <div class="round"><span class="rb">第三圈</span><h3>优化和深处</h3></div>
+    <div class="deep">
+      <div class="dp" data-role="of"><h4>P99 为什么涨得比 P50 快</h4>
+        <p>排队论里的 Kingman 近似：等待 ≈ S × ρ/(1−ρ) × (Ca² + Cs²)/2，ρ 是利用率，Ca、Cs 是到达间隔和处理时间的波动程度。来得越不均匀、处理时间越参差，同样利用率下等得越久；一次 GC 停顿、一条慢 SQL，让后面所有人一起多等。</p>
+        <p>实测里 P99 大约是 P50 的 2 倍，还有一个原因：HikariCP 借连接不是严格先来先得。还连接时，刚进来的线程会先扫 <code>ConcurrentBag</code> 的共享列表，可能抢在排队的线程前面拿走。实测把 <code>connection-timeout</code> 改成 1 秒、每秒 600 个：平均只等 338 ms，却有 1808 次等过 1 秒而超时。</p></div>
+      <div class="dp" data-role="bk"><h4>一个大池子，还是几个小池子</h4>
+        <p>同样的利用率，窗口越多排队越短（M/M/c 模型，Erlang C 公式），所以几个接口共享一个大池子更省。可共享也意味着一个慢接口能拖垮所有接口。常见折中：关键接口单独一个小池子（舱壁隔离），其余共享。</p></div>
+      <div class="dp" data-role="bad"><h4>亚稳态故障</h4>
+        <p>名字来自 2021 年 HotOS 的论文 <i>Metastable Failures in Distributed Systems</i>：触发因素（一次抖动）已经消失，系统却被自己的反馈环（重试、缓存冷启动）困在过载里。出路是打断环：直接拒掉一部分（减载）、重试预算、断路器、排队超时就丢。实验台剧情 5 就是一个。</p></div>
+      <div class="dp" data-role="pd"><h4>过载时队伍该怎么排</h4>
+        <p>先来先服务在过载时最糟：每个人都等到超时。Facebook 在 <i>Fail at Scale</i>（ACM Queue，2015）里写过他们的做法：队伍一直清不空时，排队超过很短时间的请求直接丢掉（借鉴网络里的 CoDel）；拥塞时改成后进先出，让刚来的、还有人在等的请求先被处理。</p></div>
+      <div class="dp" data-role="cg"><h4>自适应并发限制</h4>
+        <p>Netflix 开源的 <code>concurrency-limits</code> 借鉴 TCP 拥塞控制：RT 开始上涨，就把允许的并发往下调；RT 回落再慢慢放开。相当于在线上自动找 ④ 里的拐点 N*，不用手算。</p></div>
+      <div class="dp" data-role="g2"><h4>虚拟线程：队伍挪了个地方</h4>
+        <p>JDK 21 加 Spring Boot 3.2 起的 <code>spring.threads.virtual.enabled=true</code>：Tomcat 线程不再是窗口，可连接池还是 10 个。实测 400 并发：<code>hikaricp.connections.pending</code> 变成 389，不再被 200 个线程挡住；<code>http.server.requests</code> 平均 837 ms，和压测机对上了；<code>tomcat.threads.busy</code> 变成 −1，没法用了。没有 200 个线程兜底，在途请求能涨到几千个，更要显式限流。JDK 21～23 在 <code>synchronized</code> 里阻塞会占住底层的载体线程，JDK 24 的 JEP 491 解决了。</p></div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>版本差异</h3>
+    <div class="eras">
+      <div class="era"><div class="era-top"><span class="jdk">Spring Boot 2.x</span></div><ul>
+        <li>2.2 起 Tomcat 的 MBean 注册默认关，<code>tomcat.threads.*</code> 指标要开 <code>server.tomcat.mbeanregistry.enabled</code></li>
+        <li>2.3 起线程数配置叫 <code>server.tomcat.threads.max</code>，之前是 <code>server.tomcat.max-threads</code></li>
+        <li><code>http.server.requests</code> 由 <code>WebMvcMetricsFilter</code> 记录，也是过滤器里开始计时，同样看不到 Tomcat 队列</li></ul></div>
+      <div class="era"><div class="era-top"><span class="jdk">Spring Boot 3.x</span></div><ul>
+        <li><code>http.server.requests</code> 改由 Observation（<code>ServerHttpObservationFilter</code>）记录，计时起点不变</li>
+        <li>3.2 起支持虚拟线程 <code>spring.threads.virtual.enabled</code></li>
+        <li>较新的 3.x 有 <code>server.tomcat.threads.max-queue-capacity</code>，本机 3.5.16 验证过，默认 <code>Integer.MAX_VALUE</code></li></ul></div>
+      <div class="era"><div class="era-top"><span class="jdk">JDK 和压测工具</span></div><ul>
+        <li>JDK 8 默认 Parallel GC，Full GC 停顿长；JDK 9 起默认 G1</li>
+        <li>JDK 21 有虚拟线程；JDK 24 起 <code>synchronized</code> 不再钉住载体线程</li>
+        <li>JMeter 5.5 起有 Open Model Thread Group；k6 用 <code>constant-arrival-rate</code>；wrk2 是 wrk 的固定速率版</li></ul></div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>压测时吞吐不涨了、RT 随并发线性涨，说明什么？怎么估一台能扛多少？</summary><p>说明已经饱和，多出来的并发都在排队，RT = 并发 ÷ 吞吐上限。上限由最窄那一站决定：窗口数 ÷ 每次占用时间，比如 10 个连接 × 20 ms = 500/s。容量规划只用到上限的 70%～80%，因为利用率越接近 100%，排队越陡。</p></details>
+      <details><summary>为什么把线程池调大，RT 反而更差了？</summary><p>如果最窄的是连接池或数据库，线程多了只是让更多线程停着等连接，队伍原地不动；如果连带着把连接池也调大，数据库要同时跑更多 SQL，锁竞争和 CPU 切换让每条 SQL 变慢，S 变长，上限反而变小。</p></details>
+      <details><summary>什么是 coordinated omission？</summary><p>闭环压测机要等上一个请求回来才发下一个。系统卡住时压测机也停下了，这段时间里本该发出的请求没发，卡顿只落在少数几个请求上，P99 被严重低估。解法：用开环按固定速率发，RT 从计划发出的时刻算（wrk2、k6 constant-arrival-rate、本页 ⑤ 的 Load.java 都是这样）。</p></details>
+      <details><summary>线上一次 GC 之后 RT 一直下不来，重启才好，可能是什么？</summary><p>先怀疑亚稳态：卡顿期间积压的请求超时、被重试，进水变多，加上无界的先来先服务队列让服务端一直在处理过期请求，系统困在过载里。治理：有界队列和减载、重试预算和退避、超时层层递减、排队超时就丢。也要排除真正的累积，比如堆泄漏，用“低压重测”和 jstat 区分。</p></details>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li><b>排队论再深一步：</b>M/M/c、Erlang C 和 Kingman 公式，自己算池子大小</li>
+      <li><b>读 HikariCP 的 ConcurrentBag：</b>无锁借还连接，以及它为什么不严格公平</li>
+      <li><b>Tomcat NIO 源码：</b>Acceptor、Poller、TaskQueue 怎么在线程满之前优先建线程</li>
+      <li><b>自适应限流：</b>Sentinel 和 concurrency-limits 的算法</li>
+      <li><b>GC 日志分析：</b>G1、ZGC 怎么影响尾延迟</li>
+      <li><b>全链路压测：</b>流量染色、影子库、挡板</li>
+      <li><b>容器里的 Java：</b>CPU limit、调度节流和 JVM 的容器感知</li>
+      <li><b>尾延迟的工程手段：</b>对冲请求（hedged request）、超时预算往下传</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步，再做一遍</h2>
+    <p class="lead">每个练习都在 ⑤ 的 <code>rtdemo</code> 和 <code>Load.java</code> 上做，用一条第⑥步的内容。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="bk"><h4>练习 1 · 给 Tomcat 的队伍设上限</h4><p>用 <code>--server.tomcat.threads.max-queue-capacity=300</code> 启动，重跑实验 2 的每秒 600 个。本机实测：P50 稳在约 0.7 秒，约 22% 的请求 1～8 ms 就失败，服务端日志里是 <code>RejectedExecutionException: Queue capacity is full</code>，压测机看到的是连接被关掉。</p><span class="uses">用到：⑥ 规范 3、坑 3</span></div>
+    <div class="exc" data-role="warn"><h4>练习 2 · 让客户端超时，数一数白做了多少</h4><p>在 <code>Load.java</code> 的 <code>HttpRequest.newBuilder(u)</code> 后面加 <code>.timeout(java.time.Duration.ofSeconds(1))</code>，每秒 600 个跑 30 秒，对比压测机的成功数和 <code>/actuator/metrics/demo.sql</code> 的 COUNT。本机实测：成功 1099 个，服务端执行了约 18000 次。</p><span class="uses">用到：⑥ 坑 4</span></div>
+    <div class="exc" data-role="g2"><h4>练习 3 · 换成虚拟线程，队伍去哪了</h4><p>用 <code>--spring.threads.virtual.enabled=true</code> 启动，重跑实验 1 的 400 并发。跑之前先写下你对 <code>hikaricp.connections.pending</code> 和服务端 <code>http.server.requests</code> 平均值的预测，答案在下面第 6 题。</p><span class="uses">用到：⑥ 第三圈 · 虚拟线程</span></div>
+  </div>
+  <h3>自测</h3>
+  <div class="faq">
+    <details><summary>1. 用一句话说出本页的精华。</summary><p>RT = 干活 + 排队，干活的时间通常不变，变的是排队；排查就是找到正在变长的那个队，再问它为什么变长。</p></details>
+    <details><summary>2. 为什么“把池子调大”常常没用？</summary><p>只有最窄的那一站变宽，上限才会涨。调大的不是最窄那站，队伍原地不动；调大的是最窄那站，队伍挪到下游，下游的 S 可能跟着变长。</p></details>
+    <details><summary>3. 服务端 P99 300 ms，压测机 P99 3 秒，差的去哪了？</summary><p>多半在 Tomcat 的任务队列里：线程都忙时，请求连线程都拿不到，而 <code>http.server.requests</code> 从线程接手才开始计时。看 <code>tomcat.threads.busy</code> 是否顶在最大值。</p><p class="from">从 ④ “一个请求要过好几道窗口”推出。</p></details>
+    <details><summary>4. 预测：连接池从 10 调到 20，数据库扛得住、每条 SQL 还是 20 ms，200 并发时 P50 大约多少？</summary><p>上限变成 20 ÷ 0.02 s = 1000/s，R = 200 ÷ 1000 = 200 ms，减半。在实验台里把窗口数切到 20、闭环 200 个用户就能验证。前提是数据库真扛得住，不然 S 会变长，抵掉一部分。</p><p class="from">从 ④ 并发轴的两个式子推出。</p></details>
+    <details><summary>5. 预测：开环每秒 550 个，上限 500，一直跑 10 分钟，会怎样？</summary><p>每秒多积约 50 个。理论上 10 分钟积 3 万个、要等约 60 秒；实际上积到 8192 个连接时（约 2 分 44 秒，这时要等约 16 秒）Tomcat 就不再接新连接，再来的先排进内核的 accept 队列（100 个），再多就连不上，压测机开始报连接超时。</p><p class="from">从 ④ 时间轴 (a) 和默认配置推出。</p></details>
+    <details><summary>6. 预测：开虚拟线程以后重跑 400 并发，hikaricp.connections.pending 和服务端 http.server.requests 平均值会变成多少？</summary><p>pending 约 390，因为不再有 200 个线程挡在前面，除了正在用连接的 10 个，其余都停在等连接；服务端记录的 RT 约等于客户端，因为请求不用在 Tomcat 队列里等线程了。本机实测 pending 389，服务端平均 837 ms，压测机 P50 815 ms。</p><p class="from">从 ④ 一串窗口推出：拿掉一站，队伍就倒灌到前面那一站。</p></details>
+    <details><summary>7. 预测：JMeter 20 个线程（闭环），RT 从 22 ms 慢慢涨到 73 ms。这会是“来得比走得快”吗？</summary><p>不会。闭环里系统中的请求固定是 20 个，积压不起来。一定是出口在变窄：S 变长（表变大、GC）或 c 变少（连接泄漏）。⑤ 实验 3 就是这个情况。</p><p class="from">从 ④ 时间轴的推论推出。</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>测试环境：Spring Boot 3.5.16 · Tomcat 10.1.55 · HikariCP 6.3.3 · Micrometer 1.15.12 · H2 2.3.232 · OpenJDK 21 · Linux 6.8 · 2 核 11 GB 云主机，压测机和服务在同一台机器上。实测数字只代表这台机器；默认值读自这些版本的 jar 包和 Spring Boot 的配置元数据。实验台是简化模型，数字是示意。</p>
+  <p>延伸阅读：John Little 的利特尔法则（1961）· Bronson 等，<i>Metastable Failures in Distributed Systems</i>（HotOS 2021）· Ben Maurer，<i>Fail at Scale</i>（ACM Queue 2015）。</p>
+  <p>相关页面：<a href="load-testing.html">系统压测</a>（五个数、USL、八类瓶颈）· <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../spring/spring-async-pool.html">Spring @Async 与线程池</a> · <a href="../database/mysql-mvcc-lock.html">MySQL MVCC 与锁</a> · <a href="../mybatis/mybatis-cache.html">MyBatis 缓存与 Caffeine</a></p>
+</footer>
+
+</main>
+
+
+<script>
+/*SIM-START*/
+/* ---- 排队实验台：c 个窗口（连接），每次占用约 S 毫秒，按毫秒推进 ---- */
+function mulberry(seed){ var a = seed >>> 0; return function(){ a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function pctOf(sorted, p){ if (!sorted.length) return 0; return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p / 100) - 1))]; }
+/* p = {mode:'closed'|'open', users, rate, c, s0, acc:'none'|'data'|'conn'|'heap', stall:bool, timeout:ms(0=不设), retries, cap(0=无界), T:秒, seed} */
+function simulate(p){
+  var T = (p.T || 120) * 1000, r = mulberry(p.seed || 7), s0 = p.s0 || 20, c0 = p.c;
+  var win = [], rem = [];
+  for (var i = 0; i < c0; i++){ win.push(-1); rem.push(0); }
+  var q = [], qh = 0;                       // 排队中的请求 id（先来先服务）
+  var st = [], start = [], usr = [], att = [], gone = [];   // st: 0 排队 1 处理中 2 完成 4 被拒
+  var tq = [], th = 0;                      // 超时检查队列：按发出时间排好
+  var completed = 0, secs = [], cur = null, carry = 0, paused = 0;
+  function newSec(t){ return {t: t, sent: 0, ok: 0, wasted: 0, tmo: 0, rej: 0, rts: [], queue: 0, cap: 0, s: 0}; }
+  function sNow(){ return p.acc === 'data' ? s0 * (1 + completed / 25000) : s0; }        // 每完成一个请求表里多一行，全表扫描越来越久
+  function cNow(t){ return p.acc === 'conn' ? Math.max(1, c0 - Math.floor(t / 10000)) : c0; } // 每 10 秒漏掉一个连接
+  function heapFull(){ return p.acc === 'heap' && completed >= 30000; }                          // 每个请求塞 8 KB，约 3 万个后老年代满
+  function send(t, u, a){
+    var id = st.length;
+    start.push(t); usr.push(u); att.push(a); gone.push(false);
+    cur.sent++;
+    if (p.mode === 'open' && p.cap > 0 && (q.length - qh) >= p.cap){ st.push(4); cur.rej++; fail(t, id); return; }
+    st.push(0); q.push(id); if (p.timeout) tq.push(id);
+  }
+  function fail(t, id){                       // 这次尝试失败了（超时或被拒）：还能重试就立刻重发
+    if (att[id] < (p.retries || 0)) send(t, usr[id], att[id] + 1);
+    else if (p.mode === 'closed') send(t, usr[id], 0);       // 闭环：这个用户放弃，接着发下一个
+  }
+  function finish(t, id){
+    st[id] = 2; completed++;
+    if (gone[id]){ cur.wasted++; return; }    // 客户端早走了，这次处理白做
+    cur.ok++; cur.rts.push(t - start[id]);
+    if (p.mode === 'closed') send(t, usr[id], 0);
+  }
+  cur = newSec(0);
+  if (p.mode === 'closed') for (var u = 0; u < p.users; u++) send(0, u, 0);
+  for (var t = 0; t < T; t++){
+    if (t > 0 && t % 1000 === 0){ cur.queue = (q.length - qh) + busy(); cur.cap = cNow(t - 1) * 1000 / sNow(); cur.s = sNow(); secs.push(cur); cur = newSec(t / 1000); }
+    if (p.mode === 'open'){
+      carry += p.rate / 1000;
+      while (carry >= 1){ carry -= 1; send(t, -1, 0); }
+      if (r() < carry){ send(t, -1, 0); carry -= 1; }
+    }
+    if (p.timeout){
+      while (th < tq.length && start[tq[th]] + p.timeout <= t){
+        var id = tq[th++];
+        if (st[id] < 2 && !gone[id]){ gone[id] = true; cur.tmo++; fail(t, id); }
+      }
+    }
+    var stop = false;
+    if (p.stall && t >= 30000 && t < 33000) stop = true;                  // 第 30 秒卡 3 秒（下游抖一下、一次长 GC）
+    if (heapFull() && (t % 100) >= 5) stop = true;                         // 老年代满了：Full GC 一个接一个，95% 的时间停着
+    else if (p.acc === 'heap' && !heapFull() && (t % 1000) < 8) stop = true; // 平时：每秒一次 8 ms 的 Young GC
+    if (stop) continue;
+    var cn = cNow(t);
+    for (var k = 0; k < c0; k++){
+      if (win[k] >= 0){ rem[k] -= 1; if (rem[k] <= 0){ finish(t, win[k]); win[k] = -1; } }
+      if (win[k] < 0 && k < cn && qh < q.length){
+        var nid = q[qh++]; st[nid] = 1; win[k] = nid; rem[k] = sNow() * (0.5 + r());
+      }
+    }
+    if (qh > 50000){ q = q.slice(qh); qh = 0; }
+  }
+  cur.queue = (q.length - qh) + busy(); cur.cap = cNow(T - 1) * 1000 / sNow(); cur.s = sNow(); secs.push(cur);
+  function busy(){ var b = 0; for (var k = 0; k < c0; k++) if (win[k] >= 0) b++; return b; }
+  var out = secs.map(function(s){
+    s.rts.sort(function(a, b){ return a - b; });
+    return {t: s.t, sent: s.sent, ok: s.ok, wasted: s.wasted, tmo: s.tmo, rej: s.rej, p50: pctOf(s.rts, 50), p99: pctOf(s.rts, 99), queue: s.queue, cap: Math.round(s.cap), s: s.s};
+  });
+  return {series: out, first: window10(out, 5, 15), last: window10(out, out.length - 10, out.length), c: c0, s0: s0, p: p};
+}
+function window10(series, a, b){
+  var sl = series.slice(Math.max(0, a), b), n = sl.length || 1, ok = 0, w = 0, e = 0, sent = 0, p50 = 0, p99 = 0, qmax = 0;
+  sl.forEach(function(s){ ok += s.ok; w += s.wasted; e += s.tmo + s.rej; sent += s.sent; p50 += s.p50; p99 += s.p99; qmax = Math.max(qmax, s.queue); });
+  return {ok: ok / n, wasted: w / n, err: e / n, sent: sent / n, p50: p50 / n, p99: p99 / n, queue: sl.length ? sl[sl.length - 1].queue : 0, errRate: sent ? e / sent : 0};
+}
+/* 并发轴的理论值：闭环、没有思考时间 */
+function closedTheory(N, c, sMs){ var xmax = c * 1000 / sMs; var x = Math.min(N * 1000 / sMs, xmax); return {x: x, rt: N * 1000 / x, wait: Math.max(0, N - c)}; }
+/*SIM-END*/
+(function(){
+  'use strict';
+  function $(id){ return document.getElementById(id); }
+  function fmtN(n){ return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function fmtMs(ms){ if (ms >= 10000) return Math.round(ms / 1000) + ' s'; if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s'; return Math.round(ms) + ' ms'; }
+  function esc(s){ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+  /* ---------- 通用：分步演示 ---------- */
+  function stepper(rootId, n, draw, posId){
+    var root = $(rootId), i = 0, timer = null;
+    var prev = $(rootId + 'Prev'), next = $(rootId + 'Next'), auto = $(rootId + 'Auto'), reset = $(rootId + 'Reset');
+    function go(k){ i = Math.max(0, Math.min(n - 1, k)); draw(i); $(posId).innerHTML = '第 <b>' + (i + 1) + '</b> / ' + n + ' 步'; prev.disabled = i === 0; next.disabled = i === n - 1; }
+    function stop(){ if (timer){ clearInterval(timer); timer = null; auto.textContent = '自动播放'; } }
+    prev.addEventListener('click', function(){ stop(); go(i - 1); });
+    next.addEventListener('click', function(){ stop(); go(i + 1); });
+    reset.addEventListener('click', function(){ stop(); go(0); });
+    auto.addEventListener('click', function(){
+      if (timer){ stop(); return; }
+      if (i === n - 1) go(0);
+      auto.textContent = '暂停';
+      timer = setInterval(function(){ if (i >= n - 1){ stop(); return; } go(i + 1); }, 2400);
+    });
+    root.addEventListener('keydown', function(e){
+      if (e.key === 'ArrowRight'){ e.preventDefault(); stop(); go(i + 1); }
+      else if (e.key === 'ArrowLeft'){ e.preventDefault(); stop(); go(i - 1); }
+    });
+    go(0);
+  }
+
+  /* ---------- ④ 并发轴分步演示 ---------- */
+  var CS = [
+    {n: 5, x: [250, 230], r: [20, 21], srv: 20.6,
+     t: '<b>5 个用户</b>：10 个连接只用了一半，没人排队。吞吐 = 5 ÷ 20 ms = 250/s，RT 就是 SQL 的 20 ms。'},
+    {n: 10, x: [500, 468], r: [20, 21], srv: 20.5,
+     t: '<b>10 个用户</b>：10 个连接正好用满，还是没人排队，吞吐到了上限 500/s。这就是拐点：再加人，只能排队。'},
+    {n: 20, x: [500, 495], r: [40, 40], srv: 39.5,
+     t: '<b>20 个用户</b>：10 个在用连接，另外 10 个线程停在 <code>getConnection()</code> 里等。吞吐还是 500/s，每个人都要多等一轮：RT = 20 ÷ 500 = 40 ms。'},
+    {n: 50, x: [500, 495], r: [100, 100], srv: 99.4,
+     t: '<b>50 个用户</b>：40 个在等。RT = 50 ÷ 500 = 100 ms。每多 1 个用户，RT 多 1 ÷ 500 秒，也就是 2 ms。'},
+    {n: 200, x: [500, 495], r: [400, 403], srv: 388.6,
+     t: '<b>200 个用户</b>：Tomcat 的 200 个线程全忙，190 个停在等连接。RT = 400 ms，其中 380 ms 在等。CPU 很闲，<code>jstack</code> 里 190 个线程停在 <code>ConcurrentBag.borrow</code>。'},
+    {n: 400, x: [500, 496], r: [800, 810], srv: 386.7,
+     t: '<b>400 个用户</b>：线程用完了，多出来的 200 个请求连线程都拿不到，排在 Tomcat 的任务队列里。RT = 400 ÷ 500 = 800 ms。',
+     w: '服务端 http.server.requests 只记到约 387 ms：它从线程接手才开始计时，任务队列里那一段看不到。'}
+  ];
+  function dots(x0, y0, count, cls){
+    var s = '', k = Math.min(count, 70);
+    for (var i = 0; i < k; i++){ s += '<circle class="' + cls + '" cx="' + (x0 + (i % 10) * 19) + '" cy="' + (y0 + Math.floor(i / 10) * 18) + '" r="6"/>'; }
+    return s;
+  }
+  function csDraw(i){
+    var d = CS[i], inConn = Math.min(d.n, 10), wait = Math.min(d.n, 200) - inConn, tq = Math.max(0, d.n - 200), busy = Math.min(d.n, 200);
+    var s = '';
+    s += '<text class="t-b" x="118" y="22" text-anchor="middle">Tomcat 任务队列（等线程）</text>';
+    s += '<rect class="' + (tq ? 'b-of' : 'c-empty') + '" x="12" y="32" width="212" height="166" rx="12"/>';
+    s += dots(32, 52, tq, 'dot-t');
+    s += '<text class="t-b" x="118" y="190" text-anchor="middle">' + (tq ? tq + ' 个' : '空') + '</text>';
+    s += '<line class="e-ink" x1="226" y1="115" x2="242" y2="115" marker-end="url(#ah-ink)"/>';
+    s += '<text class="t-b" x="352" y="22" text-anchor="middle">线程里等连接（pending）</text>';
+    s += '<rect class="' + (wait ? 'b-of' : 'c-empty') + '" x="246" y="32" width="212" height="166" rx="12"/>';
+    s += dots(266, 52, wait, 'dot-q');
+    s += '<text class="t-b" x="352" y="190" text-anchor="middle">' + (wait ? wait + ' 个' : '空') + '</text>';
+    s += '<line class="e-ink" x1="460" y1="115" x2="476" y2="115" marker-end="url(#ah-ink)"/>';
+    s += '<text class="t-b" x="540" y="22" text-anchor="middle">10 个连接 · 在用 ' + inConn + '</text>';
+    s += '<rect class="b-bk" x="480" y="32" width="120" height="166" rx="12"/>';
+    for (var k = 0; k < 10; k++){
+      var x = 494 + (k % 2) * 50, y = 46 + Math.floor(k / 2) * 30;
+      s += '<rect class="' + (k < inConn ? 'f-bk' : 'c-empty') + '" x="' + x + '" y="' + y + '" width="44" height="22" rx="4"/>';
+    }
+    s += '<line class="e-ink" x1="602" y1="115" x2="618" y2="115" marker-end="url(#ah-ink)"/>';
+    s += '<rect class="b-g2" x="620" y="62" width="128" height="106" rx="12"/>';
+    s += '<text class="t-b" x="684" y="90" text-anchor="middle">数据库</text>';
+    s += '<text class="t-s" x="684" y="112" text-anchor="middle">每条 SQL 20 ms</text>';
+    s += '<text class="t-s" x="684" y="134" text-anchor="middle">吞吐 ' + d.x[0] + '/s</text>';
+    s += '<text class="' + (busy >= 200 ? 't-bad' : 't-m') + '" x="352" y="220" text-anchor="middle">Tomcat 线程：忙 ' + busy + ' / 200（等连接的 + 用着连接的）</text>';
+    if (tq) s += '<text class="t-warn" x="118" y="220" text-anchor="middle">服务端计时看不到这里</text>';
+    $('csSvg').innerHTML = s;
+    var L = [
+      ['pd', '并发 N', d.n, '个用户'],
+      ['bk', '吞吐 /s', d.x[0] + ' / ' + d.x[1], '理论 / 实测'],
+      ['of', 'P50 ms', d.r[0] + ' / ' + d.r[1], '理论 / 实测'],
+      ['of', '等连接', wait, 'pending'],
+      ['warn', '等线程', tq, 'Tomcat 任务队列'],
+      [tq ? 'bad' : 'other', '服务端记录', d.srv + ' ms', 'http.server.requests']
+    ];
+    $('csLedger').innerHTML = L.map(function(c){ return '<div class="lg-c" data-role="' + c[0] + '"><small>' + c[1] + '</small><b>' + c[2] + '</b><span>' + c[3] + '</span></div>'; }).join('');
+    $('csCap').innerHTML = d.t + (d.w ? '<span class="wl">' + d.w + '</span>' : '');
+  }
+  stepper('cs', CS.length, csDraw, 'csPos');
+
+  /* ---------- ④ 排队实验台 ---------- */
+  var S = {mode: 'closed', users: 50, rate: 400, c: 10, acc: 'none', stall: 0, tmo: 0, cap: 0};
+  var PRE = {
+    1: {s: {mode: 'closed', users: 200, rate: 400, c: 10, acc: 'none', stall: 0, tmo: 0, cap: 0},
+        q: '闭环 200 个用户，10 个连接，每次 20 ms。跑稳以后 P50 大约是？',
+        o: ['20 ms 左右：每次只要 20 ms', '400 ms 左右', '一直涨，没有上限'], a: 1,
+        why: '饱和以后吞吐卡在 c ÷ S = 500/s；闭环里系统中固定有 200 个请求，R = 200 ÷ 500 = 0.4 s。闭环的队最长就是 N，不会一直涨。← ④ 并发轴'},
+    2: {s: {mode: 'open', users: 50, rate: 600, c: 10, acc: 'none', stall: 0, tmo: 0, cap: 0},
+        q: '开环每秒来 600 个，上限约 500/s，跑 2 分钟。最后 10 秒的 P50 大约是？',
+        o: ['二十多秒，还在涨', '1 秒左右，稳住了', '先涨，后来自己回落'], a: 0,
+        why: '每秒多积约 100 个，2 分钟积了 1 万多个，等待 ≈ 积压 ÷ 500，二十多秒。开环不会因为你慢就少来，水位一直涨。← ④ 时间轴 (a)'},
+    3: {s: {mode: 'closed', users: 50, rate: 400, c: 10, acc: 'data', stall: 0, tmo: 0, cap: 0},
+        q: '闭环 50 个用户，每完成一个请求表里多一行，查询要扫全表。2 分钟里 RT 会？',
+        o: ['不变：用户数没变', '先不变，到某一刻突然崩', '慢慢变长，吞吐慢慢下降'], a: 2,
+        why: 'S 跟着行数变长，上限 c ÷ S 越来越小；闭环里 R = N ÷ X，跟着慢慢变长。⑤ 实验 3 的实测也是这个形状。← ④ 时间轴 (b)'},
+    4: {s: {mode: 'closed', users: 10, rate: 400, c: 10, acc: 'heap', stall: 0, tmo: 0, cap: 0},
+        q: '闭环 10 个用户（正好等于连接数，没人排队），每个请求往本地缓存塞 8 KB 不删。RT 会？',
+        o: ['慢慢变长', '一直正常，到某一刻突然几乎不动', '一直正常'], a: 1,
+        why: '堆没满时 Young GC 很短，RT 看不出变化；老年代一满，Full GC 一个接一个，大部分时间在停顿。⑤ 实验 4 实测：前 60 秒 20 ms，第 65 秒起吞吐归零。能提前报警的是老年代占用的趋势。← ④ 时间轴 (b)'},
+    5: {s: {mode: 'open', users: 50, rate: 400, c: 10, acc: 'none', stall: 1, tmo: 2, cap: 0},
+        q: '开环每秒 400 个（上限 500），客户端 1 秒超时、失败立刻重试 2 次。第 30 秒服务卡了 3 秒，之后会？',
+        o: ['再也恢复不了，成功数接近 0', '十几秒后恢复', '和不重试一样'], a: 0,
+        why: '卡 3 秒积了约 1200 个，排在后面的都等过 1 秒、超时、重试，进水最多变成 3 倍，再也追不上；服务端一直在处理已经被放弃的请求。把超时切到“1 秒”（不重试）再跑一次，十几秒就恢复。← ④ 反馈环'},
+    6: {s: {mode: 'open', users: 50, rate: 600, c: 10, acc: 'none', stall: 0, tmo: 0, cap: 500},
+        q: '开环每秒 600 个，队列最多排 500 个，满了直接拒。P50 和失败率大约？',
+        o: ['P50 还是越来越长', '几乎全部被拒', 'P50 稳在 1 秒左右，约 1/6 被拒'], a: 2,
+        why: '队长被限在 500，等待最多约 500 ÷ 500/s = 1 秒；超出上限的那约 100/s（六分之一）立刻失败。延迟有了上限，代价是拒绝一部分。← ④ 为什么这样设计'}
+  };
+  var G = null;   // 当前剧情：{id, pick}
+
+  function segInit(id, key, num){
+    var box = $(id);
+    box.addEventListener('click', function(e){
+      var b = e.target.closest('button'); if (!b || b.disabled) return;
+      S[key] = num ? +b.getAttribute('data-v') : b.getAttribute('data-v');
+      freeMode(); syncUI();
+    });
+  }
+  function syncUI(){
+    [['cMode', 'mode'], ['cC', 'c'], ['cAcc', 'acc'], ['cStall', 'stall'], ['cTmo', 'tmo'], ['cCap', 'cap']].forEach(function(p){
+      Array.prototype.forEach.call($(p[0]).querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', String(b.getAttribute('data-v') === String(S[p[1]]))); });
+    });
+    $('cUsers').value = S.users; $('cUsersO').textContent = S.users;
+    $('cRate').value = S.rate; $('cRateO').textContent = S.rate;
+    var closed = S.mode === 'closed';
+    $('ctlUsers').classList.toggle('off', !closed); $('cUsers').disabled = !closed;
+    $('ctlRate').classList.toggle('off', closed); $('cRate').disabled = closed;
+    $('ctlCap').classList.toggle('off', closed);
+    Array.prototype.forEach.call($('cCap').querySelectorAll('button'), function(b){ b.disabled = closed; });
+  }
+  function freeMode(){
+    if (G){ G = null; Array.prototype.forEach.call($('labPresets').querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', 'false'); }); }
+    renderGuess(null);
+  }
+  function renderGuess(res){
+    var box = $('labGuess');
+    if (!G){ box.innerHTML = '<p>选上面一个剧情，先猜结果，再点“运行”。也可以直接调下面的参数，自己做实验。</p>'; return; }
+    var p = PRE[G.id], h = '<p><b>先猜：</b>' + p.q + '</p><div class="opts">';
+    p.o.forEach(function(o, k){
+      var cls = '';
+      if (res){ if (k === p.a) cls = ' class="right"'; else if (k === G.pick) cls = ' class="wrong"'; }
+      h += '<button type="button" data-k="' + k + '" aria-pressed="' + (G.pick === k) + '"' + cls + (res ? ' disabled' : '') + '>' + String.fromCharCode(65 + k) + '. ' + o + '</button>';
+    });
+    h += '</div>';
+    if (res){
+      var ok = G.pick === p.a, none = G.pick == null;
+      h += '<p class="res" data-role="' + (none ? 'other' : (ok ? 'done' : 'bad')) + '"><b>' + (none ? '没猜就跑了。' : (ok ? '猜对了。' : '没猜对。')) + '</b>答案是 ' + String.fromCharCode(65 + p.a) + '。' + p.why + '<br>' + res + '</p>';
+    }
+    box.innerHTML = h;
+  }
+  $('labGuess').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b || !G || b.disabled) return;
+    G.pick = +b.getAttribute('data-k'); renderGuess(null);
+  });
+  $('labPresets').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    var id = +b.getAttribute('data-p'), p = PRE[id];
+    Object.keys(p.s).forEach(function(k){ S[k] = p.s[k]; });
+    syncUI();
+    G = {id: id, pick: null};
+    Array.prototype.forEach.call($('labPresets').querySelectorAll('button'), function(x){ x.setAttribute('aria-pressed', String(x === b)); });
+    renderGuess(null);
+    $('labState').textContent = '参数已经按剧情设好。先猜一个，再点运行。';
+    blank();
+  });
+  ['cUsers', 'cRate'].forEach(function(id){
+    $(id).addEventListener('input', function(){ S[id === 'cUsers' ? 'users' : 'rate'] = +$(id).value; freeMode(); syncUI(); });
+  });
+  segInit('cMode', 'mode', false); segInit('cC', 'c', true); segInit('cAcc', 'acc', false);
+  segInit('cStall', 'stall', true); segInit('cTmo', 'tmo', true); segInit('cCap', 'cap', true);
+
+  function params(){
+    return {mode: S.mode, users: S.users, rate: S.rate, c: S.c, s0: 20, acc: S.acc, stall: !!S.stall,
+            timeout: S.tmo ? 1000 : 0, retries: S.tmo === 2 ? 2 : 0, cap: S.mode === 'open' ? S.cap : 0, T: 120, seed: 7};
+  }
+  function niceMax(v){ if (v <= 0) return 1; var e = Math.pow(10, Math.floor(Math.log10(v))), m = v / e; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * e; }
+  var X0 = 64, X1 = 744;
+  function tx(t){ return X0 + t / 120 * (X1 - X0); }
+  function pl(series, f, y0, h, max, cls){
+    var pts = series.map(function(s){ return tx(s.t + 0.5).toFixed(1) + ',' + (y0 + h - Math.min(f(s), max) / max * h).toFixed(1); }).join(' ');
+    return '<polyline class="' + cls + '" points="' + pts + '"/>';
+  }
+  function axis(y0, h, max, unit){
+    var s = '';
+    for (var k = 0; k <= 4; k++){
+      var v = max * k / 4, y = (y0 + h - h * k / 4).toFixed(1);
+      s += '<line class="e-grid" x1="' + X0 + '" y1="' + y + '" x2="' + X1 + '" y2="' + y + '"/>';
+      if (k % 2 === 0) s += '<text class="t-monos" x="' + (X0 - 6) + '" y="' + (+y + 4) + '" text-anchor="end">' + (unit === 'ms' ? fmtMs(v) : fmtN(v)) + '</text>';
+    }
+    return s;
+  }
+  function xTicks(){
+    var s = '';
+    [0, 30, 60, 90, 120].forEach(function(t){ s += '<text class="t-monos" x="' + tx(t).toFixed(1) + '" y="366" text-anchor="' + (t === 120 ? 'end' : 'middle') + '">' + t + ' 秒</text>'; });
+    return s;
+  }
+  function blank(){
+    var s = '<text class="t-h" x="12" y="16">响应时间（只算成功的请求）</text><text class="t-b" x="12" y="158">每秒：成功 / 白做 / 失败</text><text class="t-b" x="12" y="282">系统里的请求（排队 + 处理中）</text>';
+    s += axis(24, 110, 1, 'x').replace(/<text[^>]*>[^<]*<\/text>/g, '') + axis(166, 90, 1, 'x').replace(/<text[^>]*>[^<]*<\/text>/g, '') + axis(290, 60, 1, 'x').replace(/<text[^>]*>[^<]*<\/text>/g, '');
+    s += '<text class="t-m" x="404" y="200" text-anchor="middle">点“运行”看结果</text>' + xTicks();
+    $('labSvg').innerHTML = s;
+    $('labTiles').innerHTML = ''; $('labNotes').innerHTML = '';
+  }
+  function draw(r){
+    var se = r.series, p = r.p, s = '';
+    var rtMax = niceMax(Math.max(40, Math.max.apply(null, se.map(function(x){ return x.p99; }))));
+    var tpMax = niceMax(Math.max(p.mode === 'open' ? p.rate * (1 + p.retries) : 0, Math.max.apply(null, se.map(function(x){ return Math.max(x.ok, x.wasted, x.tmo + x.rej, x.cap); }))));
+    var qMax = niceMax(Math.max(10, Math.max.apply(null, se.map(function(x){ return x.queue; }))));
+    if (p.stall) s += '<rect class="f-cgt" x="' + tx(30).toFixed(1) + '" y="24" width="' + (tx(33) - tx(30)).toFixed(1) + '" height="326" opacity=".8"/><text class="t-cg" x="' + (tx(33) + 4).toFixed(1) + '" y="36">卡 3 秒</text>';
+    s += '<text class="t-h" x="12" y="16">响应时间（只算成功的请求）</text>';
+    s += axis(24, 110, rtMax, 'ms');
+    s += pl(se, function(x){ return x.p99; }, 24, 110, rtMax, 'e-badd');
+    s += pl(se, function(x){ return x.p50; }, 24, 110, rtMax, 'e-of');
+    s += '<text class="t-b" x="12" y="158">每秒：成功 / 白做 / 失败</text>';
+    s += axis(166, 90, tpMax, 'n');
+    s += pl(se, function(x){ return x.cap; }, 166, 90, tpMax, 'e-bkd');
+    if (p.mode === 'open'){ var yr = (166 + 90 - Math.min(p.rate, tpMax) / tpMax * 90).toFixed(1); s += '<line class="e-pdd" x1="' + X0 + '" y1="' + yr + '" x2="' + X1 + '" y2="' + yr + '"/>'; }
+    s += pl(se, function(x){ return x.tmo + x.rej; }, 166, 90, tpMax, 'e-bad');
+    s += pl(se, function(x){ return x.wasted; }, 166, 90, tpMax, 'e-warn');
+    s += pl(se, function(x){ return x.ok; }, 166, 90, tpMax, 'e-good');
+    s += '<text class="t-b" x="12" y="282">系统里的请求（排队 + 处理中）</text>';
+    s += axis(290, 60, qMax, 'n');
+    var area = 'M' + tx(0.5).toFixed(1) + ' 350 ' + se.map(function(x){ return 'L' + tx(x.t + 0.5).toFixed(1) + ' ' + (350 - Math.min(x.queue, qMax) / qMax * 60).toFixed(1); }).join(' ') + ' L' + tx(se[se.length - 1].t + 0.5).toFixed(1) + ' 350 Z';
+    s += '<path class="f-oft" d="' + area + '"/>';
+    s += pl(se, function(x){ return x.queue; }, 290, 60, qMax, 'e-of');
+    s += xTicks();
+    $('labSvg').innerHTML = s;
+  }
+  function analyse(r){
+    var p = r.p, f = r.first, l = r.last, se = r.series, notes = [];
+    var cap0 = se[2].cap, capL = se[se.length - 1].cap;
+    var sumW = se.reduce(function(a, x){ return a + x.wasted; }, 0), sumOk = se.reduce(function(a, x){ return a + x.ok; }, 0);
+    notes.push(['bk', '上限 = c ÷ S = ' + p.c + ' ÷ 20 ms = ' + fmtN(p.c * 50) + '/s' +
+      (p.acc === 'data' ? '；表越来越大，最后 S 涨到约 ' + Math.round(se[se.length - 1].s) + ' ms，上限掉到约 ' + fmtN(capL) + '/s' : '') +
+      (p.acc === 'conn' ? '；连接一个个漏掉，最后只剩 ' + Math.max(1, p.c - 11) + ' 个窗口，上限约 ' + fmtN(capL) + '/s' : '') + '。']);
+    if (p.mode === 'closed' && !p.timeout){
+      var rt = l.ok > 0 ? p.users / l.ok * 1000 : 0;
+      notes.push(['pd', '闭环：系统里固定有 ' + p.users + ' 个请求。最后 10 秒成功 ' + fmtN(l.ok) + '/s，按 R = N ÷ X 算约 ' + (l.ok > 0 ? fmtMs(rt) : '—') + '，模拟出的 P50 是 ' + fmtMs(l.p50) + '。' +
+        (p.users > p.c ? '比窗口多出来的 ' + (p.users - p.c) + ' 个都在排队。' : '用户不比窗口多，没人排队。')]);
+    } else if (p.mode === 'closed'){
+      notes.push(['pd', '闭环加超时：每个用户同时只等一个请求，但超时放弃的那个还留在服务端的队里，所以系统里的请求可以比 N = ' + p.users + ' 多。']);
+    } else {
+      if (p.rate > cap0 && !p.cap) notes.push(['of', '开环：每秒来 ' + p.rate + ' 个，最多走约 ' + fmtN(Math.min(cap0, f.ok + f.wasted)) + ' 个，每秒积压约 ' + fmtN(p.rate - cap0) + ' 个，RT 跟着时间直线涨（④ 时间轴 (a)）。']);
+      else if (p.rate <= cap0 && !p.stall && l.ok >= 1 && l.p50 > 3 * Math.max(f.p50, 20)) notes.push(['cg', '一开始来得比走得慢，后来上限掉到每秒 ' + p.rate + ' 个以下，开始积压：出口变窄，再变成积压。']);
+      else if (p.rate <= cap0 && !p.stall && l.ok >= 1) notes.push(['done', '开环：每秒来 ' + p.rate + ' 个，低于上限，队很短，RT 接近 S。']);
+      else if (p.rate <= cap0 && p.stall) notes.push(['of', '开环：平时每秒来 ' + p.rate + ' 个，低于上限；看第 30 秒那一下之后能不能回来。']);
+    }
+    if ((p.acc === 'data' || p.acc === 'conn') && f.ok >= 1 && l.ok >= 1) notes.push(['cg', 'RT 从开头的 ' + fmtMs(f.p50) + ' 涨到最后的 ' + fmtMs(l.p50) + '：用户数或到达率没变，是出口在变窄（④ 时间轴 (b)）。']);
+    else if (p.acc === 'data' || p.acc === 'conn') notes.push(['cg', '出口一直在变窄（④ 时间轴 (b)），成功的请求太少，RT 已经没法比，看失败率和白做。']);
+    if (p.acc === 'heap'){
+      var drop = null; for (var i = 5; i < se.length; i++){ if (se[i].ok + se[i].wasted < 0.3 * (f.ok + f.wasted)){ drop = se[i].t; break; } }
+      notes.push(['cg', drop != null ? '前 ' + drop + ' 秒 RT 一直是 ' + fmtMs(f.p50) + '，看不出问题；第 ' + drop + ' 秒老年代满了，Full GC 连成片，吞吐掉到 ' + fmtN(l.ok) + '/s。' : '堆还没满，RT 看不出变化。']);
+    }
+    if (p.stall && r.base){
+      var b = r.base.series, rec = null;
+      for (var j = 34; j < se.length; j++){
+        if (Math.abs(se[j].ok - b[j].ok) <= 0.1 * Math.max(b[j].ok, 10) && se[j].queue <= 1.5 * b[j].queue + 20){ rec = se[j].t; break; }
+      }
+      if (r.base.first.ok < 1) notes.push(['bad', '还没到第 30 秒就已经扛不住了，卡不卡这一下差别不大。']);
+      else notes.push([rec != null ? 'done' : 'bad', rec != null ? '第 30 秒卡了 3 秒，第 ' + rec + ' 秒回到和“不卡”一样的状态。' : '卡顿第 33 秒就过去了，系统到最后都没回到“不卡”时的样子：' + (p.retries ? '重试把进水放大到最多 3 倍，服务端一直在处理已经被放弃的请求（亚稳态，⑥ 坑 5）。' : '积压一直没消化完。')]);
+    }
+    if (sumW > 0) notes.push(['warn', '服务端一共白做了 ' + fmtN(sumW) + ' 个请求（客户端已经超时走了），成功的只有 ' + fmtN(sumOk) + ' 个。']);
+    if (p.cap > 0 && l.err > 0 && l.ok >= 1) notes.push(['done', '队列满了直接拒：最后 10 秒失败率 ' + Math.round(l.errRate * 100) + '%，留下的请求 P50 稳在 ' + fmtMs(l.p50) + '。延迟有了上限，代价是拒绝一部分。']);
+    else if (l.errRate > 0.5) notes.push(['bad', '最后 10 秒 ' + Math.round(l.errRate * 100) + '% 的尝试失败了。']);
+    return notes;
+  }
+  function tiles(r){
+    var f = r.first, l = r.last, p = r.p;
+    var grow = l.p50 > 2.5 * Math.max(f.p50, 20);
+    var T = [
+      [grow || l.p50 > 1000 ? 'bad' : 'of', '最后 10 秒 P50', l.ok ? fmtMs(l.p50) : '—', '开头：' + (f.ok ? fmtMs(f.p50) : '—')],
+      [l.p99 > 1000 ? 'bad' : 'of', '最后 10 秒 P99', l.ok ? fmtMs(l.p99) : '—', '开头：' + (f.ok ? fmtMs(f.p99) : '—')],
+      [l.ok < 0.5 * f.ok || l.ok < 1 ? 'bad' : 'done', '成功 /s', fmtN(l.ok), '开头：' + fmtN(f.ok) + '/s'],
+      [l.queue > 5 * Math.max(f.queue, 10) ? 'bad' : 'of', '系统里的请求', fmtN(l.queue), p.mode === 'closed' ? '闭环 N = ' + p.users : '开环'],
+      [l.errRate > 0.05 ? 'bad' : 'other', '失败率', Math.round(l.errRate * 100) + '%', '白做 ' + fmtN(l.wasted) + '/s']
+    ];
+    $('labTiles').innerHTML = T.map(function(t){ return '<div class="tile" data-role="' + t[0] + '"><small>' + t[1] + '</small><b>' + t[2] + '</b><span>' + t[3] + '</span></div>'; }).join('');
+  }
+  function run(){
+    var pr = params(), r = simulate(pr);
+    if (pr.stall){ var pb = {}; Object.keys(pr).forEach(function(k){ pb[k] = pr[k]; }); pb.stall = false; r.base = simulate(pb); }
+    draw(r); tiles(r);
+    $('labNotes').innerHTML = analyse(r).map(function(n){ return '<li data-role="' + n[0] + '">' + n[1] + '</li>'; }).join('');
+    $('labState').textContent = '模拟了 120 秒，下面是结果。';
+    if (G) renderGuess('模拟结果：最后 10 秒 P50 ' + (r.last.ok ? fmtMs(r.last.p50) : '—（没有成功的请求）') + '，成功 ' + fmtN(r.last.ok) + '/s，失败率 ' + Math.round(r.last.errRate * 100) + '%。');
+  }
+  $('labRun').addEventListener('click', run);
+  syncUI(); renderGuess(null); run();
+  $('labState').textContent = '现在显示的是：闭环 50 个用户、10 个连接、没有累积。';
+})();
+</script>
+
+</body>
+</html>
