@@ -1,0 +1,1586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>AQS 源码</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a mechanism topic (① 为什么需要 ② 没有它会怎样 ③ 相邻方案 ④ 原理 ⑤ 亲眼看到 ⑥ 细节 ↺). Every comparison uses the three JDKs the user runs in production: 8, 17 and 21. Colors: state teal (bk), the wait queue / waiting nodes blue (pd), the condition queue purple (cg), lock holders and frameworks brown (g2), barging and spinning orange (warn), wrong red, right green, monitors / old ways grey. Interactives: an acquire/release stepper (④) and a guess-first operation-level lab (⑥) with a JDK 8 vs 17/21 node-status view, both driven by one pure simulator fuzzed in node. Numbers come from the author's 2-vCPU VM. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:640px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-on{font-size:11.5px;font-weight:700;fill:var(--on-accent)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)}
+.f-oft{fill:var(--of-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-card{fill:var(--card)} .f-paper{fill:var(--code-bg)}
+.c-empty{fill:var(--card);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:4 3}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-bkd{stroke:var(--bk);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-pdd{stroke:var(--pd);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+.mk{fill:var(--of)}
+.mk-t{font-size:12px;font-weight:700;fill:var(--on-accent)}
+.dot-q{fill:var(--of)}
+.dot-s{fill:var(--bk)}
+.dot-t{fill:var(--warn)}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.need{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.need b{font-size:16px}
+.need b i{font-style:normal;font-family:var(--font-display);color:var(--of);margin-right:6px}
+.need p{font-size:14px;color:var(--muted)}
+.need .to{font-size:12.5px;align-self:flex-start;padding:2px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev{color:var(--ink)}
+.mj dd.ev b{color:var(--bad)}
+.mj .go{font-size:12.5px;align-self:flex-start;color:var(--muted)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- ③ route ---------- */
+.qflow{display:flex;flex-direction:column;gap:0}
+.qstep{display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;align-items:start}
+.qstep .qn{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-display);font-size:20px;background:var(--ink);color:var(--paper);position:relative;z-index:1}
+.qstep .qbody{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.qstep .qbody > b{font-size:17px}
+.qstep .qbody > p{font-size:14px;color:var(--muted)}
+.qstep .qbody > p code{color:var(--ink);overflow-wrap:anywhere}
+.qline{width:2px;height:22px;background:var(--line-strong);margin-left:21px}
+.ans{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.an{border:1.5px solid var(--rc);background:var(--rt);border-radius:12px;padding:8px 12px;font-size:14px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.an > span{font-size:12.5px;color:var(--muted)}
+.an > b{font-weight:700}
+.an a{font-size:12.5px}
+.an code{overflow-wrap:anywhere}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.exp-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.exp-h .n{font-family:var(--font-display);font-size:22px;color:var(--of)}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:760px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.fact .to6{margin-top:auto;font-size:12.5px;color:var(--muted)}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:21px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way .cfg{font-family:var(--font-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.way svg{display:block;width:100%;height:auto}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b code{font-size:.9em}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:4.6em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--bad)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:620px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+.ctl.off{opacity:.45}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg-btns button:disabled{opacity:.4;cursor:not-allowed}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:18px;height:3px;border-radius:2px;display:inline-block}
+.lg i.d{height:0;border-top:2px dashed}
+.notes{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.notes li{font-size:14.5px;padding:8px 12px;border-radius:10px;background:var(--rt);border-left:4px solid var(--rc)}
+
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.eras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.era{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.era-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.jdk{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ink);color:var(--paper)}
+.era ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.era li{min-width:0;overflow-wrap:anywhere}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+
+
+/* ---------- bag board (stepper + lab) ---------- */
+.board{display:flex;flex-direction:column;gap:12px}
+.bd-top{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,.7fr) minmax(0,1.2fr);gap:10px}
+.pane{border:2px solid var(--rc);background:var(--rt);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.pane > small{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}
+.pane > small code{color:var(--ink)}
+.pane .row{display:flex;flex-wrap:wrap;gap:6px;min-height:30px;align-items:center}
+.pane .big{font-family:var(--font-display);font-size:28px;line-height:1}
+.ent{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:12.5px;padding:3px 8px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--card)}
+.ent i{font-style:normal;font-size:11px;padding:0 5px;border-radius:5px}
+.ent[data-st="0"]{border-color:var(--bk)}
+.ent[data-st="0"] i{background:var(--bk);color:var(--on-accent)}
+.ent[data-st="1"] i{background:var(--ink);color:var(--paper)}
+.ent.flash{box-shadow:0 0 0 3px var(--of)}
+.ent.stale{opacity:.55;border-style:dashed}
+.pl{font-family:var(--font-mono);font-size:12.5px;padding:3px 9px;border-radius:999px;background:var(--card);border:1.5px solid var(--cg)}
+.empty-note{font-size:12.5px;color:var(--muted)}
+.thr-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.thr{border:1.5px solid var(--line-strong);background:var(--card);border-radius:14px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.thr.act{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.thr-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.thr-h b{font-family:var(--font-display);font-weight:400;font-size:20px}
+.stt{font-size:11.5px;padding:1px 8px;border-radius:999px;background:var(--neutral-tint);color:var(--ink)}
+.stt.parked{background:var(--cg-tint);border:1px solid var(--cg)}
+.stt.done{background:var(--good-tint)}
+.thr .kv{display:grid;grid-template-columns:3.2em minmax(0,1fr);gap:4px 8px;font-size:12.5px;align-items:center}
+.thr .kv > span{color:var(--muted)}
+.thr .kv > div{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.thr .nxt{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;min-height:2.6em}
+.thr .btns{display:flex;gap:6px;flex-wrap:wrap}
+.pk{font-family:var(--font-mono);font-size:12px;padding:1px 7px;border-radius:6px;border:1.5px solid var(--of);background:var(--of-tint)}
+.logbox{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;background:var(--code-bg)}
+.logbox li{font-size:13px;display:grid;grid-template-columns:2em 1.6em minmax(0,1fr);gap:6px;align-items:baseline}
+.logbox li .ln{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.logbox li b{font-family:var(--font-display);font-weight:400}
+.logbox li.k-steal,.logbox li.k-robbed{color:var(--warn)}
+.logbox li.k-xset,.logbox li.k-xread{color:var(--bad)}
+.logbox li.k-pocket,.logbox li.k-topocket{color:var(--of)}
+.logbox li.k-offer,.logbox li.k-hand{color:var(--cg)}
+.logbox li.new{font-weight:700}
+.vs{display:inline-flex}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+/* ---------- dual queue board ---------- */
+.dq{display:flex;flex-direction:column;gap:10px}
+.dq-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+.dq-meta b{color:var(--ink);font-family:var(--font-mono);font-weight:600}
+.dq-chain{display:flex;flex-wrap:nowrap;align-items:flex-start;gap:0;overflow-x:auto;padding:22px 6px 8px;min-height:104px;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.dq-n{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;position:relative}
+.dq-box{min-width:66px;padding:6px 8px;border-radius:10px;border:2px solid var(--rc);background:var(--rt);display:flex;flex-direction:column;align-items:center;gap:1px}
+.dq-box b{font-family:var(--font-mono);font-size:12.5px}
+.dq-box span{font-family:var(--font-mono);font-size:11.5px;color:var(--ink)}
+.dq-box small{font-size:11px;color:var(--muted)}
+.dq-n.dead .dq-box{border-style:dashed;opacity:.62}
+.dq-n.new .dq-box{box-shadow:0 0 0 3px var(--warn)}
+.dq-n.hit .dq-box{box-shadow:0 0 0 3px var(--bk)}
+.dq-ptr{position:absolute;top:-20px;font-family:var(--font-mono);font-size:11px;font-weight:600;padding:0 6px;border-radius:6px;background:var(--ink);color:var(--paper);white-space:nowrap}
+.dq-ptr.tail{background:var(--neutral)}
+.dq-arrow{flex:none;align-self:center;width:28px;text-align:center;color:var(--line-strong);font-family:var(--font-mono);margin-top:-18px}
+.dq-null{flex:none;align-self:center;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-top:-18px}
+.dq-wait{font-size:11px;color:var(--cg);font-weight:600}
+.dq-gone{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)}
+.dq-gone code{padding:1px 6px;border-radius:6px;border:1.5px dashed var(--line-strong)}
+.thr-row{display:flex;flex-wrap:wrap;gap:6px}
+.thr-chip{font-size:12.5px;padding:3px 9px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card)}
+.thr-chip.waiting{border-color:var(--cg);background:var(--cg-tint)}
+.thr-chip.done{border-color:var(--good)}
+.thr-chip b{font-family:var(--font-display);font-weight:400;font-size:15px;margin-right:4px}
+.oplog{margin:0;padding:8px 10px;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:210px;overflow-y:auto;border:1.5px solid var(--line);border-radius:12px;background:var(--card)}
+.oplog li{font-size:13px;display:grid;grid-template-columns:1.6em minmax(0,1fr);gap:6px}
+.oplog li b{font-family:var(--font-display);font-weight:400}
+.oplog li.k-match{color:var(--bk)}
+.oplog li.k-wait{color:var(--cg)}
+.oplog li.k-append{color:var(--g2)}
+.oplog li.k-fail{color:var(--muted)}
+.oplog li.k-cancel{color:var(--bad)}
+.oplog li.new{font-weight:700}
+.op-pad{display:flex;flex-direction:column;gap:8px}
+.op-pad .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.op-pad .row > span{font-size:13px;color:var(--muted);min-width:4.5em}
+.xmap{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+/* ---------- source ---------- */
+pre.src{padding:12px 0}
+pre.src code{display:inline-block;min-width:100%}
+pre.src .l{display:block;padding:0 16px 0 0}
+pre.src .l .no{display:inline-block;width:3.4em;padding-right:.9em;text-align:right;color:var(--muted);user-select:none}
+pre.src .l.hl{background:var(--of-tint)}
+pre.src .l .tag{font-family:var(--font-display);color:var(--of);margin-left:.6em}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+.bar{display:inline-block;height:9px;border-radius:3px;background:var(--rc);vertical-align:middle;margin-right:6px}
+.how{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.how .need b i{color:var(--bk)}
+.states{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.sc{border:2px solid var(--rc);background:var(--card);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.sc b{font-family:var(--font-mono);font-size:14px}
+.sc span{font-size:13px;color:var(--muted)}
+
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts,.metaphor,.states{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bd-top{grid-template-columns:1fr 1fr}
+  .bd-top .pane:first-child{grid-column:1 / -1}
+  .thr-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .how{grid-template-columns:1fr}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ledger{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eras,.ex{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+}
+@media (max-width:520px){
+  .facts,.metaphor,.presets,.ctl-grid,.states,.thr-grid,.bd-top{grid-template-columns:1fr}
+  .tiles,.ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+  .qstep{grid-template-columns:34px minmax(0,1fr);gap:10px}
+  .qstep .qn{width:34px;height:34px;font-size:17px}
+  .qline{margin-left:16px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-pd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-pd" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-cg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-cg" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Java 并发</span><span aria-hidden="true">/</span><span class="tb-here">AQS 源码</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">JDK 8 · 17 · 21 · ABSTRACTQUEUEDSYNCHRONIZER · STATE · CLH · PARK · CONDITION · REENTRANTLOCK · SEMAPHORE · COUNTDOWNLATCH</p>
+  <h1>一个 int，一条排队的链</h1>
+  <p class="lead">AQS 只管两样东西：一个叫 <code>state</code> 的 int，和一条先进先出的<b>等待队列</b>。“现在能不能拿到”由子类回答：<code>tryAcquire</code> / <code>tryRelease</code> 用 CAS 改 <code>state</code>。“拿不到怎么办”全由 AQS 包办：排队、park 睡下、谁来叫醒、超时和中断怎么撤。<code>ReentrantLock</code>、<code>Semaphore</code>、<code>CountDownLatch</code>、读写锁、线程池的 <code>Worker</code>、Tomcat 的连接数闸门，都是这样搭出来的。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>为什么需要</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>没有它会怎样</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>相邻方案</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>原理</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>亲眼看到</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>面试被问“讲讲 AQS”，又在线上 jstack 里看到一大片 <code>parking to wait for … ReentrantLock$NonfairSync</code>，不知道是哪段代码在等。所以本页偏源码和排查，⑥ 末尾有面试题。版本按生产上最常见的 <b>JDK 8、17、21</b> 三个来讲：AQS 在 JDK 14 被重写过，所以 8 是一套写法，17 和 21 是另一套，面试资料里的 <code>waitStatus</code>、<code>SIGNAL</code>、<code>acquireQueued</code> 都是 JDK 8 的。标“实测”的在本机三个版本上都跑过：Temurin 8u512、17.0.21，Ubuntu OpenJDK 21.0.12，2 核 ARM 虚拟机。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>为什么需要：一次请求，路上就要过好几道 AQS</h2>
+    <p class="lead">你可能从没直接写过 AQS，但一个普通的 Spring Boot 请求，从进 Tomcat 到写完日志，经过的这些地方全是它。下图里每一处都用 javap 和字节码扫描核过（版本见图下）。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 330" role="img" aria-label="一个 Spring Boot 请求经过的 AQS：Tomcat 连接数闸门、线程池队列和 Worker、Spring MVC 映射读锁、业务代码、logback、JDK 的 Socket 和 TLS、Kafka 生产者">
+        <g transform="translate(16,20)">
+          <rect x="0" y="0" width="200" height="88" rx="12" class="b-g2"/><text class="t-b" x="12" y="24">Tomcat Acceptor</text><text class="t-m" x="12" y="44">连接数超过 maxConnections</text><text class="t-m" x="12" y="60">就停在 LimitLatch 上</text><text class="t-bk" x="12" y="78">LimitLatch.Sync extends AQS</text>
+          <rect x="220" y="0" width="210" height="88" rx="12" class="b-g2"/><text class="t-b" x="232" y="24">Tomcat 线程池</text><text class="t-m" x="232" y="44">TaskQueue 继承 LinkedBlockingQueue</text><text class="t-m" x="232" y="60">两把 ReentrantLock + Condition</text><text class="t-bk" x="232" y="78">Worker extends AQS</text>
+          <rect x="450" y="0" width="210" height="88" rx="12" class="b-g2"/><text class="t-b" x="462" y="24">Spring MVC 找处理方法</text><text class="t-m" x="462" y="44">MappingRegistry 每个请求</text><text class="t-m" x="462" y="60">都拿一次读锁</text><text class="t-bk" x="462" y="78">ReentrantReadWriteLock</text>
+          <rect x="680" y="0" width="188" height="88" rx="12" class="b-pd"/><text class="t-b" x="692" y="24">你的业务代码</text><text class="t-m" x="692" y="44">ReentrantLock、Semaphore</text><text class="t-m" x="692" y="60">CountDownLatch、线程池</text><text class="t-bk" x="692" y="78">全是 AQS 子类</text>
+          <rect x="0" y="120" width="200" height="88" rx="12" class="b-g2"/><text class="t-b" x="12" y="144">logback 写日志</text><text class="t-m" x="12" y="164">OutputStreamAppender</text><text class="t-m" x="12" y="180">每写一条都 lock / unlock</text><text class="t-bk" x="12" y="198">ReentrantLock</text>
+          <rect x="220" y="120" width="210" height="88" rx="12" class="b-bk"/><text class="t-b" x="232" y="144">JDK 的 Socket、TLS</text><text class="t-m" x="232" y="164">JDK 8：synchronized</text><text class="t-m" x="232" y="180">JDK 17 / 21：NioSocketImpl、</text><text class="t-m" x="232" y="196">SSLSocketImpl 用 ReentrantLock</text>
+          <rect x="450" y="120" width="210" height="88" rx="12" class="b-bk"/><text class="t-b" x="462" y="144">System.out.println</text><text class="t-m" x="462" y="164">JDK 8 / 17：synchronized</text><text class="t-m" x="462" y="180">JDK 21：InternalLock，</text><text class="t-m" x="462" y="196">里面是一把 ReentrantLock</text>
+          <rect x="680" y="120" width="188" height="88" rx="12" class="b-g2"/><text class="t-b" x="692" y="144">Kafka 生产者</text><text class="t-m" x="692" y="164">缓冲区满了，send()</text><text class="t-m" x="692" y="180">停在 Condition.await 上</text><text class="t-bk" x="692" y="198">BufferPool</text>
+          <rect x="0" y="240" width="868" height="56" rx="12" class="b-card"/>
+          <text class="t-b" x="14" y="262">反过来：HikariCP 借连接默认不走 AQS。</text>
+          <text class="t-s" x="14" y="282">它的 ConcurrentBag 靠 CAS 加 SynchronousQueue；只有开了 allowPoolSuspension，才多一个 Semaphore 做的“暂停闸门”。</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>框架版本：JDK 8 那一套按 Spring Boot 2.7.18（Tomcat 9.0.83、Spring 5.3.31、logback 1.2.12、HikariCP 4.0.3、Kafka 3.1.2），JDK 17 / 21 那一套按 Spring Boot 3.5.16（Tomcat 10.1.55、Spring 6.2.19、logback 1.5.34、HikariCP 6.3.3、Kafka 3.9.2）。两代里上面这些用法都在。完整清单见 <a href="#usage">⑥ 日常开发里的 AQS</a>。</figcaption>
+  </figure>
+  <div class="note-box"><b>和已学页面的关系</b><span><a href="threadpool-execute.html">ThreadPoolExecutor.execute 源码</a>里的 <code>Worker</code> 就是一个 AQS 子类；<a href="synchronous-transfer-queue.html">SynchronousQueue</a> 和 <a href="../database/hikari-concurrentbag.html">ConcurrentBag</a> 是不用 AQS 的另一条路，③ 会拿它们对比。</span></div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>没有它会怎样：自己写一把锁</h2>
+    <p class="lead">最直接的写法是 CAS 自旋：抢不到就一直重试。另一个现成的选择是 <code>synchronized</code>。拿 8 个线程抢一把锁，锁里 sleep 1 ms（模拟拿着锁做 IO），三个 JDK 各跑一次：</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>8 个线程抢一把锁，跑 2 秒</th><th class="num">每秒完成</th><th class="num">2 秒里用掉的 CPU</th><th class="num">锁里只做一次自增时，每秒完成</th></tr></thead>
+      <tbody>
+        <tr><th>CAS 自旋锁</th><td class="num bad">321～330</td><td class="num bad">约 4.0 秒（两个核全满）</td><td class="num">490 万～680 万</td></tr>
+        <tr><th><code>synchronized</code></th><td class="num">934～935</td><td class="num">0.05～0.06 秒</td><td class="num">650 万～1160 万</td></tr>
+        <tr class="hl"><th><code>ReentrantLock</code>（AQS，默认非公平）</th><td class="num good">932～934</td><td class="num good">0.06～0.10 秒</td><td class="num good">2340 万～3990 万</td></tr>
+        <tr><th><code>ReentrantLock(true)</code>（公平）</th><td class="num">922～929</td><td class="num">0.07～0.09 秒</td><td class="num bad">20 万～32 万</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tip">范围是 JDK 8、17、21 三次的最小值到最大值，三个版本的结论一致。只有 2 核，同一时刻真正在跑的只有 2 个线程，所以自旋锁的“慢”主要是它抢走了持锁线程的 CPU：持锁的线程 sleep 醒来，要等别人转完时间片才轮到它。</p>
+  <div class="misj">
+    <div class="mj"><b><i>痛 1</i>自旋：等的人在烧 CPU</b><p>拿不到就重试，等多久就烧多久。锁里一旦有 IO，两个核全花在“等”上，干活的反而被挤慢。要省 CPU，就得让等的线程<b>睡下</b>，还得有人在锁放开时<b>叫醒</b>它。这就需要一条记着“谁在等”的队列。</p></div>
+    <div class="mj"><b><i>痛 2</i>synchronized：够用，但缺功能</b><p>不能“等 1 秒拿不到就算了”，等的时候不能被中断，一把锁只有一个等待集合（<code>wait / notify</code>），不能选公平，不分读写。JDK 21 的虚拟线程在 synchronized 里阻塞还会钉住载体线程（见 ⑥ 坑 5）。</p></div>
+  </div>
+  <div class="essence">
+    <span class="big">精华</span>
+    <p>AQS 的精华：<b>把“排队、睡下、叫醒、超时、中断”只写一遍</b>，各种同步工具只需要回答一个问题：给定 <code>state</code>，现在能不能拿到、放掉以后要不要叫人。</p>
+    <p>不懂这一点的典型误用：以为 ReentrantLock 是“先来先得”的（默认是非公平的，刚放锁的线程几乎总能抢回来），或者以为 <code>new ReentrantLock(true)</code> 以后 <code>tryLock()</code> 也公平（不是），见 <a href="#pit-barge">⑥ 坑 3</a>。</p>
+  </div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>相邻方案：等的线程放在哪</h2>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>方案</th><th>等的线程放在哪</th><th>能做的</th><th>例子</th></tr></thead>
+      <tbody>
+        <tr><th><code>synchronized</code></th><td>JVM 里的对象监视器（ObjectMonitor）</td><td>互斥、可重入、一个 wait 集合；自动释放</td><td><code>Hashtable</code>、JDK 8 / 17 的 <code>PrintStream</code></td></tr>
+        <tr class="hl"><th>AQS 一族</th><td>AQS 的等待队列，节点上挂着线程</td><td>独占和共享两种模式、超时、中断、多个 Condition、公平和非公平</td><td><code>ReentrantLock</code>、<code>Semaphore</code>、<code>CountDownLatch</code>、读写锁</td></tr>
+        <tr><th><code>StampedLock</code></th><td>自己的一条等待队列，不是 AQS</td><td>乐观读：读的时候不加锁，读完检查版本号</td><td>读多写极少、读的代码很短的地方</td></tr>
+        <tr><th>不用锁</th><td>没有等待；要等时用别的交接点</td><td>CAS、原子类、无锁队列</td><td><code>ConcurrentHashMap</code> 的大部分路径、<code>LongAdder</code>、HikariCP 的 ConcurrentBag</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="pick-line"><b>选择规则：</b>只要互斥、没有特殊需求，<code>synchronized</code> 就行（JDK 21 虚拟线程里阻塞例外）；要超时、可中断、多个条件、读写分离、限流计数，就用 AQS 一族；读多写极少才考虑 StampedLock。本页学 AQS。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>原理：state 说能不能拿，队列管拿不到怎么办</h2>
+    <p class="lead">比方：银行一个窗口（<code>state</code>）加一排叫号椅（等待队列）。窗口空着就直接办；有人在办就取号坐下打盹；办完的人起身时拍一下下一位的肩膀。比方对不上的地方：默认情况下，刚走进来的人可以趁被拍的人还没站起来，直接冲到窗口前（非公平），见 <a href="#m-design">为什么这样设计</a>。</p>
+  </div>
+
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="bk"><h4>CAS</h4><p><code>compareAndSetState(0, 1)</code>：是 0 才改成 1，一条指令完成，同时只有一个线程成功。<a href="../database/hikari-concurrentbag.html#s4">之前的页面</a>用过很多次。</p></div>
+      <div class="fact" data-role="cg"><h4>park / unpark</h4><p><code>LockSupport.park()</code> 让线程睡下，<code>unpark(t)</code> 叫醒它。先 unpark 后 park 也行，会留一张“许可”。jstack 里的 <code>WAITING (parking)</code> 就是它。</p></div>
+      <div class="fact" data-role="pd"><h4>CLH 队列</h4><p>一种排队锁：每个等待者是链表上的一个节点，只盯着自己前面那个。AQS 用的是它的变体：节点双向链接，等待者 park 而不是一直转。</p></div>
+      <div class="fact" data-role="g2"><h4>模板方法</h4><p>父类写好流程，留几个方法给子类填。AQS 留的是 <code>tryAcquire</code>、<code>tryRelease</code>、<code>tryAcquireShared</code>、<code>tryReleaseShared</code>、<code>isHeldExclusively</code>。</p></div>
+    </div>
+  </div>
+
+  <figure id="m-core">
+    <h3><span class="sn">机制 1</span>一个 state，一条队；节点上的状态，8 和 17 / 21 记法不同</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 300" role="img" aria-label="AQS 的 state 和等待队列；JDK 8 把 SIGNAL 记在前驱上，JDK 17/21 把 WAITING 记在自己身上">
+        <rect x="20" y="20" width="150" height="70" rx="12" class="b-bk"/><text class="t-h" x="95" y="46" text-anchor="middle">state = 2</text><text class="t-m" x="95" y="66" text-anchor="middle">owner = main</text><text class="t-m" x="95" y="82" text-anchor="middle">（重入了两次）</text>
+        <g transform="translate(210,20)">
+          <rect x="0" y="0" width="120" height="70" rx="12" class="b-neu"/><text class="t-b" x="60" y="26" text-anchor="middle">head</text><text class="t-m" x="60" y="44" text-anchor="middle">空节点，不挂线程</text><text class="t-m" x="60" y="60" text-anchor="middle">（或刚拿到锁的）</text>
+          <path class="e-mut" d="M122 30 H160" marker-end="url(#ah-mut)"/><path class="e-mut" d="M160 44 H124" marker-end="url(#ah-mut)"/>
+          <rect x="164" y="0" width="120" height="70" rx="12" class="b-pd"/><text class="t-b" x="224" y="26" text-anchor="middle">T1</text><text class="t-m" x="224" y="44" text-anchor="middle">waiter = T1</text><text class="t-m" x="224" y="60" text-anchor="middle">prev / next</text>
+          <path class="e-mut" d="M286 30 H324" marker-end="url(#ah-mut)"/><path class="e-mut" d="M324 44 H288" marker-end="url(#ah-mut)"/>
+          <rect x="328" y="0" width="120" height="70" rx="12" class="b-pd"/><text class="t-b" x="388" y="26" text-anchor="middle">T2</text><text class="t-m" x="388" y="44" text-anchor="middle">waiter = T2</text>
+          <path class="e-mut" d="M450 30 H488" marker-end="url(#ah-mut)"/><path class="e-mut" d="M488 44 H452" marker-end="url(#ah-mut)"/>
+          <rect x="492" y="0" width="120" height="70" rx="12" class="b-pd"/><text class="t-b" x="552" y="26" text-anchor="middle">T3</text><text class="t-m" x="552" y="44" text-anchor="middle">waiter = T3</text>
+          <text class="t-m" x="634" y="40">← tail</text>
+        </g>
+        <text class="t-b" x="20" y="132">节点上的状态（⑤ 实测打印）</text>
+        <g transform="translate(20,146)">
+          <text class="t-s" x="0" y="20">JDK 8</text>
+          <rect x="190" y="2" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="250" y="21" text-anchor="middle">-1 SIGNAL</text>
+          <rect x="354" y="2" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="414" y="21" text-anchor="middle">-1 SIGNAL</text>
+          <rect x="518" y="2" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="578" y="21" text-anchor="middle">-1 SIGNAL</text>
+          <rect x="682" y="2" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="742" y="21" text-anchor="middle">0</text>
+          <text class="t-m" x="0" y="52">意思是“我后面那个睡了，放锁时叫它”：记在<b>前驱</b>上，所以最后一个是 0</text>
+          <text class="t-s" x="0" y="86">JDK 17 / 21</text>
+          <rect x="190" y="68" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="250" y="87" text-anchor="middle">0</text>
+          <rect x="354" y="68" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="414" y="87" text-anchor="middle">1 WAITING</text>
+          <rect x="518" y="68" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="578" y="87" text-anchor="middle">1 WAITING</text>
+          <rect x="682" y="68" width="120" height="28" rx="6" class="b-card"/><text class="t-mono" x="742" y="87" text-anchor="middle">1 WAITING</text>
+          <text class="t-m" x="0" y="118">意思是“我睡了，记得叫我”：记在<b>自己</b>身上，head 是 0。JDK 14 重写 AQS 时改的</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>AQS 本身只有三个关键字段：<code>state</code>、<code>head</code>、<code>tail</code>。队列是懒建的：没人抢过，head 就是 null；第一次有人要排队时才建一个空的 head。拿到锁的线程，它的节点就成了新 head。两代实现的节点类也不同：JDK 8 是一个 <code>Node</code> 类，用 <code>nextWaiter</code> 区分独占和共享；JDK 17 / 21 拆成了 <code>ExclusiveNode</code>、<code>SharedNode</code>、<code>ConditionNode</code>。</figcaption>
+  </figure>
+
+  <div class="sub" id="m-split">
+    <h3><span class="sn">机制 2</span>AQS 管排队，子类管 state 是什么意思</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>子类</th><th>state 的意思</th><th>能不能拿（tryAcquire 系列）</th><th>模式</th></tr></thead>
+        <tbody>
+          <tr><th><code>ReentrantLock.Sync</code></th><td>重入了几次，0 是没人拿</td><td>0 → CAS 成 1；已经是自己的就 +1</td><td>独占</td></tr>
+          <tr><th><code>ReentrantReadWriteLock.Sync</code></th><td>高 16 位：读锁被拿了几次；低 16 位：写锁重入次数</td><td>写：整个是 0 才行；读：没有别人的写锁就 +1&lt;&lt;16</td><td>写独占、读共享</td></tr>
+          <tr><th><code>Semaphore.Sync</code></th><td>剩几个许可</td><td>剩的 ≥ 要的，就 CAS 减掉</td><td>共享</td></tr>
+          <tr><th><code>CountDownLatch.Sync</code></th><td>还要等几次 countDown</td><td>只看是不是 0，不改 state</td><td>共享</td></tr>
+          <tr><th><code>ThreadPoolExecutor.Worker</code></th><td>−1 还没启动，0 空闲，1 正在跑任务</td><td>CAS 0 → 1，不可重入</td><td>独占</td></tr>
+          <tr><th>Tomcat <code>LimitLatch.Sync</code></th><td>不用 state，另用一个 AtomicLong 计数</td><td>计数 +1 后不超过上限才行，超了就减回去</td><td>共享</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">每一行都只写了“能不能拿”和“放掉后要不要叫人”。排队、park、被叫醒后重试、超时撤销，这些子类一行都不用写。</p>
+  </div>
+
+  <div class="sub" id="m-walk">
+    <h3><span class="sn">机制 3</span>一次 lock / unlock 的全过程 <small>A 拿着锁，B 来排队，A 放锁</small></h3>
+    <div class="stage" id="walk" tabindex="0" aria-label="AQS 加锁解锁分步演示，左右方向键切换步骤">
+      <div class="st-top">
+        <div class="ctrl">
+          <button class="btn" type="button" id="wk-prev">← 上一步</button>
+          <button class="btn primary" type="button" id="wk-next">下一步 →</button>
+          <button class="btn" type="button" id="wk-play">自动播放</button>
+          <button class="btn" type="button" id="wk-reset">从头来</button>
+        </div>
+        <span class="seg-btns" id="wk-view" role="group" aria-label="节点状态的显示方式"><button type="button" data-v="21" aria-pressed="true">按 JDK 17 / 21 显示</button><button type="button" data-v="8" aria-pressed="false">按 JDK 8 显示</button></span>
+        <span class="st-pos" id="wk-pos">第 <b>0</b> / 6 步</span>
+      </div>
+      <p class="cap-txt" id="wk-cap">开始。</p>
+      <div class="board" id="wk-board"></div>
+    </div>
+  </div>
+
+  <figure id="m-shared">
+    <h3><span class="sn">机制 4</span>共享模式：一个叫醒一个，一路传下去</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 170" role="img" aria-label="CountDownLatch 归零时只叫醒第一个等待者，它通过后再叫醒下一个">
+        <rect x="20" y="40" width="150" height="56" rx="12" class="b-bk"/><text class="t-b" x="95" y="64" text-anchor="middle">countDown()</text><text class="t-m" x="95" y="82" text-anchor="middle">计数 1 → 0</text>
+        <path class="e-bk" d="M170 68 H226" marker-end="url(#ah-bk)"/><text class="t-bk" x="198" y="60" text-anchor="middle">叫醒 1 个</text>
+        <rect x="230" y="40" width="140" height="56" rx="12" class="b-pd"/><text class="t-b" x="300" y="64" text-anchor="middle">A 醒来通过</text><text class="t-m" x="300" y="82" text-anchor="middle">变成 head</text>
+        <path class="e-pd" d="M370 68 H426" marker-end="url(#ah-pd)"/><text class="t-pd" x="398" y="60" text-anchor="middle">叫醒下一个</text>
+        <rect x="430" y="40" width="140" height="56" rx="12" class="b-pd"/><text class="t-b" x="500" y="64" text-anchor="middle">B 醒来通过</text><text class="t-m" x="500" y="82" text-anchor="middle">变成 head</text>
+        <path class="e-pd" d="M570 68 H626" marker-end="url(#ah-pd)"/><text class="t-pd" x="598" y="60" text-anchor="middle">叫醒下一个</text>
+        <rect x="630" y="40" width="140" height="56" rx="12" class="b-pd"/><text class="t-b" x="700" y="64" text-anchor="middle">C 醒来通过</text><text class="t-m" x="700" y="82" text-anchor="middle">后面没人了</text>
+        <text class="t-m" x="20" y="134">JDK 8：setHeadAndPropagate + doReleaseShared，还有一个 PROPAGATE（-3）状态专门防止“两次释放挤在一起时漏叫”。</text>
+        <text class="t-m" x="20" y="154">JDK 17 / 21：通过的人调 signalNextIfShared，下一个是共享节点就叫醒它，PROPAGATE 这个状态没有了。</text>
+      </svg>
+    </div>
+    <figcaption>释放的人只叫醒排在最前面的一个，被叫醒的人通过之后，负责叫醒后面的。这样不会出现几十个线程同时醒来抢同一样东西。Semaphore 释放许可时也一样：许可不够，后面的人醒来再试一次，又睡回去。</figcaption>
+  </figure>
+
+  <figure id="m-cond">
+    <h3><span class="sn">机制 5</span>Condition：另一条队，await 和 signal 在两条队之间搬节点</h3>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 222" role="img" aria-label="await 进入条件队列并放掉锁；signal 把节点挪到同步队列；放锁时才被叫醒，重新抢到锁后 await 返回">
+        <rect x="20" y="20" width="380" height="64" rx="12" class="b-cg"/><text class="t-b" x="36" y="44">条件队列（每个 Condition 一条，单向）</text><text class="t-m" x="36" y="66">await() 的线程排在这里，锁已经整个放掉了</text>
+        <rect x="500" y="20" width="380" height="64" rx="12" class="b-pd"/><text class="t-b" x="516" y="44">同步队列（AQS 那一条）</text><text class="t-m" x="516" y="66">等着抢锁的线程</text>
+        <path class="e-cg" d="M400 46 H496" marker-end="url(#ah-cg)"/><text class="t-cg" x="448" y="38" text-anchor="middle">signal()</text>
+        <text class="t-s" x="20" y="116">① A await：建 ConditionNode 进条件队列，记下 state，把锁整个放掉（重入几层都放），park。</text>
+        <text class="t-s" x="20" y="138">② B signal：把条件队列的第一个节点挪到同步队列队尾。A 仍然睡着。</text>
+        <text class="t-s" x="20" y="160">③ B unlock：叫醒同步队列里的 A；A 重新抢到锁、还原 state，await 才返回。</text>
+        <text class="t-m" x="20" y="186">所以 await 醒来时条件可能已经又不成立了（别人先抢到锁改了），一定要写在 while 里。</text>
+        <text class="t-m" x="20" y="206">一把锁可以有多个 Condition，ArrayBlockingQueue 就有 notEmpty、notFull 两个。</text>
+      </svg>
+    </div>
+  </figure>
+
+  <div class="sub" id="m-design">
+    <h3>为什么这样设计：三个取舍，都有实测</h3>
+    <div class="design">
+      <div class="way" data-role="other">
+        <h4>被放弃的：拿不到就自旋</h4>
+        <ul class="pains"><li>等多久烧多久，锁里有 IO 时两个核全满（② 实测约 4 秒 CPU / 2 秒）</li><li>还抢走了持锁线程的 CPU，干活的反而慢（每秒 321～330 次，对 930 次）</li></ul>
+      </div>
+      <div class="way" data-role="bk">
+        <h4>AQS：排队，然后 park</h4>
+        <ul class="pains"><li class="ok">等的线程不占 CPU（0.06～0.10 秒）</li><li>代价：睡下、叫醒都是线程切换，微秒级。所以 JDK 17 / 21 里，排在最前面的线程被叫醒后又没抢到时，会先短暂自旋重试几次再睡</li></ul>
+      </div>
+      <div class="way" data-role="other">
+        <h4>被放弃的：一个等待集合，notifyAll 全叫醒</h4>
+        <ul class="pains"><li>50 个消费者等着，放一个元素叫醒一群，只有一个抢得到，其余白醒（实测平均每个元素叫醒 1.8～5.9 次）</li></ul>
+      </div>
+      <div class="way" data-role="bk">
+        <h4>AQS：按队列只叫醒一个</h4>
+        <ul class="pains"><li class="ok">release 只叫醒 head 后面那一个；Condition.signal 只挪一个（实测每个元素正好 1.0 次）</li><li>代价：被叫醒的人自己负责传给下一个（共享模式），逻辑更绕</li></ul>
+      </div>
+      <div class="way" data-role="other">
+        <h4>被放弃的默认值：公平</h4>
+        <ul class="pains"><li>每次交接都必须等一个睡着的线程醒来，锁里只做自增时每秒 20 万～32 万次，每次交接约 1 次线程切换</li></ul>
+      </div>
+      <div class="way" data-role="bk">
+        <h4>AQS 的默认：非公平</h4>
+        <ul class="pains"><li class="ok">谁正在 CPU 上谁先拿，每秒 2340 万～3990 万次，约是公平锁的 100 倍</li><li>代价：排队的人会被插队，尾延迟变长（⑤ 实测 1000 次里 953～995 次被插队）</li></ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="bk"><b>决定胜负的约束：</b>线程切换是微秒级的，CAS 是纳秒级的。AQS 每个取舍都在躲线程切换：拿不到才睡、只叫醒一个、默认让正在跑的线程直接拿。和 <a href="../database/hikari-concurrentbag.html#m-design">ConcurrentBag</a>、<a href="synchronous-transfer-queue.html#k-design">SynchronousQueue</a> 是同一个账。</p>
+  </div>
+
+  <div class="sub" id="m-api">
+    <h3>最少的 API，外加一个 8 行的自定义同步器</h3>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">API</span><b>天天用的那几个</b></div>
+<pre><code>lock.lock();
+try { … } finally { lock.unlock(); }      <span class="cm">// 一定放 finally</span>
+if (lock.tryLock(1, SECONDS)) { … }       <span class="cm">// 等 1 秒拿不到就算了</span>
+Condition notFull = lock.newCondition();
+while (q.isFull()) notFull.await();       <span class="cm">// 一定写 while</span>
+notFull.signal();
+Semaphore sem = new Semaphore(10);        <span class="cm">// 最多 10 个并发</span>
+sem.acquire(); try { … } finally { sem.release(); }
+CountDownLatch done = new CountDownLatch(3);
+done.countDown();  done.await(5, SECONDS);</code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">自定义</span><b>一次性开关</b>AQS javadoc 里的 BooleanLatch，JDK 8 / 17 / 21 都能用</div>
+<pre><code>class BooleanLatch {
+  private static class Sync extends AbstractQueuedSynchronizer {
+    protected int tryAcquireShared(int ignore) {
+      return getState() != 0 ? 1 : -1;      <span class="cm">// 开了就放行</span>
+    }
+    protected boolean tryReleaseShared(int ignore) {
+      setState(1); return true;            <span class="cm">// 打开，叫醒等的人</span>
+    }
+  }
+  private final Sync sync = new Sync();
+  public void signal() { sync.releaseShared(1); }
+  public void await() throws InterruptedException {
+    sync.acquireSharedInterruptibly(1);
+  }
+}</code></pre>
+      </div>
+    </div>
+    <p class="tip">读写锁的锁降级、<code>lockInterruptibly</code>、<code>getQueueLength</code> 这类监控方法、各版本差在哪，放到 <a href="#s6">第⑥步</a>。</p>
+  </div>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>亲眼看到：用反射把队列打出来</h2>
+    <p class="lead">一个 Java 8 语法的小程序，<code>javac --release 8</code> 编一次，同一份 class 在 JDK 8、17、21 上跑：让 main 重入两次，三个线程来排队，再用反射读出 <code>state</code>、<code>head</code> 和每个节点的状态。最后测一下插队。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">1</span><b>AqsPeek.java</b>JDK 8 直接 <code>java AqsPeek</code>；JDK 17 / 21 要加两个 <code>--add-opens</code>（见注释）</div>
+<pre><code>import java.lang.reflect.Field;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.*;
+
+<span class="cm">// 直接看 AQS 里面：state、排队的节点、节点状态</span>
+<span class="cm">// 运行：JDK 8 直接 java AqsPeek；JDK 9+ 要加 --add-opens java.base/java.util.concurrent.locks=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED</span>
+public class AqsPeek {
+  static Object field(Object o, String... names) throws Exception {
+    for (Class&lt;?&gt; c = o.getClass(); c != null; c = c.getSuperclass())
+      for (String n : names) try { Field f = c.getDeclaredField(n); f.setAccessible(true); return f.get(o); } catch (NoSuchFieldException e) { }
+    return null;
+  }
+  static AbstractQueuedSynchronizer sync(Object owner) throws Exception { return (AbstractQueuedSynchronizer) field(owner, "sync"); }
+  static String queue(AbstractQueuedSynchronizer s) throws Exception {
+    StringBuilder b = new StringBuilder("state=" + field(s, "state") + "  队列：");
+    Object n = field(s, "head");
+    if (n == null) return b.append("（还没建）").toString();
+    for (int i = 0; n != null &amp;&amp; i &lt; 10; i++, n = field(n, "next")) {
+      Thread t = (Thread) field(n, "waiter", "thread");                 <span class="cm">// JDK 14+ 叫 waiter，之前叫 thread</span>
+      Object st = field(n, "status", "waitStatus");                     <span class="cm">// JDK 14+ 叫 status，之前叫 waitStatus</span>
+      b.append(i == 0 ? "head" : " → ").append(i == 0 ? "" : (t == null ? "?" : t.getName())).append("[").append(n.getClass().getSimpleName()).append(" ").append(st).append("]");
+    }
+    return b.toString();
+  }
+  static void waitParked(Thread t) throws InterruptedException { while (t.getState() != Thread.State.WAITING &amp;&amp; t.getState() != Thread.State.TIMED_WAITING) Thread.sleep(1); }
+
+  public static void main(String[] a) throws Exception {
+    System.out.println("JDK " + System.getProperty("java.version"));
+    final ReentrantLock lock = new ReentrantLock();
+    lock.lock(); lock.lock();                                           <span class="cm">// main 重入两次</span>
+    System.out.println("① main 重入 2 次：" + queue(sync(lock)) + "，" + lock);
+    List&lt;Thread&gt; ws = new ArrayList&lt;&gt;();
+    for (String name : new String[] {"T1", "T2", "T3"}) {
+      Thread t = new Thread(() -&gt; { lock.lock(); lock.unlock(); }, name); t.start(); waitParked(t); ws.add(t);
+    }
+    System.out.println("② 三个线程排队：" + queue(sync(lock)));
+    lock.unlock();
+    System.out.println("③ unlock 一次：" + queue(sync(lock)) + "（还剩 1 层，没人被叫醒）");
+    lock.unlock(); for (Thread t : ws) t.join();
+    System.out.println("④ 全部走完：  " + queue(sync(lock)));
+
+    Semaphore sem = new Semaphore(3); sem.acquire(2);
+    CountDownLatch latch = new CountDownLatch(2); latch.countDown();
+    ReentrantReadWriteLock rw = new ReentrantReadWriteLock(); rw.readLock().lock(); rw.readLock().lock(); rw.writeLock();
+    System.out.println("⑤ Semaphore(3) 拿走 2 个：state=" + field(sync(sem), "state") + "；CountDownLatch(2) countDown 一次：state=" + field(sync(latch), "state")
+        + "；读锁拿两次：state=" + field(sync(rw), "state") + "（高 16 位是读锁数，" + ((int) field(sync(rw), "state") &gt;&gt;&gt; 16) + "）");
+
+    <span class="cm">// ⑥ W 已经在排队，持锁的线程 unlock 后马上又抢：tryLock() 和 lock() 分别谁拿到？</span>
+    for (boolean fair : new boolean[] {false, true}) {
+      int tryWins = 0, lockWins = 0;
+      for (int i = 0; i &lt; 1000; i++) {
+        final ReentrantLock l = new ReentrantLock(fair); l.lock();
+        Thread w = new Thread(() -&gt; { l.lock(); l.unlock(); }); w.start(); waitParked(w);
+        l.unlock();
+        if (l.tryLock()) { tryWins++; l.unlock(); }
+        w.join();
+        final ReentrantLock l2 = new ReentrantLock(fair); l2.lock();
+        final java.util.concurrent.atomic.AtomicBoolean wGot = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread w2 = new Thread(() -&gt; { l2.lock(); wGot.set(true); l2.unlock(); }); w2.start(); waitParked(w2);
+        l2.unlock();
+        l2.lock(); if (!wGot.get()) lockWins++; l2.unlock();
+        w2.join();
+      }
+      System.out.println("⑥ " + (fair ? "公平  " : "非公平") + "：放下马上再抢，1000 次里 tryLock() 抢到 " + tryWins + " 次，lock() 抢在 W 前面 " + lockWins + " 次");
+    }
+  }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">2</span><b>三个 JDK 的输出</b>只摘出不一样的行，①、③、④、⑤ 三个版本相同</div>
+<pre class="console"><code><span class="w">$ java AqsPeek            # JDK 1.8.0_512</span>
+② 三个线程排队：state=2  队列：<b>head[Node -1] → T1[Node -1] → T2[Node -1] → T3[Node 0]</b>
+⑥ 非公平：放下马上再抢，1000 次里 tryLock() 抢到 999 次，lock() 抢在 W 前面 995 次
+⑥ 公平  ：放下马上再抢，1000 次里 tryLock() 抢到 999 次，lock() 抢在 W 前面 0 次
+
+<span class="w">$ java --add-opens … AqsPeek    # JDK 17.0.21</span>
+② 三个线程排队：state=2  队列：<b>head[ExclusiveNode 0] → T1[ExclusiveNode 1] → T2[ExclusiveNode 1] → T3[ExclusiveNode 1]</b>
+⑥ 非公平：放下马上再抢，1000 次里 tryLock() 抢到 1000 次，lock() 抢在 W 前面 953 次
+⑥ 公平  ：放下马上再抢，1000 次里 tryLock() 抢到 1000 次，lock() 抢在 W 前面 0 次
+
+<span class="w">$ java --add-opens … AqsPeek    # JDK 21.0.12</span>
+② 三个线程排队：state=2  队列：<b>head[ExclusiveNode 0] → T1[ExclusiveNode 1] → T2[ExclusiveNode 1] → T3[ExclusiveNode 1]</b>
+⑥ 非公平：放下马上再抢，1000 次里 tryLock() 抢到 1000 次，lock() 抢在 W 前面 960 次
+⑥ 公平  ：放下马上再抢，1000 次里 tryLock() 抢到 1000 次，lock() 抢在 W 前面 0 次
+
+<span class="cm"># 三个版本都一样的几行</span>
+① main 重入 2 次：state=2  队列：（还没建），java.util.concurrent.locks.ReentrantLock@…[Locked by thread main]
+③ unlock 一次：state=1  队列：（同上，没人被叫醒）
+④ 全部走完：  state=0  队列：head[…]
+⑤ Semaphore(3) 拿走 2 个：state=1；CountDownLatch(2) countDown 一次：state=1；读锁拿两次：state=131072（高 16 位是读锁数，2）</code></pre>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>看到了什么</th><th>对应 ④</th></tr></thead>
+      <tbody>
+        <tr><td>没人抢时队列根本不存在；排队后 head 是一个不挂线程的空节点</td><td><a href="#m-core">机制 1</a></td></tr>
+        <tr><td>JDK 8 的 -1 记在前驱上（T3 自己是 0），JDK 17 / 21 的 1 记在自己身上（head 是 0）</td><td><a href="#m-core">机制 1</a></td></tr>
+        <tr><td>重入两次只 unlock 一次，state 还是 1，排队的人一个都没被叫醒</td><td><a href="#m-split">机制 2</a></td></tr>
+        <tr><td>同一个 state，Semaphore 存许可数，CountDownLatch 存剩余计数，读写锁的读锁记在高 16 位（2 × 65536 = 131072）</td><td><a href="#m-split">机制 2</a></td></tr>
+        <tr><td>非公平锁刚放下就再抢，1000 次里 953～995 次抢在排队的人前面；公平锁的 lock() 一次也没有，可 <b>tryLock() 照样插队</b></td><td><a href="#m-design">为什么这样设计</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="done-box"><b>到这里已经能交差了：</b>能画出 state + 等待队列，说清子类只写 tryAcquire / tryRelease，讲得出 JDK 8 和 17 / 21 节点状态记法的区别，也知道默认非公平意味着什么。面试里“讲讲 AQS”这一问已经能答完整。</div>
+  <div class="todo">
+    <b>已知还没处理的细节</b>
+    <ul>
+      <li>忘了 unlock、重入次数不对、tryLock 插队、await 不写 while：<a href="#pit-unlock">⑥ 坑 1～4</a></li>
+      <li>JDK 21 虚拟线程为什么要换掉 synchronized：<a href="#pit-pin">⑥ 坑 5</a></li>
+      <li>jstack 里怎么认出是谁拿着锁：<a href="#pit-jstack">⑥ 坑 6</a></li>
+      <li>JDK 8 和 17 / 21 的源码逐行对照、日常开发里用到它的完整清单：<a href="#c3">⑥ 第三圈</a></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>细节：坑、两代源码、日常开发里的完整清单</h2>
+    <p class="lead">每条坑都在 JDK 8、17、21 上跑过；源码一段 JDK 8、一段 JDK 17 / 21，对照着读。</p>
+  </div>
+
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-unlock">
+        <b><em>坑 1</em>lock 之后没在 finally 里 unlock：锁永远不放<a class="root" href="#m-split">← ④ state 只有持有者能改回 0</a></b>
+        <dl>
+          <dt>现象</dt><dd>某个分支 return 或抛异常没走到 unlock，之后所有线程都停在 <code>parking to wait for … NonfairSync</code>。如果持锁的线程已经因为异常死掉了，jstack 里连持有者都找不到。</dd>
+          <dt>根源</dt><dd>synchronized 的释放由 JVM 保证（字节码里有异常表），AQS 的 state 只是一个 int，没人调 <code>tryRelease</code> 它就永远不是 0。owner 字段还指着那个线程。</dd>
+          <dt>做法</dt><dd class="fix"><code>lock()</code> 写在 try 外面紧挨着 try，<code>unlock()</code> 写在 finally 第一行。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-reent">
+        <b><em>坑 2</em>重入次数和 unlock 次数对不上<a class="root" href="#m-split">← ④ state 是重入次数</a></b>
+        <dl>
+          <dt>现象</dt><dd>⑤ 实测：重入两次只 unlock 一次，state 还是 1，排队的三个线程一个都没被叫醒。没拿锁就 unlock，三个版本都抛 <code>IllegalMonitorStateException</code>。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>tryRelease 只把 state 减 1，减到 0 才算释放、才叫人。</dd>
+          <dt>做法</dt><dd class="fix">一次 lock 对应一个 finally 里的 unlock；排查时看 <code>getHoldCount()</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-barge">
+        <b><em>坑 3</em>默认非公平，而且 tryLock() 在公平锁上也插队<a class="root" href="#m-design">← ④ 非公平是故意的</a></b>
+        <dl>
+          <dt>现象</dt><dd>非公平锁刚放下马上又抢，1000 次里 953～995 次抢在排队的人前面；<code>new ReentrantLock(true)</code> 的 lock() 一次都没插队，可 tryLock() 1000 次里抢到 999～1000 次。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>非公平的 tryAcquire 不看队列，state 是 0 就 CAS；公平的先看 <code>hasQueuedPredecessors()</code>。而 <code>tryLock()</code> 调的是 Sync 里那个不看队列的版本，javadoc 写明了它会“打破公平”。</dd>
+          <dt>做法</dt><dd class="fix">要严格先来先得：公平锁 + <code>lock()</code> 或 <code>tryLock(0, TimeUnit.SECONDS)</code>（带超时的版本遵守公平）。多数场景用默认非公平，接受尾延迟。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-while">
+        <b><em>坑 4</em>await 用 if 判断条件<a class="root" href="#m-cond">← ④ Condition 的两条队</a></b>
+        <dl>
+          <dt>现象</dt><dd>队列空时消费者 await，被 signal 醒来直接 poll，偶尔拿到 null 或越界。</dd>
+          <dt>根源</dt><dd>signal 只是把节点挪到同步队列，醒来还要重新抢锁；抢到之前，别的线程可能已经把东西拿走了。另外还有虚假唤醒。</dd>
+          <dt>做法</dt><dd class="fix"><code>while (条件不满足) cond.await();</code>，ArrayBlockingQueue 的源码就是这么写的。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-pin">
+        <b><em>坑 5</em>JDK 21 虚拟线程：在 synchronized 里阻塞会钉住载体线程<a class="root" href="#s4">← ④ park 和监视器不同</a></b>
+        <dl>
+          <dt>现象</dt><dd>100 个虚拟线程各拿各的锁、锁里 sleep 50 ms：用 synchronized 要 2517 ms（2 个载体线程一个个轮），换成 ReentrantLock 只要 66 ms。加 <code>-Djdk.tracePinnedThreads=short</code> 会打印 <code>&lt;== monitors:1</code>。<span class="seen">实测 JDK 21</span></dd>
+          <dt>根源</dt><dd>AQS 的等待是 <code>LockSupport.park</code>，虚拟线程 park 时会从载体线程上卸下来；JDK 21 的 synchronized 做不到，阻塞时连载体线程一起占住。JDK 24（JEP 491）修了，但 21 没有。JDK 8、17 没有虚拟线程，不涉及。</dd>
+          <dt>做法</dt><dd class="fix">JDK 21 用虚拟线程时，包着 IO 的锁换成 ReentrantLock。JDK 21 自己也这么做了：java.io 的 PrintStream、BufferedOutputStream 等改用了内部的 ReentrantLock。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-jstack">
+        <b><em>坑 6</em>jstack 里找不到“谁拿着锁”<a class="root env" href="#usage">排查方法</a></b>
+        <dl>
+          <dt>现象</dt><dd>synchronized 的持有者在 jstack 里显示 <code>- locked &lt;0x…&gt;</code>；ReentrantLock 的持有者默认什么也不显示。</dd>
+          <dt>根源</dt><dd>AQS 的锁不是 JVM 监视器，只有加 <code>-l</code>，线程下面才会多出 <code>Locked ownable synchronizers: - &lt;0x…&gt; (a …ReentrantLock$NonfairSync)</code>。</dd>
+          <dt>做法</dt><dd class="fix"><code>jstack -l &lt;pid&gt;</code>，拿等待者的 <code>parking to wait for &lt;0x…&gt;</code> 地址去搜，同一地址出现在 ownable synchronizers 下的线程就是持有者。三个版本实测都这样；JDK 8 等待者的栈帧是 <code>acquireQueued</code>，17 / 21 是 <code>acquire</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-upgrade">
+        <b><em>坑 7</em>拿着读锁再要写锁：自己等自己<a class="root" href="#m-split">← ④ 读写锁的 state</a></b>
+        <dl>
+          <dt>现象</dt><dd>先 <code>readLock().lock()</code>，再 <code>writeLock().tryLock(1 秒)</code>：返回 false；换成 <code>lock()</code> 就永远卡住。反过来，拿着写锁再拿读锁（锁降级）没问题。<span class="seen">实测</span></dd>
+          <dt>根源</dt><dd>写锁要求 state 的高 16 位（读锁数）为 0，可这里面就有自己那一份读锁。</dd>
+          <dt>做法</dt><dd class="fix">要写就先放掉读锁再拿写锁，拿到后重新检查数据；或者干脆一开始就拿写锁。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-bugs">
+        <b><em>坑 8</em>17 / 21 新实现修过的几个 bug<a class="root env" href="#ver">历史原因 · 看小版本</a></b>
+        <dl>
+          <dt>现象</dt><dd>① JDK 17.0.11 之前：Condition 上等的线程很多时，CPU 偏高（JDK-8317960，只有 17u 有这个问题）。② JDK 17.0.13、21.0.5 之前：被取消的 ConditionNode 能熬过 Minor GC，多占内存（JDK-8325754）。③ 大量线程用很短的超时去 <code>tryAcquire</code>、又拿不到时，<code>cleanQueue</code> 可能活锁（JDK-8386085）。</dd>
+          <dt>根源</dt><dd>都是 JDK 14 重写后新代码里的细节：① 醒来判断“自己进同步队列没有”时从队尾遍历；② 取消的节点没及时断链；③ 清理队列时多做了一次 CAS。</dd>
+          <dt>做法</dt><dd class="fix">17 至少 17.0.13，21 至少 21.0.5。③ 主线 2026-06 修复，我查看时只回移到了 25u-dev，8、17、21 还没有；JDK 8 的老实现没有这三个问题。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>lock 紧挨 try，unlock 在 finally</b><p>Semaphore 的 acquire / release、读写锁同理。</p><p class="guard">锁永远不放（坑 1）</p></div>
+      <div class="rl"><b>涉及 IO 的等待一律带超时</b><p><code>tryLock(timeout)</code>、<code>await(timeout)</code>、<code>CountDownLatch.await(timeout)</code>，并处理 false。</p><p class="guard">下游卡住时整条链路的线程全挂死</p></div>
+      <div class="rl"><b>await 写在 while 里，条件分开建</b><p>生产者等 notFull、消费者等 notEmpty，各 signal 各的。</p><p class="guard">拿到不该拿的、叫醒不该醒的（坑 4）</p></div>
+      <div class="rl"><b>Semaphore 只 release 自己 acquire 到的</b><p>实测 <code>Semaphore(2)</code> 拿 1 次放 2 次后，许可变成 3：它不检查谁放的。</p><p class="guard">限流失效，并发越放越多</p></div>
+      <div class="rl"><b>JDK 21 虚拟线程：阻塞的锁用 ReentrantLock</b><p>JDK 8 / 17 照常用 synchronized 即可。</p><p class="guard">载体线程被钉住，吞吐塌掉（坑 5）</p></div>
+      <div class="rl"><b>排查锁问题用 jstack -l</b><p>同时看 <code>parking to wait for</code> 和 <code>Locked ownable synchronizers</code>。</p><p class="guard">找不到持有者（坑 6）</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>读源码：同一件事，两代写法</h3></div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>做的事</th><th>JDK 8（也是 9～13）</th><th>JDK 17 / 21（JDK 14 重写）</th></tr></thead>
+        <tbody>
+          <tr><th>节点</th><td>一个 <code>Node</code>：<code>waitStatus</code>、<code>prev</code>、<code>next</code>、<code>thread</code>、<code>nextWaiter</code></td><td><code>ExclusiveNode</code> / <code>SharedNode</code> / <code>ConditionNode</code>：<code>status</code>、<code>prev</code>、<code>next</code>、<code>waiter</code></td></tr>
+          <tr><th>状态值</th><td><code>SIGNAL = -1</code>（记在前驱上）、<code>CANCELLED = 1</code>、<code>CONDITION = -2</code>、<code>PROPAGATE = -3</code></td><td><code>WAITING = 1</code>（记在自己身上）、<code>CANCELLED</code> 为负数、<code>COND = 2</code>，没有 PROPAGATE</td></tr>
+          <tr><th>入队</th><td><code>addWaiter</code> 快速 CAS tail，失败走 <code>enq</code> 自旋；第一次入队时建空 head</td><td>都在 <code>acquire(node, arg, shared, interruptible, timed, time)</code> 这一个方法的循环里</td></tr>
+          <tr><th>排队等</th><td><code>acquireQueued</code>：前驱是 head 就 tryAcquire；否则 <code>shouldParkAfterFailedAcquire</code> 把前驱改成 SIGNAL，再 park</td><td>同一个 acquire 循环：是第一个就 tryAcquire；先把自己的 status 设成 WAITING 再查一次，然后 park；被叫醒后先自旋几次</td></tr>
+          <tr><th>叫醒</th><td><code>release</code> → <code>unparkSuccessor(head)</code>，后继为空或已取消时<b>从 tail 往前找</b></td><td><code>release</code> → <code>signalNext(head)</code>，只看 head.next；取消的节点由 <code>cleanQueue</code> 摘掉</td></tr>
+          <tr><th>共享模式</th><td><code>setHeadAndPropagate</code> + <code>doReleaseShared</code> + PROPAGATE</td><td><code>signalNextIfShared</code></td></tr>
+          <tr><th>jstack 栈帧</th><td><code>AbstractQueuedSynchronizer.acquireQueued</code>（实测）</td><td><code>AbstractQueuedSynchronizer.acquire</code>（实测）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:12px">JDK 8：acquire → addWaiter → acquireQueued</h3>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">JDK 8</span><b>acquire / addWaiter / enq</b>jdk8u AbstractQueuedSynchronizer.java</div>
+<pre class="src"><code><span class="l"><span class="no">1197</span>    public final void acquire(int arg) {</span><span class="l hl"><span class="no">1198</span>        if (!tryAcquire(arg) &amp;&amp;<span class="tag">❶</span></span><span class="l hl"><span class="no">1199</span>            acquireQueued(addWaiter(Node.EXCLUSIVE), arg))<span class="tag">❷</span></span><span class="l"><span class="no">1200</span>            selfInterrupt();</span><span class="l"><span class="no">1201</span>    }</span><span class="l"><span class="no">⋮</span></span><span class="l"><span class="no">605</span>    private Node addWaiter(Node mode) {</span><span class="l"><span class="no">606</span>        Node node = new Node(Thread.currentThread(), mode);</span><span class="l"><span class="no">607</span>        <span class="cm">// Try the fast path of enq; backup to full enq on failure</span></span><span class="l"><span class="no">608</span>        Node pred = tail;</span><span class="l hl"><span class="no">609</span>        if (pred != null) {<span class="tag">❸</span></span><span class="l"><span class="no">610</span>            node.prev = pred;</span><span class="l hl"><span class="no">611</span>            if (compareAndSetTail(pred, node)) {<span class="tag">❹</span></span><span class="l"><span class="no">612</span>                pred.next = node;</span><span class="l"><span class="no">613</span>                return node;</span><span class="l"><span class="no">614</span>            }</span><span class="l"><span class="no">615</span>        }</span><span class="l hl"><span class="no">616</span>        enq(node);<span class="tag">❺</span></span><span class="l"><span class="no">617</span>        return node;</span><span class="l"><span class="no">618</span>    }</span><span class="l"><span class="no">⋮</span></span><span class="l"><span class="no">583</span>    private Node enq(final Node node) {</span><span class="l"><span class="no">584</span>        for (;;) {</span><span class="l"><span class="no">585</span>            Node t = tail;</span><span class="l hl"><span class="no">586</span>            if (t == null) { <span class="cm">// Must initialize</span><span class="tag">❻</span></span><span class="l hl"><span class="no">587</span>                if (compareAndSetHead(new Node()))<span class="tag">❼</span></span><span class="l"><span class="no">588</span>                    tail = head;</span><span class="l"><span class="no">589</span>            } else {</span><span class="l"><span class="no">590</span>                node.prev = t;</span><span class="l"><span class="no">591</span>                if (compareAndSetTail(t, node)) {</span><span class="l"><span class="no">592</span>                    t.next = node;</span><span class="l"><span class="no">593</span>                    return t;</span><span class="l"><span class="no">594</span>                }</span><span class="l"><span class="no">595</span>            }</span><span class="l"><span class="no">596</span>        }</span><span class="l"><span class="no">597</span>    }</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">JDK 8</span><b>acquireQueued / shouldParkAfterFailedAcquire</b></div>
+<pre class="src"><code><span class="l"><span class="no">857</span>    final boolean acquireQueued(final Node node, int arg) {</span><span class="l"><span class="no">858</span>        boolean failed = true;</span><span class="l"><span class="no">859</span>        try {</span><span class="l"><span class="no">860</span>            boolean interrupted = false;</span><span class="l"><span class="no">861</span>            for (;;) {</span><span class="l"><span class="no">862</span>                final Node p = node.predecessor();</span><span class="l hl"><span class="no">863</span>                if (p == head &amp;&amp; tryAcquire(arg)) {<span class="tag">❽</span></span><span class="l hl"><span class="no">864</span>                    setHead(node);<span class="tag">❾</span></span><span class="l"><span class="no">865</span>                    p.next = null; <span class="cm">// help GC</span></span><span class="l"><span class="no">866</span>                    failed = false;</span><span class="l"><span class="no">867</span>                    return interrupted;</span><span class="l"><span class="no">868</span>                }</span><span class="l hl"><span class="no">869</span>                if (shouldParkAfterFailedAcquire(p, node) &amp;&amp;<span class="tag">❿</span></span><span class="l"><span class="no">870</span>                    parkAndCheckInterrupt())</span><span class="l"><span class="no">871</span>                    interrupted = true;</span><span class="l"><span class="no">872</span>            }</span><span class="l"><span class="no">873</span>        } finally {</span><span class="l"><span class="no">874</span>            if (failed)</span><span class="l"><span class="no">875</span>                cancelAcquire(node);</span><span class="l"><span class="no">876</span>        }</span><span class="l"><span class="no">877</span>    }</span><span class="l"><span class="no">⋮</span></span><span class="l"><span class="no">795</span>    private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {</span><span class="l"><span class="no">796</span>        int ws = pred.waitStatus;</span><span class="l hl"><span class="no">797</span>        if (ws == Node.SIGNAL)<span class="tag">undefined</span></span><span class="l"><span class="no">798</span>            /*</span><span class="l"><span class="no">799</span><span class="cm">             * This node has already set status asking a release</span></span><span class="l"><span class="no">800</span><span class="cm">             * to signal it, so it can safely park.</span></span><span class="l"><span class="no">801</span><span class="cm">             */</span></span><span class="l"><span class="no">802</span>            return true;</span><span class="l hl"><span class="no">803</span>        if (ws &gt; 0) {<span class="tag">undefined</span></span><span class="l"><span class="no">804</span>            /*</span><span class="l"><span class="no">805</span><span class="cm">             * Predecessor was cancelled. Skip over predecessors and</span></span><span class="l"><span class="no">806</span><span class="cm">             * indicate retry.</span></span><span class="l"><span class="no">807</span><span class="cm">             */</span></span><span class="l"><span class="no">808</span>            do {</span><span class="l"><span class="no">809</span>                node.prev = pred = pred.prev;</span><span class="l"><span class="no">810</span>            } while (pred.waitStatus &gt; 0);</span><span class="l"><span class="no">811</span>            pred.next = node;</span><span class="l"><span class="no">812</span>        } else {</span><span class="l"><span class="no">813</span>            /*</span><span class="l"><span class="no">814</span><span class="cm">             * waitStatus must be 0 or PROPAGATE.  Indicate that we</span></span><span class="l"><span class="no">815</span><span class="cm">             * need a signal, but don't park yet.  Caller will need to</span></span><span class="l"><span class="no">816</span><span class="cm">             * retry to make sure it cannot acquire before parking.</span></span><span class="l"><span class="no">817</span><span class="cm">             */</span></span><span class="l hl"><span class="no">818</span>            compareAndSetWaitStatus(pred, ws, Node.SIGNAL);<span class="tag">undefined</span></span><span class="l"><span class="no">819</span>        }</span><span class="l"><span class="no">820</span>        return false;</span><span class="l"><span class="no">821</span>    }</span></code></pre>
+      </div>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>先试一次 tryAcquire（子类写的），成了就走，根本不碰队列。</span></li>
+      <li><b>2</b><span>没成：addWaiter 入队，acquireQueued 排队等；等的过程中被中断过，最后补一次 <code>selfInterrupt()</code>（lock() 不响应中断，只是记下来）。</span></li>
+      <li><b>3</b><span>快速路径：队列已经有了，直接把新节点 CAS 成 tail。</span></li>
+      <li><b>4</b><span>注意顺序：先设 <code>node.prev</code>，CAS tail 成功后才设 <code>pred.next</code>。所以从前往后的 next 可能暂时是断的，从后往前的 prev 一定是通的。这就是 unparkSuccessor 要从 tail 往前找的原因。</span></li>
+      <li><b>5</b><span>快速路径失败（队列还没建，或者 CAS 被别人抢了）走 enq 自旋。</span></li>
+      <li><b>6</b><span>队列为空：先放一个空节点当 head。</span></li>
+      <li><b>7</b><span>head 和 tail 都指向这个空节点，下一圈循环再把自己挂上去。</span></li>
+      <li><b>8</b><span>只有前驱是 head（自己排第一）才有资格 tryAcquire。</span></li>
+      <li><b>9</b><span>拿到了：自己成为新 head，清掉 thread 字段，原来的 head 断开等 GC。</span></li>
+      <li><b>10</b><span>没拿到：问 shouldParkAfterFailedAcquire 能不能睡，能就 park，醒来接着循环。</span></li>
+      <li><b>11</b><span>前驱已经是 SIGNAL：它放锁时会叫我，放心睡。</span></li>
+      <li><b>12</b><span>前驱被取消了（&gt; 0）：往前跳过所有取消的节点，重新挂好。</span></li>
+      <li><b>13</b><span>否则把前驱 CAS 成 SIGNAL，这次先不睡，回去再试一次 tryAcquire。所以一个线程至少试两次才会睡。</span></li>
+    </ul>
+
+    <h3 style="margin-top:12px">JDK 17 / 21：一个 acquire 方法做完全部</h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">JDK 21</span><b>AbstractQueuedSynchronizer.acquire(Node, …)</b>jdk21u，JDK 17 同一结构（OpenJDK 里按 GPLv2 分发；Doug Lea 写的最初版本在公有领域）</div>
+<pre class="src"><code><span class="l"><span class="no">704</span>    final int acquire(Node node, int arg, boolean shared,</span><span class="l"><span class="no">705</span>                      boolean interruptible, boolean timed, long time) {</span><span class="l"><span class="no">706</span>        Thread current = Thread.currentThread();</span><span class="l"><span class="no">707</span>        byte spins = 0, postSpins = 0;   <span class="cm">// retries upon unpark of first thread</span></span><span class="l"><span class="no">708</span>        boolean interrupted = false, first = false;</span><span class="l"><span class="no">709</span>        Node pred = null;               <span class="cm">// predecessor of node when enqueued</span></span><span class="l"><span class="no">710</span></span><span class="l"><span class="no">711</span>        /*</span><span class="l"><span class="no">712</span><span class="cm">         * Repeatedly:</span></span><span class="l"><span class="no">713</span><span class="cm">         *  Check if node now first</span></span><span class="l"><span class="no">714</span><span class="cm">         *    if so, ensure head stable, else ensure valid predecessor</span></span><span class="l"><span class="no">715</span><span class="cm">         *  if node is first or not yet enqueued, try acquiring</span></span><span class="l"><span class="no">716</span><span class="cm">         *  else if queue is not initialized, do so by attaching new header node</span></span><span class="l"><span class="no">717</span><span class="cm">         *     resort to spinwait on OOME trying to create node</span></span><span class="l"><span class="no">718</span><span class="cm">         *  else if node not yet created, create it</span></span><span class="l"><span class="no">719</span><span class="cm">         *     resort to spinwait on OOME trying to create node</span></span><span class="l"><span class="no">720</span><span class="cm">         *  else if not yet enqueued, try once to enqueue</span></span><span class="l"><span class="no">721</span><span class="cm">         *  else if woken from park, retry (up to postSpins times)</span></span><span class="l"><span class="no">722</span><span class="cm">         *  else if WAITING status not set, set and retry</span></span><span class="l"><span class="no">723</span><span class="cm">         *  else park and clear WAITING status, and check cancellation</span></span><span class="l"><span class="no">724</span><span class="cm">         */</span></span><span class="l"><span class="no">725</span></span><span class="l"><span class="no">726</span>        for (;;) {</span><span class="l hl"><span class="no">727</span>            if (!first &amp;&amp; (pred = (node == null) ? null : node.prev) != null &amp;&amp;<span class="tag">❶</span></span><span class="l"><span class="no">728</span>                !(first = (head == pred))) {</span><span class="l hl"><span class="no">729</span>                if (pred.status &lt; 0) {<span class="tag">❷</span></span><span class="l"><span class="no">730</span>                    cleanQueue();           <span class="cm">// predecessor cancelled</span></span><span class="l"><span class="no">731</span>                    continue;</span><span class="l"><span class="no">732</span>                } else if (pred.prev == null) {</span><span class="l"><span class="no">733</span>                    Thread.onSpinWait();    <span class="cm">// ensure serialization</span></span><span class="l"><span class="no">734</span>                    continue;</span><span class="l"><span class="no">735</span>                }</span><span class="l"><span class="no">736</span>            }</span><span class="l hl"><span class="no">737</span>            if (first || pred == null) {<span class="tag">❸</span></span><span class="l"><span class="no">738</span>                boolean acquired;</span><span class="l"><span class="no">739</span>                try {</span><span class="l"><span class="no">740</span>                    if (shared)</span><span class="l"><span class="no">741</span>                        acquired = (tryAcquireShared(arg) &gt;= 0);</span><span class="l"><span class="no">742</span>                    else</span><span class="l"><span class="no">743</span>                        acquired = tryAcquire(arg);</span><span class="l"><span class="no">744</span>                } catch (Throwable ex) {</span><span class="l"><span class="no">745</span>                    cancelAcquire(node, interrupted, false);</span><span class="l"><span class="no">746</span>                    throw ex;</span><span class="l"><span class="no">747</span>                }</span><span class="l hl"><span class="no">748</span>                if (acquired) {<span class="tag">❹</span></span><span class="l hl"><span class="no">749</span>                    if (first) {<span class="tag">❺</span></span><span class="l"><span class="no">750</span>                        node.prev = null;</span><span class="l"><span class="no">751</span>                        head = node;</span><span class="l"><span class="no">752</span>                        pred.next = null;</span><span class="l"><span class="no">753</span>                        node.waiter = null;</span><span class="l"><span class="no">754</span>                        if (shared)</span><span class="l"><span class="no">755</span>                            signalNextIfShared(node);</span><span class="l"><span class="no">756</span>                        if (interrupted)</span><span class="l"><span class="no">757</span>                            current.interrupt();</span><span class="l"><span class="no">758</span>                    }</span><span class="l"><span class="no">759</span>                    return 1;</span><span class="l"><span class="no">760</span>                }</span><span class="l"><span class="no">761</span>            }</span><span class="l"><span class="no">762</span>            Node t;</span><span class="l hl"><span class="no">763</span>            if ((t = tail) == null) {           <span class="cm">// initialize queue</span><span class="tag">❻</span></span><span class="l"><span class="no">764</span>                if (tryInitializeHead() == null)</span><span class="l"><span class="no">765</span>                    return acquireOnOOME(shared, arg);</span><span class="l"><span class="no">766</span>            } else if (node == null) {          <span class="cm">// allocate; retry before enqueue</span></span><span class="l"><span class="no">767</span>                try {</span><span class="l"><span class="no">768</span>                    node = (shared) ? new SharedNode() : new ExclusiveNode();</span><span class="l"><span class="no">769</span>                } catch (OutOfMemoryError oome) {</span><span class="l"><span class="no">770</span>                    return acquireOnOOME(shared, arg);</span><span class="l"><span class="no">771</span>                }</span><span class="l hl"><span class="no">772</span>            } else if (pred == null) {          <span class="cm">// try to enqueue</span><span class="tag">❼</span></span><span class="l"><span class="no">773</span>                node.waiter = current;</span><span class="l"><span class="no">774</span>                node.setPrevRelaxed(t);         <span class="cm">// avoid unnecessary fence</span></span><span class="l hl"><span class="no">775</span>                if (!casTail(t, node))<span class="tag">❽</span></span><span class="l"><span class="no">776</span>                    node.setPrevRelaxed(null);  <span class="cm">// back out</span></span><span class="l"><span class="no">777</span>                else</span><span class="l"><span class="no">778</span>                    t.next = node;</span><span class="l hl"><span class="no">779</span>            } else if (first &amp;&amp; spins != 0) {<span class="tag">❾</span></span><span class="l"><span class="no">780</span>                --spins;                        <span class="cm">// reduce unfairness on rewaits</span></span><span class="l"><span class="no">781</span>                Thread.onSpinWait();</span><span class="l hl"><span class="no">782</span>            } else if (node.status == 0) {<span class="tag">❿</span></span><span class="l"><span class="no">783</span>                node.status = WAITING;          <span class="cm">// enable signal and recheck</span></span><span class="l"><span class="no">784</span>            } else {</span><span class="l"><span class="no">785</span>                long nanos;</span><span class="l hl"><span class="no">786</span>                spins = postSpins = (byte)((postSpins &lt;&lt; 1) | 1);<span class="tag">undefined</span></span><span class="l"><span class="no">787</span>                if (!timed)</span><span class="l hl"><span class="no">788</span>                    LockSupport.park(this);<span class="tag">undefined</span></span><span class="l"><span class="no">789</span>                else if ((nanos = time - System.nanoTime()) &gt; 0L)</span><span class="l"><span class="no">790</span>                    LockSupport.parkNanos(this, nanos);</span><span class="l"><span class="no">791</span>                else</span><span class="l"><span class="no">792</span>                    break;</span><span class="l"><span class="no">793</span>                node.clearStatus();</span><span class="l hl"><span class="no">794</span>                if ((interrupted |= Thread.interrupted()) &amp;&amp; interruptible)<span class="tag">undefined</span></span><span class="l"><span class="no">795</span>                    break;</span><span class="l"><span class="no">796</span>            }</span><span class="l"><span class="no">797</span>        }</span><span class="l hl"><span class="no">798</span>        return cancelAcquire(node, interrupted, interruptible);<span class="tag">undefined</span></span><span class="l"><span class="no">799</span>    }</span></code></pre>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>先看自己是不是排第一（前驱是 head）。<code>first</code> 一旦为 true 就不再重算。</span></li>
+      <li><b>2</b><span>前驱被取消了：调 cleanQueue 把取消的节点摘掉，再来。</span></li>
+      <li><b>3</b><span>排第一，或者还没入队：都可以试 tryAcquire / tryAcquireShared。还没入队就先试一次，和 JDK 8 的“先试再排”一样。</span></li>
+      <li><b>4</b><span>拿到了。</span></li>
+      <li><b>5</b><span>如果是排队拿到的：自己成为 head，断开旧 head；共享模式顺手叫醒下一个共享节点。</span></li>
+      <li><b>6</b><span>队列还没建：建一个空 head。</span></li>
+      <li><b>7</b><span>节点还没建：现在才 new。先试、后建节点，没竞争时一个对象都不分配。</span></li>
+      <li><b>8</b><span>CAS tail 入队；和 JDK 8 一样先设 prev 再设 next。</span></li>
+      <li><b>9</b><span>被叫醒后又没抢到：先 <code>onSpinWait</code> 自旋几次，减少“刚醒就被插队、又得睡”的次数。</span></li>
+      <li><b>10</b><span>第一次走到这里：把<b>自己</b>的 status 设成 WAITING，不睡，回去再查一次。对应 JDK 8 把前驱设成 SIGNAL。</span></li>
+      <li><b>11</b><span>真要睡了：自旋次数按 1、3、7… 翻倍，下次醒来没抢到时多转一会儿。</span></li>
+      <li><b>12</b><span>park；限时版本用 parkNanos，时间到了就跳出循环。</span></li>
+      <li><b>13</b><span>醒来清掉自己的 status；可中断的版本发现被中断就退出。</span></li>
+      <li><b>14</b><span>超时或中断：cancelAcquire 把节点标成 CANCELLED 并清理队列。</span></li>
+    </ul>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">叫醒</span><b>release + signalNext</b>JDK 21</div>
+<pre class="src"><code><span class="l"><span class="no">1092</span>    public final boolean release(int arg) {</span><span class="l"><span class="no">1093</span>        if (tryRelease(arg)) {</span><span class="l hl"><span class="no">1094</span>            signalNext(head);<span class="tag">❶</span></span><span class="l"><span class="no">1095</span>            return true;</span><span class="l"><span class="no">1096</span>        }</span><span class="l"><span class="no">1097</span>        return false;</span><span class="l"><span class="no">1098</span>    }</span><span class="l"><span class="no">⋮</span></span><span class="l"><span class="no">641</span>    private static void signalNext(Node h) {</span><span class="l"><span class="no">642</span>        Node s;</span><span class="l hl"><span class="no">643</span>        if (h != null &amp;&amp; (s = h.next) != null &amp;&amp; s.status != 0) {<span class="tag">❷</span></span><span class="l"><span class="no">644</span>            s.getAndUnsetStatus(WAITING);</span><span class="l hl"><span class="no">645</span>            LockSupport.unpark(s.waiter);<span class="tag">❸</span></span><span class="l"><span class="no">646</span>        }</span><span class="l"><span class="no">647</span>    }</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">叫醒</span><b>unparkSuccessor</b>JDK 8</div>
+<pre class="src"><code><span class="l"><span class="no">638</span>    private void unparkSuccessor(Node node) {</span><span class="l"><span class="no">639</span>        /*</span><span class="l"><span class="no">640</span><span class="cm">         * If status is negative (i.e., possibly needing signal) try</span></span><span class="l"><span class="no">641</span><span class="cm">         * to clear in anticipation of signalling.  It is OK if this</span></span><span class="l"><span class="no">642</span><span class="cm">         * fails or if status is changed by waiting thread.</span></span><span class="l"><span class="no">643</span><span class="cm">         */</span></span><span class="l"><span class="no">644</span>        int ws = node.waitStatus;</span><span class="l hl"><span class="no">645</span>        if (ws &lt; 0)<span class="tag">❹</span></span><span class="l"><span class="no">646</span>            compareAndSetWaitStatus(node, ws, 0);</span><span class="l"><span class="no">647</span></span><span class="l"><span class="no">648</span>        /*</span><span class="l"><span class="no">649</span><span class="cm">         * Thread to unpark is held in successor, which is normally</span></span><span class="l"><span class="no">650</span><span class="cm">         * just the next node.  But if cancelled or apparently null,</span></span><span class="l"><span class="no">651</span><span class="cm">         * traverse backwards from tail to find the actual</span></span><span class="l"><span class="no">652</span><span class="cm">         * non-cancelled successor.</span></span><span class="l"><span class="no">653</span><span class="cm">         */</span></span><span class="l"><span class="no">654</span>        Node s = node.next;</span><span class="l hl"><span class="no">655</span>        if (s == null || s.waitStatus &gt; 0) {<span class="tag">❺</span></span><span class="l"><span class="no">656</span>            s = null;</span><span class="l hl"><span class="no">657</span>            for (Node t = tail; t != null &amp;&amp; t != node; t = t.prev)<span class="tag">❻</span></span><span class="l"><span class="no">658</span>                if (t.waitStatus &lt;= 0)</span><span class="l"><span class="no">659</span>                    s = t;</span><span class="l"><span class="no">660</span>        }</span><span class="l"><span class="no">661</span>        if (s != null)</span><span class="l"><span class="no">662</span>            LockSupport.unpark(s.thread);</span><span class="l"><span class="no">663</span>    }</span></code></pre>
+      </div>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>tryRelease 返回 true（state 真的放干净了）才叫人。</span></li>
+      <li><b>2</b><span>只看 head 后面那一个，而且它的 status 不是 0（真在睡）才叫。</span></li>
+      <li><b>3</b><span>先清掉 WAITING 再 unpark，避免重复叫。</span></li>
+      <li><b>4</b><span>JDK 8：先把 head 的 SIGNAL 清成 0。</span></li>
+      <li><b>5</b><span>后继为空或已取消：</span></li>
+      <li><b>6</b><span>从 tail 往前找最靠前的、没被取消的节点。原因见上面 addWaiter 第 4 条：prev 链一定是完整的。</span></li>
+    </ul>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><span class="n">非公平 vs 公平</span><b>ReentrantLock</b>JDK 8</div>
+<pre class="src"><code><span class="l"><span class="no">205</span>        final void lock() {</span><span class="l hl"><span class="no">206</span>            if (compareAndSetState(0, 1))<span class="tag">❶</span></span><span class="l"><span class="no">207</span>                setExclusiveOwnerThread(Thread.currentThread());</span><span class="l"><span class="no">208</span>            else</span><span class="l"><span class="no">209</span>                acquire(1);</span><span class="l"><span class="no">210</span>        }</span><span class="l"><span class="no">⋮</span></span><span class="l"><span class="no">231</span>        protected final boolean tryAcquire(int acquires) {</span><span class="l"><span class="no">232</span>            final Thread current = Thread.currentThread();</span><span class="l"><span class="no">233</span>            int c = getState();</span><span class="l"><span class="no">234</span>            if (c == 0) {</span><span class="l hl"><span class="no">235</span>                if (!hasQueuedPredecessors() &amp;&amp;<span class="tag">❷</span></span><span class="l"><span class="no">236</span>                    compareAndSetState(0, acquires)) {</span><span class="l"><span class="no">237</span>                    setExclusiveOwnerThread(current);</span><span class="l"><span class="no">238</span>                    return true;</span><span class="l"><span class="no">239</span>                }</span><span class="l"><span class="no">240</span>            }</span></code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><span class="n">非公平 vs 公平</span><b>ReentrantLock</b>JDK 21（17 结构相同）</div>
+<pre class="src"><code><span class="l"><span class="no">223</span>        final boolean initialTryLock() {</span><span class="l"><span class="no">224</span>            Thread current = Thread.currentThread();</span><span class="l hl"><span class="no">225</span>            if (compareAndSetState(0, 1)) { <span class="cm">// first attempt is unguarded</span><span class="tag">❶</span></span><span class="l"><span class="no">226</span>                setExclusiveOwnerThread(current);</span><span class="l"><span class="no">227</span>                return true;</span><span class="l"><span class="no">⋮</span></span><span class="l"><span class="no">279</span>        protected final boolean tryAcquire(int acquires) {</span><span class="l hl"><span class="no">280</span>            if (getState() == 0 &amp;&amp; !hasQueuedPredecessors() &amp;&amp;<span class="tag">❷</span></span><span class="l"><span class="no">281</span>                compareAndSetState(0, acquires)) {</span><span class="l"><span class="no">282</span>                setExclusiveOwnerThread(Thread.currentThread());</span><span class="l"><span class="no">283</span>                return true;</span></code></pre>
+      </div>
+    </div>
+    <ul class="callouts">
+      <li><b>1</b><span>非公平：lock() 一上来就 CAS，不管有没有人排队。插队就发生在这一行。</span></li>
+      <li><b>2</b><span>公平：tryAcquire 先问 <code>hasQueuedPredecessors()</code>，有人排在前面就不抢。两代写法不同，规则一样。</span></li>
+    </ul>
+  </div>
+
+  <div class="sub" id="lab-wrap">
+    <h3>实验台：自己点一遍排队、插队、条件队列 <small>先猜，再一步步点</small></h3>
+    <p class="tip">一次点击是一个线程做完一个动作（lock、unlock、醒来重试、await、signal、countDown、超时）。规则照 JDK 21 的源码写，CAS 在这里总是一次完成。右上角可以切换节点状态的显示方式：JDK 17 / 21 记在自己身上，JDK 8 记在前驱上。</p>
+    <div class="lab" id="lab">
+      <div class="presets" id="lab-presets">
+        <button type="button" data-k="barge" aria-pressed="true"><b>1 · 非公平插队</b><span>放锁的瞬间来了个新人</span></button>
+        <button type="button" data-k="fair" aria-pressed="false"><b>2 · 公平锁</b><span>同样的顺序，换成 fair</span></button>
+        <button type="button" data-k="reent" aria-pressed="false"><b>3 · 可重入</b><span>lock 两次、unlock 一次</span></button>
+        <button type="button" data-k="cond" aria-pressed="false"><b>4 · await / signal</b><span>signal 之后谁先跑</span></button>
+        <button type="button" data-k="latch" aria-pressed="false"><b>5 · CountDownLatch</b><span>归零时直接叫醒几个</span></button>
+        <button type="button" data-k="cancel" aria-pressed="false"><b>6 · 超时取消</b><span>排第一的人先走了</span></button>
+      </div>
+      <div class="guess" id="lab-guess"></div>
+      <div class="run-row">
+        <span class="seg-btns" id="lab-view" role="group" aria-label="节点状态的显示方式"><button type="button" data-v="21" aria-pressed="true">按 JDK 17 / 21 显示</button><button type="button" data-v="8" aria-pressed="false">按 JDK 8 显示</button></span>
+        <button class="btn primary" type="button" id="lab-step">按剧本走一步</button>
+        <button class="btn" type="button" id="lab-run">跑完剧本</button>
+        <button class="btn" type="button" id="lab-reset">从头来</button>
+        <span class="tip" id="lab-pos"></span>
+      </div>
+      <div class="board" id="lab-board"></div>
+      <div class="lab-res" id="lab-res" data-role="other">先在上面选一个猜测，再开始点。</div>
+    </div>
+    <p class="tip">同一套模拟逻辑在 node 里随机测过：独占锁（公平、非公平）、Semaphore、CountDownLatch 各 2 万组、共约 165 万步随机操作，没有一次出现两个持有者，也没有一次“资源空着、却有人睡着没人叫”。</p>
+  </div>
+
+  <div class="sub" id="usage">
+    <h3>日常开发里的 AQS：完整清单</h3>
+    <p class="tip">方法：写了一个读 class 文件常量池的小程序，扫 JDK 的 <code>java.base</code>（JDK 8 是 <code>rt.jar</code>）和框架 jar，找出直接继承 AQS 的类、以及引用了 ReentrantLock 等同步器的类，再用 javap 看关键方法里是不是真的在调。</p>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th></th><th>JDK 8u512</th><th>JDK 17.0.21</th><th>JDK 21.0.12</th></tr></thead>
+        <tbody>
+          <tr><th>直接继承 AQS 的类</th><td colspan="3">三个版本都是同样 5 个：<code>ReentrantLock.Sync</code>、<code>ReentrantReadWriteLock.Sync</code>、<code>Semaphore.Sync</code>、<code>CountDownLatch.Sync</code>、<code>ThreadPoolExecutor.Worker</code></td></tr>
+          <tr><th>引用 ReentrantLock 的类</th><td class="num">28 个（整个 rt.jar），几乎都在 java.util.concurrent</td><td class="num">58 个（java.base）</td><td class="num">66 个（java.base）</td></tr>
+          <tr><th>java.util.concurrent</th><td colspan="3">一直是大头：<code>ArrayBlockingQueue</code>、<code>LinkedBlockingQueue</code>（两把锁）、<code>LinkedBlockingDeque</code>、<code>PriorityBlockingQueue</code>、<code>DelayQueue</code>、<code>CyclicBarrier</code>、<code>ScheduledThreadPoolExecutor</code> 的延迟队列。线程池的队列全在这里</td></tr>
+          <tr><th>网络、TLS</th><td>synchronized</td><td colspan="2"><code>NioSocketImpl</code>（普通 Socket 的读写）、<code>SocketChannelImpl</code>、<code>SSLSocketImpl</code> 等 20 个 TLS 类、<code>HttpURLConnection</code>、<code>KeepAliveCache</code></td></tr>
+          <tr><th>java.io</th><td colspan="2">synchronized（jstack 里是 <code>waiting to lock … (a java.io.PrintStream)</code>，实测）</td><td><code>PrintStream</code>、<code>BufferedInputStream</code>、<code>BufferedOutputStream</code>、<code>BufferedReader</code>、<code>BufferedWriter</code>、<code>InputStreamReader</code>、<code>OutputStreamWriter</code> 等 11 个类改用 <code>InternalLock</code>（里面是 ReentrantLock，JDK 19 为虚拟线程加的；只在类正好是 JDK 自己的、不是子类时用；<code>-Djdk.io.useMonitors=true</code> 可退回）。jstack 里两个线程抢 println 变成 <code>parking to wait for … ReentrantLock$NonfairSync</code>（实测）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>框架</th><th>Spring Boot 2.7.18（JDK 8 能用的最后一代）</th><th>Spring Boot 3.5.16（JDK 17 / 21）</th></tr></thead>
+        <tbody>
+          <tr><th>Tomcat</th><td colspan="2">9.0.83 和 10.1.55 一样：<code>LimitLatch.Sync</code> 继承 AQS，Acceptor 收连接前 <code>countUpOrAwait()</code>，超过 <code>maxConnections</code>（默认 8192）就停在这里；自家线程池的 <code>Worker</code> 也继承 AQS；<code>TaskQueue</code> 继承 LinkedBlockingQueue；<code>SemaphoreValve</code> 用 Semaphore 限并发</td></tr>
+          <tr><th>Spring MVC</th><td colspan="2">5.3.31 和 6.2.19 一样：<code>AbstractHandlerMethodMapping.getHandlerInternal</code> 每个请求都 <code>acquireReadLock()</code>（ReentrantReadWriteLock 的读锁），注册映射时拿写锁；<code>ConcurrentReferenceHashMap.Segment</code> 直接继承 ReentrantLock</td></tr>
+          <tr><th>Spring 容器</th><td>5.3：创建单例 bean 用 <code>synchronized</code></td><td>6.2：<code>DefaultSingletonBeanRegistry</code> 改成 <code>singletonLock</code>（Lock）+ <code>lenientCreationLock</code> 和一个 Condition</td></tr>
+          <tr><th>logback</th><td colspan="2">1.2.12 和 1.5.34 一样：<code>OutputStreamAppender.writeBytes</code> 每写一条日志都 <code>lock()</code> / <code>unlock()</code>，并发打日志时线程排在这里</td></tr>
+          <tr><th>HikariCP</th><td colspan="2">4.0.3 和 6.3.3 一样：借还连接不走 AQS；只有 <code>allowPoolSuspension=true</code> 时才建一个 <code>Semaphore(10000, true)</code> 做暂停闸门，否则是空实现 <code>FAUX_LOCK</code></td></tr>
+          <tr><th>Kafka 客户端</th><td colspan="2">3.1.2 和 3.9.2：生产者 <code>BufferPool</code> 用 ReentrantLock + Condition，缓冲区满时 <code>send()</code> 停在 <code>await(max.block.ms)</code>；<code>ProduceRequestResult</code> 用 CountDownLatch，<code>future.get()</code> 就等在它上面</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub" id="ver">
+    <h3>版本差异：JDK 8 / 17 / 21</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th></th><th>JDK 8</th><th>JDK 17</th><th>JDK 21</th></tr></thead>
+        <tbody>
+          <tr><th>AQS 实现</th><td>老实现（waitStatus、acquireQueued）</td><td colspan="2">JDK 14 重写后的新实现（JDK-8229442）：status、单个 acquire、signalNext、cleanQueue</td></tr>
+          <tr><th>被叫醒后自旋</th><td>没有，没抢到就再睡</td><td colspan="2">排第一的线程被叫醒又没抢到时，自旋 1、3、7… 次再睡</td></tr>
+          <tr><th>Condition 等待</th><td>普通 park</td><td colspan="2"><code>ConditionNode</code> 实现 <code>ForkJoinPool.ManagedBlocker</code>：在 ForkJoinPool 里 await 时，池子能补一个线程</td></tr>
+          <tr><th>该升到的小版本</th><td>无相关问题</td><td>至少 17.0.13（8317960 在 17.0.11 修，8325754 在 17.0.13 修）</td><td>至少 21.0.5（8325754）</td></tr>
+          <tr><th>虚拟线程</th><td colspan="2">没有</td><td>有；AQS 的 park 会卸下虚拟线程，synchronized 会钉住（到 JDK 24 才修）</td></tr>
+          <tr><th>JDK 自己用 AQS 的地方</th><td>基本只有 java.util.concurrent</td><td>多了网络、TLS、HTTP</td><td>再多了 java.io（PrintStream 等）、InetAddress 缓存、ReferenceQueue</td></tr>
+          <tr><th>实测：锁里只自增，8 线程</th><td class="num">非公平 3990 万/秒，公平 32 万/秒</td><td class="num">3620 万 / 20 万</td><td class="num">2340 万 / 23 万</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">8317960 带着 [17u] 标记，只修在 17u 上；21u 的源码里 <code>canReacquire</code> 已经是修复后的写法（先看 <code>p.next == node</code>，看不出来才遍历）。各修复属于哪个小版本，是拿 GitHub 上 jdk17u、jdk21u 的提交和 <code>jdk-17.0.x-ga</code>、<code>jdk-21.0.x-ga</code> 标签比出来的。吞吐数字只在这台 2 核机器上有意义，看相对大小。</p>
+  </div>
+
+  <div class="sub">
+    <h3>再往深一点</h3>
+    <div class="deep">
+      <div class="dp" data-role="pd">
+        <h4>为什么要有一个空的 head</h4>
+        <ul>
+          <li>“排第一”就简单定义成“前驱是 head”，不用特殊处理空队列。</li>
+          <li>拿到锁的线程，它的节点直接变成 head，清掉线程引用：head 永远代表“当前持有者或者刚放手的那个位置”。</li>
+          <li>队列懒建：从来没人竞争的锁，连这个空节点都不会分配（⑤ 里第 ① 行“还没建”）。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="bk">
+        <h4>JDK 8 为什么把 SIGNAL 记在前驱上</h4>
+        <ul>
+          <li>放锁的线程只看 head 一个节点的 waitStatus 就知道“要不要叫人”：是 0 说明后面没人睡，连 unparkSuccessor 都不用进。</li>
+          <li>代价是理解起来绕：一个节点的状态描述的是它后面那个。JDK 14 改成节点只描述自己，再用“head.next 的 status 不为 0 才叫”达到同样效果，面试时两种都要说得出。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="g2">
+        <h4>读写锁的 state 怎么切</h4>
+        <ul>
+          <li>高 16 位是所有线程读锁的总次数，低 16 位是写锁重入次数，各自最多 65535。</li>
+          <li>每个线程自己重入了几次读锁，另外记在 ThreadLocal 的 <code>HoldCounter</code> 里，还缓存了第一个读线程和最近一个读线程，省掉多数 ThreadLocal 查找。</li>
+          <li>写锁要求高低 16 位都为 0（除了自己的写锁重入），所以拿着读锁升级会自己等自己（坑 7）。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="cg">
+        <h4>Worker、LimitLatch：什么时候值得自己继承 AQS</h4>
+        <ul>
+          <li>线程池的 <code>Worker</code> 要一把不可重入的锁来区分“空闲”和“在跑任务”，见 <a href="threadpool-execute.html#c3">ThreadPoolExecutor 那页</a>。</li>
+          <li>Tomcat 的 <code>LimitLatch</code> 要“计数到上限就排队”，而且上限可以运行中用 <code>setLimit</code> 改；它把计数放在一个 AtomicLong 里，只借用 AQS 的共享模式来排队和叫醒。</li>
+          <li>共同点：现成的锁、信号量、门闩语义不对，又需要排队和超时，才值得自己写。业务代码里几乎用不到。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>讲讲 AQS 的原理。</summary><p>一个 volatile int state 加一条 FIFO 的双向等待队列（CLH 的变体）。子类实现 tryAcquire / tryRelease（或共享版本）来定义 state 的含义和能不能拿到；拿不到时 AQS 负责把线程包成节点入队、park，释放时叫醒队首的后继，被叫醒的线程重新 tryAcquire。还支持超时、中断、Condition。JDK 8 里用 waitStatus 的 SIGNAL 记在前驱上表示“要叫醒后继”，JDK 14 起改成节点自己的 status。</p></details>
+      <details><summary>公平锁和非公平锁的区别？为什么默认非公平？</summary><p>区别只在 tryAcquire：公平锁先看 hasQueuedPredecessors，有人排队就不抢；非公平锁 state 为 0 就直接 CAS。默认非公平是因为交接给一个睡着的线程要等它醒来，这段时间锁是空的，让正在运行的线程直接拿走，吞吐高得多（本机实测约 100 倍）。代价是排队的线程可能被反复插队。另外 tryLock() 在公平锁上也不公平。</p></details>
+      <details><summary>JDK 8 的 unparkSuccessor 为什么要从 tail 往前找？</summary><p>入队时先设 node.prev，CAS tail 成功后才设 pred.next，next 指针有一段时间是断的；节点取消时 next 也可能被改。prev 链总是完整的，所以后继为空或被取消时，从 tail 往前找最靠前的有效节点。</p></details>
+      <details><summary>CountDownLatch 和 CyclicBarrier、Semaphore 怎么实现的？</summary><p>CountDownLatch 和 Semaphore 都是 AQS 共享模式：Latch 的 state 是剩余计数，归零时 releaseShared，等待者一个叫醒一个；Semaphore 的 state 是许可数，acquire 减、release 加。CyclicBarrier 不直接继承 AQS，它用一把 ReentrantLock 加一个 Condition（trip）实现，最后一个到达的线程 signalAll。</p></details>
+      <details><summary>Condition 和 Object.wait/notify 有什么区别？</summary><p>Condition 依附于 AQS 的锁，一把锁可以建多个 Condition，各自一条等待队列，可以精确地只叫醒等某个条件的线程；支持超时和不可中断的等待。await 时节点进条件队列并完全释放锁，signal 把节点转到同步队列，等锁释放后才真正醒来重新抢锁。</p></details>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li><code>synchronized</code> 的实现：对象头、轻量级锁、ObjectMonitor 的 EntryList 和 cxq，JDK 15 起默认关闭偏向锁</li>
+      <li><code>StampedLock</code>：乐观读的版本号，以及它自己的那条等待队列</li>
+      <li><code>ReentrantReadWriteLock</code> 的写锁饥饿和 <code>readerShouldBlock</code></li>
+      <li><code>FutureTask</code>：JDK 6 用 AQS，JDK 7 起换成自己的等待栈，为什么</li>
+      <li>JEP 491：JDK 24 怎么让 synchronized 不再钉住虚拟线程</li>
+      <li>用 JFR 的 <code>jdk.JavaMonitorEnter</code> 和 <code>jdk.ThreadPark</code> 事件找锁竞争</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 AqsPeek</h2>
+    <p class="lead">每个练习都写了做对时会看到什么。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="pd">
+      <h4>练习 1 · 把公平锁的插队堵上</h4>
+      <p>在 AqsPeek 第 ⑥ 段公平锁那次，给 W 加一个“我拿到了”的 AtomicBoolean，只数 main 抢在 W 前面的次数；再把 <code>l.tryLock()</code> 换成 <code>l.tryLock(0, TimeUnit.SECONDS)</code> 对比。</p>
+      <p><b>做对了会看到：</b>本机三个版本，<code>tryLock()</code> 抢在 W 前面 891～991 次，<code>tryLock(0, SECONDS)</code> 0 次：带超时的版本走 tryAcquireNanos → 公平的 tryAcquire，会先看有没有人排在前面。不加标志的话会多数进去“W 已经拿完走了”的那几次。</p>
+      <p class="uses">用到：坑 3</p>
+    </div>
+    <div class="exc" data-role="g2">
+      <h4>练习 2 · 自己写一个 AQS 子类</h4>
+      <p>照 ④ 的 BooleanLatch，写一个最多 N 个线程同时进入的“闸门”（共享模式，state 存剩余名额，tryAcquireShared 里 CAS 减），用 10 个线程测。</p>
+      <p><b>做对了会看到：</b>任意时刻最多 N 个线程在闸门里；用 ⑤ 的反射打印队列，JDK 17 / 21 里等着的是 <code>SharedNode</code>，JDK 8 里是 <code>Node</code>，waitStatus 也是 -1。</p>
+      <p class="uses">用到：④ 机制 2、机制 4</p>
+    </div>
+    <div class="exc" data-role="cg">
+      <h4>练习 3 · 用 jstack 找持有者</h4>
+      <p>让一个线程 lock 后 sleep 60 秒，另一个线程去 lock，然后分别执行 <code>jstack</code> 和 <code>jstack -l</code>。</p>
+      <p><b>做对了会看到：</b>不加 -l 只看得到等待者的 <code>parking to wait for &lt;0x…&gt;</code>；加 -l 后，持有者下面出现同一个地址的 <code>Locked ownable synchronizers</code>。JDK 8 等待者栈帧是 acquireQueued，17 / 21 是 acquire。</p>
+      <p class="uses">用到：坑 6</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出 AQS 的精华。</summary><p>把排队、睡下、叫醒、超时、中断写一遍，子类只用 tryAcquire / tryRelease 说清 state 怎么算“拿到”和“放掉”。</p><p class="from">← ② 精华</p></details>
+    <details><summary>2. 自己用 CAS 自旋写锁，痛在哪？</summary><p>等的线程一直在烧 CPU，锁里有 IO 时两个核全满，还抢走了持锁线程的时间片；想不烧 CPU 就得有队列记住谁在等、park 和 unpark，这正是 AQS 做的。</p><p class="from">← ② 实测</p></details>
+    <details><summary>3. “ReentrantLock 锁住了一直不放”，最常见的根源是 ④ 里哪一条？</summary><p>state 只是一个 int，只有持有者调 tryRelease 才会变回 0；没在 finally 里 unlock，或者重入次数和 unlock 次数不对，state 就永远不是 0。</p><p class="from">← ④ 机制 2</p></details>
+    <details><summary>4. 预测：Semaphore(1) 当互斥锁用，A 拿着，B 在等，A 的代码里 release 了两次。之后 B 和新来的 C 会怎样？</summary><p>许可变成 2（Semaphore 不检查谁放的），B 被叫醒拿走 1 个，C 也能直接拿走另 1 个，两个线程同时进了“互斥区”。</p><p class="from">← ④ 机制 2 + 规范第 4 条</p></details>
+    <details><summary>5. 预测：一个线程 lock() 等锁时被 interrupt() 了，它会怎样？换成 lockInterruptibly() 呢？</summary><p>lock()：不理会，继续排队，拿到锁后把中断标志补回去（JDK 8 的 selfInterrupt，17 / 21 在 acquire 里重设）。lockInterruptibly()：醒来发现被中断，取消节点，抛 InterruptedException。</p><p class="from">← ⑥ 源码 JDK 8 第 2 条、JDK 21 第 13～14 条</p></details>
+    <details><summary>6. 预测：CountDownLatch(1) 上有 100 个线程在 await，countDown 之后多久全部醒来？会不会一下子 100 个线程同时抢 CPU？</summary><p>不会同时。countDown 只叫醒第一个，第一个通过后叫醒第二个，依次传下去，100 次叫醒是串起来的。每一棒都要一次线程切换，所以全部醒来有一个微秒到毫秒级的“传递时间”，和线程数成正比。</p><p class="from">← ④ 机制 4</p></details>
+    <details><summary>7. 预测：JDK 21 上用虚拟线程跑 Spring MVC，日志框架用 logback，打日志会不会钉住载体线程？</summary><p>不会因为 logback 钉住：它的 OutputStreamAppender 用的是 ReentrantLock（AQS），等锁时虚拟线程会被卸下。真正要查的是自己代码里、或老驱动里包着 IO 的 synchronized。</p><p class="from">← ⑥ 坑 5 + 日常开发清单</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>源码对照 jdk8u 和 jdk21u 的 <code>AbstractQueuedSynchronizer</code>、<code>ReentrantLock</code>（JDK 17 与 21 同属 JDK 14 重写后的实现，jdk17u 源码也核过）。实测在 2 核 ARM 虚拟机上用 Temurin 8u512、Temurin 17.0.21、Ubuntu OpenJDK 21.0.12 跑过同一份 <code>--release 8</code> 编译的 class；框架 jar 来自 Spring Boot 2.7.18 和 3.5.16 的依赖版本。</p>
+  <p>相关：<a href="threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="synchronous-transfer-queue.html">SynchronousQueue 与 LinkedTransferQueue</a> · <a href="../database/hikari-concurrentbag.html">HikariCP ConcurrentBag 源码</a> · <a href="../redis/redis-distributed-lock.html">Redis 分布式锁</a></p>
+</footer>
+</main>
+
+<script>
+/*SIM-START*/
+// AQS 操作级模拟：一次点击 = 一个线程做完一个动作（lock / unlock / 醒来重试 / await / signal / acquire / release / countDown / 超时）。
+// 规则照 JDK 21 的 ReentrantLock、Semaphore、CountDownLatch 和 AQS.acquire / release / signalNext 写，CAS 在这里总是一次完成。
+var AQ = (function(){
+  function clone(s){ return JSON.parse(JSON.stringify(s)); }
+  function make(cfg){
+    var s = {kind: cfg.kind, fair: !!cfg.fair, st: cfg.kind === 'lock' ? 0 : cfg.init, owner: null, q: [], cond: [], th: {}, order: [], log: [], seq: 0};
+    cfg.threads.forEach(function(id){ s.th[id] = {status: 'run', wait: null, saved: 0, timed: false}; s.order.push(id); });
+    return s;
+  }
+  function say(s, t, text, kind){ s.log.push({t: t, text: text, kind: kind || ''}); }
+  function idx(s, t){ for (var i = 0; i < s.q.length; i++) if (s.q[i].t === t) return i; return -1; }
+  function enqueue(s, t, shared, timed){
+    s.q.push({id: 'n' + (++s.seq), t: t, shared: shared, status: 'WAITING'});
+    s.th[t].status = 'parked'; s.th[t].wait = 'sync'; s.th[t].timed = !!timed;
+  }
+  function signalNext(s, by){                       // AQS.signalNext(head)：只看 head 后面第一个
+    var f = s.q[0];
+    if (f && f.status === 'WAITING'){ f.status = '0'; s.th[f.t].status = 'woken'; say(s, by, 'signalNext：叫醒排在最前面的 ' + f.t + '（它还得自己再抢一次）', 'wake'); return f.t; }
+    return null;
+  }
+  function becomeHead(s, t){ s.q.shift(); s.th[t].status = 'run'; s.th[t].wait = null; }
+  function can(s, t, op){
+    var x = s.th[t]; if (!x) return false;
+    if (op === 'retry') return x.status === 'woken';
+    if (op === 'cancel') return x.status === 'parked' && x.wait === 'sync' && x.timed;
+    return x.status === 'run';
+  }
+  function act(s0, t, op){
+    if (!can(s0, t, op)) return s0;
+    var s = clone(s0), x = s.th[t], f;
+    switch (op){
+      case 'lock': case 'tryLockT':
+        if (s.st === 0 && (!s.fair || s.q.length === 0)){ s.st = 1; s.owner = t; say(s, t, (s.q.length ? '锁刚好空着，CAS 0→1 成功，插到了排队的人前面' : 'CAS state 0→1 成功，拿到锁'), s.q.length ? 'barge' : 'ok'); }
+        else if (s.owner === t){ s.st++; say(s, t, '锁本来就是自己的：state +1 = ' + s.st + '（重入）', 'ok'); }
+        else { enqueue(s, t, false, op === 'tryLockT'); say(s, t, (s.st === 0 ? '公平锁：锁空着，但有人在排队，不抢，' : '锁被 ' + s.owner + ' 拿着，') + '新建节点排到队尾，park' + (op === 'tryLockT' ? '（限时）' : ''), 'park'); }
+        break;
+      case 'unlock':
+        if (s.owner !== t){ say(s, t, 'unlock：锁不是自己的 → IllegalMonitorStateException', 'bad'); break; }
+        s.st--; say(s, t, 'unlock：state −1 = ' + s.st + (s.st ? '，还没放干净，不叫人' : '，锁空了'), 'rel');
+        if (s.st === 0){ s.owner = null; signalNext(s, t); }
+        break;
+      case 'retry':
+        f = s.q[0];
+        if (s.kind === 'lock'){
+          if (s.st === 0){ s.st = f.saved || 1; s.owner = t; becomeHead(s, t); say(s, t, '醒来重试 tryAcquire：CAS 成功，拿到锁' + (f.saved > 1 ? '（还原 await 前的 ' + f.saved + ' 层重入）' : '') + '，自己的节点变成新的 head', 'ok'); }
+          else { f.status = 'WAITING'; x.status = 'parked'; say(s, t, '醒来重试：锁已经被 ' + s.owner + ' 抢走了，把状态改回 WAITING，再睡', 'barge'); }
+        } else if (s.kind === 'sem'){
+          if (s.st >= 1){ s.st--; becomeHead(s, t); say(s, t, '醒来重试：拿走 1 个许可（剩 ' + s.st + '），变成 head', 'ok'); var n = s.q[0]; if (n && n.shared && n.status === 'WAITING'){ n.status = '0'; s.th[n.t].status = 'woken'; say(s, t, 'signalNextIfShared：共享模式，顺手叫醒下一个 ' + n.t, 'wake'); } }
+          else { f.status = 'WAITING'; x.status = 'parked'; say(s, t, '醒来重试：许可已经被抢光了，再睡', 'barge'); }
+        } else {
+          becomeHead(s, t); say(s, t, '醒来重试：计数已经是 0，通过，变成 head', 'ok');
+          var m = s.q[0]; if (m && m.shared && m.status === 'WAITING'){ m.status = '0'; s.th[m.t].status = 'woken'; say(s, t, 'signalNextIfShared：顺手叫醒下一个 ' + m.t, 'wake'); }
+        }
+        break;
+      case 'await':
+        if (s.owner !== t){ say(s, t, 'await：没拿着锁 → IllegalMonitorStateException', 'bad'); break; }
+        x.saved = s.st; s.cond.push(t); x.status = 'parked'; x.wait = 'cond';
+        say(s, t, 'await：进条件队列，把锁整个放掉（state ' + s.st + ' → 0，记下来以后还原），park', 'park');
+        s.st = 0; s.owner = null; signalNext(s, t);
+        break;
+      case 'signal': case 'signalAll':
+        if (s.owner !== t){ say(s, t, op + '：没拿着锁 → IllegalMonitorStateException', 'bad'); break; }
+        if (!s.cond.length){ say(s, t, op + '：条件队列是空的，什么也不做', 'rel'); break; }
+        var moved = op === 'signal' ? [s.cond.shift()] : s.cond.splice(0);
+        moved.forEach(function(w){ s.q.push({id: 'n' + (++s.seq), t: w, shared: false, status: 'WAITING', saved: s.th[w].saved}); s.th[w].wait = 'sync'; });
+        say(s, t, op + '：把 ' + moved.join('、') + ' 从条件队列挪到同步队列队尾。它还睡着，要等锁被放掉才会被叫醒', 'move');
+        break;
+      case 'acquire':
+        if (s.st >= 1 && (!s.fair || s.q.length === 0)){ s.st--; say(s, t, 'tryAcquireShared：许可 −1，剩 ' + s.st + (s.q.length ? '（插在排队的人前面）' : ''), s.q.length ? 'barge' : 'ok'); }
+        else { enqueue(s, t, true, false); say(s, t, '没有许可了，建共享节点排到队尾，park', 'park'); }
+        break;
+      case 'release':
+        s.st++; say(s, t, 'release：许可 +1 = ' + s.st, 'rel'); signalNext(s, t); break;
+      case 'awaitLatch':
+        if (s.st === 0){ say(s, t, '计数已经是 0，直接通过', 'ok'); }
+        else { enqueue(s, t, true, false); say(s, t, '计数还有 ' + s.st + '，建共享节点排队，park', 'park'); }
+        break;
+      case 'countDown':
+        if (s.st === 0){ say(s, t, 'countDown：已经是 0，什么也不做', 'rel'); break; }
+        s.st--; say(s, t, 'countDown：计数 −1 = ' + s.st + (s.st ? '' : '，归零了'), 'rel');
+        if (s.st === 0) signalNext(s, t);
+        break;
+      case 'cancel':
+        var i = idx(s, t), wasFirst = i === 0; s.q.splice(i, 1); x.status = 'run'; x.wait = null;
+        say(s, t, 'tryLock 等到超时：节点标成 CANCELLED，从队列里摘掉，返回 false', 'bad');
+        if (wasFirst && s.q.length) signalNext(s, t);              // cleanQueue：前驱是 head 时叫醒新的第一个
+        break;
+    }
+    return s;
+  }
+  function verdict(s){
+    var woken = s.order.filter(function(t){ return s.th[t].status === 'woken'; });
+    var avail = s.kind === 'lock' ? s.st === 0 : s.kind === 'sem' ? s.st > 0 : s.st === 0;
+    var waiting = s.q.filter(function(n){ return n.status === 'WAITING'; });
+    var owners = s.order.filter(function(t){ return s.owner === t; }).length;
+    return {lost: !woken.length && avail && waiting.length > 0, owners: owners, woken: woken};
+  }
+  return {make: make, act: act, can: can, verdict: verdict};
+})();
+/*SIM-END*/
+// 实验台剧本：[线程, 动作]
+var PRESETS = {
+  barge: {cfg: {kind: 'lock', fair: false, threads: ['A', 'B', 'C']}, script: [['A', 'lock'], ['B', 'lock'], ['A', 'unlock'], ['C', 'lock'], ['B', 'retry']],
+    q: '默认的非公平锁：A 拿着锁，B 在排队。A 放锁时刚好 C 来了。最后锁在谁手里？', opts: [['B', 'B：排在前面的'], ['C', 'C：刚来的'], ['none', '谁也没拿到']], answer: 'C',
+    why: 'A 放锁时 signalNext 叫醒了 B，可 B 醒来、被调度上 CPU 还要时间。这期间 C 调 lock()，非公平锁的第一步就是直接 CAS state，成功了。B 醒来重试失败，改回 WAITING 又睡了。⑤ 实测 1000 次里有 953～995 次是“刚放锁的又抢回来”。'},
+  fair: {cfg: {kind: 'lock', fair: true, threads: ['A', 'B', 'C']}, script: [['A', 'lock'], ['B', 'lock'], ['A', 'unlock'], ['C', 'lock'], ['B', 'retry']],
+    q: '同样的顺序，换成 new ReentrantLock(true)。最后锁在谁手里？', opts: [['B', 'B：排在前面的'], ['C', 'C：刚来的'], ['none', '谁也没拿到']], answer: 'B',
+    why: '公平锁的 tryAcquire 先看 hasQueuedPredecessors()：有人排在前面就不抢。C 只能排到 B 后面，B 醒来拿到锁。代价是每次交接都要等一个睡着的线程醒来，实测吞吐只有非公平的约 1%。注意 tryLock() 不受公平策略约束，照样插队。'},
+  reent: {cfg: {kind: 'lock', fair: false, threads: ['A', 'B']}, script: [['A', 'lock'], ['A', 'lock'], ['B', 'lock'], ['A', 'unlock']],
+    q: 'A 连续 lock() 两次，B 在排队。A 调了一次 unlock()。B 会被叫醒吗？', opts: [['yes', '会，锁放了'], ['no', '不会，A 还拿着'], ['err', '抛异常']], answer: 'no',
+    why: 'ReentrantLock 用 state 记重入次数：两次 lock 后 state = 2，一次 unlock 只减到 1，锁还在 A 手里，tryRelease 返回 false，AQS 不叫任何人。少写一个 unlock，B 就永远等下去。'},
+  cond: {cfg: {kind: 'lock', fair: false, threads: ['A', 'B']}, script: [['A', 'lock'], ['A', 'await'], ['B', 'lock'], ['B', 'signal'], ['B', 'unlock'], ['A', 'retry']],
+    q: 'A 拿着锁调 await()，B 拿到锁后调 signal()。A 什么时候继续往下跑？', opts: [['now', 'signal() 一调就继续'], ['after', '等 B unlock 之后'], ['never', '永远不醒']], answer: 'after',
+    why: 'await 把 A 放进条件队列，并把锁整个放掉。signal 只是把 A 的节点挪到同步队列队尾，A 仍然睡着；B unlock 时 signalNext 才叫醒 A，A 还得重新抢到锁，才从 await 返回。所以醒来后要用 while 重新检查条件。'},
+  latch: {cfg: {kind: 'latch', init: 1, threads: ['A', 'B', 'C', 'D']}, script: [['A', 'awaitLatch'], ['B', 'awaitLatch'], ['C', 'awaitLatch'], ['D', 'countDown'], ['A', 'retry'], ['B', 'retry'], ['C', 'retry']],
+    q: 'CountDownLatch(1)，A、B、C 在 await()。D 调 countDown() 把计数归零。countDown 这一下直接叫醒了几个线程？', opts: [['1', '1 个'], ['3', '3 个'], ['0', '0 个，大家自己发现']], answer: '1',
+    why: 'releaseShared 只调一次 signalNext(head)，只叫醒排在最前面的 A。A 醒来通过后变成 head，再用 signalNextIfShared 叫醒 B，B 再叫醒 C，一个传一个。JDK 8 里这一步叫 setHeadAndPropagate。'},
+  cancel: {cfg: {kind: 'lock', fair: false, threads: ['A', 'B', 'C']}, script: [['A', 'lock'], ['B', 'tryLockT'], ['C', 'lock'], ['B', 'cancel'], ['A', 'unlock'], ['C', 'retry']],
+    q: 'A 拿着锁；B 用 tryLock(超时) 排队，C 排在 B 后面。B 先超时走了，然后 A 放锁。谁拿到锁？', opts: [['B', 'B'], ['C', 'C'], ['none', '谁也没拿到']], answer: 'C',
+    why: 'B 超时把自己的节点标成 CANCELLED 并从队列里摘掉，C 就成了 head 后面的第一个。A 放锁时 signalNext 叫醒 C。JDK 8 的 unparkSuccessor 碰到被取消的后继，会从队尾往前找第一个没取消的节点。'}
+};
+function outcome(k, s){
+  var th = s.th;
+  switch (k){
+    case 'barge': case 'fair': case 'cancel': return s.owner || (s.order.every(function(t){ return th[t].status !== 'woken'; }) ? 'none' : null);
+    case 'reent': return s.log.some(function(l){ return l.kind === 'wake'; }) ? 'yes' : 'no';
+    case 'cond': if (s.owner !== 'A') return null; var iu = -1, ia = -1; s.log.forEach(function(l, i){ if (l.t === 'B' && l.kind === 'rel') iu = i; if (l.t === 'A' && l.kind === 'ok' && i > 2) ia = i; }); return ia > iu ? 'after' : 'now';
+    case 'latch': var n = s.log.filter(function(l){ return l.t === 'D' && l.kind === 'wake'; }).length; return String(n);
+  }
+}
+
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var KIND = {lock: 'ReentrantLock', sem: 'Semaphore', latch: 'CountDownLatch'};
+  var OPS = {lock: [['lock', 'lock()'], ['tryLockT', 'tryLock(超时)'], ['unlock', 'unlock()'], ['await', 'await()'], ['signal', 'signal()']],
+             sem: [['acquire', 'acquire()'], ['release', 'release()']], latch: [['awaitLatch', 'await()'], ['countDown', 'countDown()']]};
+  function nodeTag(s, i, view){                       // i = -1 表示 head
+    var next = s.q[i + 1], me = i >= 0 ? s.q[i] : null;
+    if (view === '8') return (next && next.status === 'WAITING') ? '-1 SIGNAL' : '0';
+    if (!me) return '0';
+    return me.status === 'WAITING' ? '1 WAITING' : '0（刚被叫醒）';
+  }
+  function chain(s, view){
+    var h = '<div class="dq-chain" role="img" aria-label="同步队列">';
+    if (!s.q.length && !s.used) return h + '<span class="dq-null">队列还没建（没人排过队）</span></div>';
+    var cls = view === '8' ? 'Node' : (s.kind === 'lock' ? 'ExclusiveNode' : 'SharedNode');
+    h += '<div class="dq-n" data-role="other"><span class="dq-ptr" style="left:0">head</span><div class="dq-box"><b>空节点</b><span>' + esc(nodeTag(s, -1, view)) + '</span><small>' + (view === '8' ? 'waitStatus' : 'status') + '</small></div></div>';
+    s.q.forEach(function(n, i){
+      h += '<span class="dq-arrow">⇄</span><div class="dq-n' + (n.status === '0' ? ' hit' : '') + '" data-role="pd">' + (i === s.q.length - 1 ? '<span class="dq-ptr tail" style="right:0">tail</span>' : '') +
+        '<div class="dq-box"><b>' + n.t + '</b><span>' + esc(nodeTag(s, i, view)) + '</span><small>' + (n.shared && view === '8' ? 'SHARED ' : '') + (view === '8' ? cls : (n.shared ? 'SharedNode' : 'ExclusiveNode')) + '</small></div></div>';
+    });
+    return h + '</div>';
+  }
+  function board(el, s, view, opt){
+    opt = opt || {};
+    var last = s.log.length ? s.log[s.log.length - 1] : null;
+    var stLabel = s.kind === 'lock' ? 'state（重入次数）' : s.kind === 'sem' ? 'state（剩余许可）' : 'state（剩余计数）';
+    var h = '<div class="bd-top">';
+    h += '<div class="pane" data-role="bk"><small><span>' + KIND[s.kind] + (s.kind === 'lock' ? (s.fair ? '（公平）' : '（非公平）') : '') + '</span><span>' + stLabel + '</span></small><div class="row"><span class="big">' + s.st + '</span>' + (s.kind === 'lock' ? '<span class="ent" data-st="' + (s.owner ? 1 : 0) + '">持有者 <i>' + (s.owner || '无') + '</i></span>' : '') + '</div></div>';
+    h += '<div class="pane" data-role="cg"><small><span>条件队列</span><span>' + (view === '8' ? 'waitStatus -2 CONDITION' : 'status 3 = COND|WAITING') + '</span></small><div class="row">' + (s.cond.length ? s.cond.map(function(t){ return '<span class="pl">' + t + '</span>'; }).join('') : '<span class="empty-note">空</span>') + '</div></div>';
+    h += '<div class="pane" data-role="pd"><small><span>同步队列</span><span>' + s.q.length + ' 个在排</span></small><div class="row"><span class="empty-note">' + (view === '8' ? 'JDK 8：状态记在前驱上' : 'JDK 17 / 21：状态记在自己身上') + '</span></div></div>';
+    h += '</div>' + chain(s, view) + '<div class="thr-grid">';
+    s.order.forEach(function(t){
+      var x = s.th[t];
+      var st = x.status === 'woken' ? '<span class="stt" style="background:var(--of-tint)">被叫醒了，要自己再抢</span>' : x.status === 'parked' ? '<span class="stt parked">' + (x.wait === 'cond' ? '在条件队列睡着' : '排队睡着' + (x.timed ? '（限时）' : '')) + '</span>' : '<span class="stt' + (s.owner === t ? ' done' : '') + '">' + (s.owner === t ? '拿着锁' : '在跑') + '</span>';
+      h += '<div class="thr' + (last && last.t === t ? ' act' : '') + '"><div class="thr-h"><b>' + t + '</b>' + st + '</div>';
+      if (opt.buttons){
+        h += '<div class="btns">';
+        if (x.status === 'woken') h += '<button class="btn" type="button" data-t="' + t + '" data-op="retry"' + (opt.locked ? ' disabled' : '') + '>醒来重试</button>';
+        else if (x.status === 'parked' && x.timed) h += '<button class="btn" type="button" data-t="' + t + '" data-op="cancel"' + (opt.locked ? ' disabled' : '') + '>等到超时</button>';
+        else if (x.status === 'run') OPS[s.kind].forEach(function(o){ h += '<button class="btn" type="button" data-t="' + t + '" data-op="' + o[0] + '"' + (opt.locked ? ' disabled' : '') + '>' + o[1] + '</button>'; });
+        h += '</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div><ol class="logbox" aria-live="polite">';
+    if (!s.log.length) h += '<li><span class="ln"></span><b></b><span class="empty-note">还没开始</span></li>';
+    s.log.forEach(function(l, i){
+      var k = {barge: 'steal', park: 'hand', wake: 'offer', ok: 'pocket', bad: 'xset', move: 'offer'}[l.kind] || '';
+      h += '<li class="k-' + k + (i === s.log.length - 1 ? ' new' : '') + '"><span class="ln"></span><b>' + l.t + '</b><span>' + esc(l.text) + '</span></li>';
+    });
+    el.innerHTML = h + '</ol>';
+    var lb = el.querySelector('.logbox'); if (lb) lb.scrollTop = lb.scrollHeight;
+  }
+  function act(s, t, op){ var n = AQ.act(s, t, op); if (n !== s && n.q.length) n.used = true; if (n !== s && s.used) n.used = true; return n; }
+  function segInit(id, cb){ $(id).addEventListener('click', function(e){ var b = e.target.closest('button[data-v]'); if (!b) return;
+    $(id).querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x === b); }); cb(b.dataset.v); }); }
+
+  /* ---------- ④ 分步演示 ---------- */
+  var WS = [['A', 'lock'], ['B', 'lock'], ['C', 'lock'], ['A', 'unlock'], ['B', 'retry'], ['B', 'unlock']];
+  var CAPS = ['开始：一把非公平的 ReentrantLock，state = 0，队列还没建。',
+    '<b>A lock()</b>：state 是 0，CAS 0 → 1 成功，A 成为持有者。没有竞争，队列根本不建。',
+    '<b>B lock()</b>：CAS 失败。先建一个空 head，再把 B 的节点挂上去，park。JDK 8 是 addWaiter + acquireQueued，睡前把<b>前驱</b>（head）的 waitStatus 改成 SIGNAL；JDK 17 / 21 是把<b>自己</b>的 status 改成 WAITING。',
+    '<b>C lock()</b>：同样失败，排到 B 后面。JDK 8 视图里 B 的节点变成了 -1，因为它后面有人睡着。',
+    '<b>A unlock()</b>：state 1 → 0，锁空了。只叫醒 head 后面那一个（B）：JDK 8 是 unparkSuccessor(head)，JDK 17 / 21 是 signalNext(head)。B 醒了但还没拿到锁。',
+    '<b>B 醒来重试</b>：tryAcquire 成功，B 的节点成为新的 head（不再挂线程），原来的空 head 断开等 GC。',
+    '<b>B unlock()</b>：叫醒下一个 C。注意 C 这时还没拿到锁：如果此刻有新线程来 lock()，非公平锁会让新线程先拿（⑥ 实验台第 1 个剧本）。'];
+  var walk = [AQ.make({kind: 'lock', fair: false, threads: ['A', 'B', 'C']})];
+  WS.forEach(function(w){ walk.push(act(walk[walk.length - 1], w[0], w[1])); });
+  var wk = {i: 0, timer: null, view: '21'};
+  function wkShow(){ board($('wk-board'), walk[wk.i], wk.view); $('wk-cap').innerHTML = CAPS[wk.i]; $('wk-pos').innerHTML = '第 <b>' + wk.i + '</b> / ' + WS.length + ' 步'; $('wk-prev').disabled = wk.i === 0; $('wk-next').disabled = wk.i === WS.length; }
+  function wkStop(){ if (wk.timer){ clearInterval(wk.timer); wk.timer = null; $('wk-play').textContent = '自动播放'; } }
+  $('wk-prev').onclick = function(){ wkStop(); if (wk.i > 0){ wk.i--; wkShow(); } };
+  $('wk-next').onclick = function(){ wkStop(); if (wk.i < WS.length){ wk.i++; wkShow(); } };
+  $('wk-reset').onclick = function(){ wkStop(); wk.i = 0; wkShow(); };
+  $('wk-play').onclick = function(){ if (wk.timer){ wkStop(); return; } if (wk.i === WS.length) wk.i = 0; $('wk-play').textContent = '暂停'; wkShow();
+    wk.timer = setInterval(function(){ if (wk.i >= WS.length){ wkStop(); return; } wk.i++; wkShow(); }, 2200); };
+  $('walk').addEventListener('keydown', function(e){ if (e.key === 'ArrowRight'){ e.preventDefault(); $('wk-next').click(); } else if (e.key === 'ArrowLeft'){ e.preventDefault(); $('wk-prev').click(); } });
+  segInit('wk-view', function(v){ wk.view = v; wkShow(); });
+  wkShow();
+
+  /* ---------- ⑥ 实验台 ---------- */
+  var lab = {k: 'barge', s: null, pos: 0, guess: null, off: false, view: '21'};
+  function reset(){ lab.s = AQ.make(JSON.parse(JSON.stringify(PRESETS[lab.k].cfg))); lab.pos = 0; lab.off = false; paint(); }
+  function guessUI(){ var p = PRESETS[lab.k], h = '<p><b>先猜：</b>' + esc(p.q) + '</p><div class="opts">';
+    p.opts.forEach(function(o){ h += '<button type="button" data-g="' + o[0] + '" aria-pressed="' + (lab.guess === o[0]) + '">' + esc(o[1]) + '</button>'; });
+    $('lab-guess').innerHTML = h + '</div>'; }
+  var OPN = {lock: 'lock()', tryLockT: 'tryLock(超时)', unlock: 'unlock()', retry: '醒来重试', await: 'await()', signal: 'signal()', cancel: '等到超时', awaitLatch: 'await()', countDown: 'countDown()', acquire: 'acquire()', release: 'release()'};
+  function paint(){
+    var p = PRESETS[lab.k], locked = !lab.guess, done = lab.pos >= p.script.length;
+    board($('lab-board'), lab.s, lab.view, {buttons: true, locked: locked});
+    $('lab-step').disabled = locked || done || lab.off; $('lab-run').disabled = locked || done || lab.off;
+    $('lab-pos').textContent = lab.off ? '你走了自己的顺序，剧本按钮已停用，点“从头来”恢复' : '剧本 ' + lab.pos + ' / ' + p.script.length + ' 步' + (done ? '' : '，下一步：' + p.script[lab.pos][0] + ' ' + OPN[p.script[lab.pos][1]]);
+    var res = $('lab-res');
+    if (locked){ res.dataset.role = 'other'; res.innerHTML = '先在上面选一个猜测，再开始点。'; return; }
+    if (!done && !lab.off){ res.dataset.role = 'other'; res.innerHTML = '继续点。日志里橙色是插队，紫色是叫醒和搬节点，红色是出错或超时。'; return; }
+    var out = outcome(lab.k, lab.s);
+    if (lab.off){ res.dataset.role = 'other'; res.innerHTML = out ? '按你自己的顺序，结果是：<b>' + esc(label(p, out)) + '</b>。换个顺序结果就可能变，这正是竞争。' : '按你自己的顺序走着，还没有结果。'; return; }
+    var right = out === lab.guess;
+    $('lab-guess').querySelectorAll('button').forEach(function(b){ b.classList.toggle('right', b.dataset.g === out); b.classList.toggle('wrong', b.dataset.g === lab.guess && !right); });
+    res.dataset.role = right ? 'done' : 'bad';
+    res.innerHTML = (right ? '<b>猜对了。</b>' : '<b>猜错了，结果是：' + esc(label(p, out)) + '。</b>') + esc(p.why);
+  }
+  function label(p, k){ for (var i = 0; i < p.opts.length; i++) if (p.opts[i][0] === k) return p.opts[i][1]; return k; }
+  function go(t, op){ if (!lab.guess || !AQ.can(lab.s, t, op)) return; var p = PRESETS[lab.k], st = p.script[lab.pos];
+    if (!lab.off && st && st[0] === t && st[1] === op) lab.pos++; else lab.off = true;
+    lab.s = act(lab.s, t, op); paint(); }
+  $('lab-presets').addEventListener('click', function(e){ var b = e.target.closest('button[data-k]'); if (!b) return;
+    lab.k = b.dataset.k; lab.guess = null; $('lab-presets').querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', x === b); }); guessUI(); reset(); });
+  $('lab-guess').addEventListener('click', function(e){ var b = e.target.closest('button[data-g]'); if (!b || lab.guess) return; lab.guess = b.dataset.g; guessUI(); paint(); });
+  $('lab-board').addEventListener('click', function(e){ var b = e.target.closest('button[data-op]'); if (b) go(b.dataset.t, b.dataset.op); });
+  $('lab-step').onclick = function(){ var p = PRESETS[lab.k]; if (lab.pos < p.script.length) go(p.script[lab.pos][0], p.script[lab.pos][1]); };
+  $('lab-run').onclick = function(){ var p = PRESETS[lab.k]; while (!lab.off && lab.pos < p.script.length){ var st = p.script[lab.pos]; lab.s = act(lab.s, st[0], st[1]); lab.pos++; } paint(); };
+  $('lab-reset').onclick = function(){ reset(); };
+  segInit('lab-view', function(v){ lab.view = v; paint(); });
+  guessUI(); reset();
+})();
+</script>
+
+</body>
+</html>
