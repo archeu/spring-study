@@ -452,6 +452,29 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
   .life{grid-template-columns:repeat(2,minmax(0,1fr))}
   .fam{grid-template-columns:1fr}
 }
+
+/* feature list (④ 机制 2) */
+.feat-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.feat-tools .tip{flex:1 1 260px}
+.lane-h{margin-top:10px;padding:7px 12px;border-radius:10px;background:var(--rt);border-left:5px solid var(--rc);font-weight:700;font-size:15px}
+.feats{display:flex;flex-direction:column;gap:6px}
+details.ft{padding:0;border-radius:12px;border-left:4px solid var(--rc)}
+details.ft > summary{display:grid;grid-template-columns:minmax(8em,14em) 5.5em minmax(0,1fr);gap:4px 12px;align-items:baseline;padding:9px 14px;margin:0;list-style:none;font-weight:400;font-size:14.5px}
+details.ft > summary::-webkit-details-marker{display:none}
+details.ft[open] > summary{margin:0;border-bottom:1px solid var(--line)}
+details.ft .nm{font-weight:700;min-width:0}
+details.ft .nm::before{content:"▸";display:inline-block;width:1.1em;color:var(--rc);transition:transform .15s}
+details.ft[open] .nm::before{transform:rotate(90deg)}
+details.ft .vr{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);white-space:nowrap}
+details.ft .sv{min-width:0;color:var(--ink)}
+details.ft code{overflow-wrap:anywhere}
+.ft-body{padding:10px 14px 12px;display:flex;flex-direction:column;gap:8px}
+.ft-body dl{margin:0;display:grid;grid-template-columns:4.2em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.ft-body dt{color:var(--muted);font-size:13px;padding-top:1px}
+.ft-body dd{margin:0;min-width:0}
+.ft-body pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;font-size:12px;padding:10px 12px}
+.ft-body pre code{overflow-wrap:normal}
+@media (max-width:640px){details.ft > summary{grid-template-columns:minmax(0,1fr) auto}details.ft .sv{grid-column:1 / -1;color:var(--muted);font-size:13.5px}}
 </style>
 <style id="tocx-css">
 /* tocx：顶栏里的跳转导航，由 learn skill 的 add_toc.py 注入（wrap.py 会自动调用）。
@@ -781,68 +804,267 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
       <figcaption>琥珀色的四列是 8、17、21、25，灰色是 11；虚线圆圈是预览。前三条泳道是“得到”，最后一条是“要还的账”：它让 JDK 内部能放心重构，代价是升级时依赖 JDK 内部的老代码会坏。容器感知最早在 10，后来回移植到了 8u191。</figcaption>
     </figure>
 
-    <h3 style="margin-top:8px">每样新东西，为什么要加</h3>
-    <div class="tbl-wrap">
-      <table class="t">
-        <thead><tr><th>特性</th><th>版本</th><th>以前怎么写 / 痛在哪</th><th>解决了什么</th></tr></thead>
-        <tbody>
-          <tr class="hl"><th colspan="4">语言（Project Amber：让常见写法更短、让编译器多帮你检查）</th></tr>
-          <tr><th>lambda、Stream</th><td class="num">8</td><td>传个行为要写匿名内部类；集合处理全靠手写循环</td><td>行为可以当参数传，集合操作能链式写，还能 <code>parallelStream</code></td></tr>
-          <tr><th><code>var</code></th><td class="num">10</td><td><code>Map&lt;String, List&lt;Order&gt;&gt; m = new HashMap&lt;&gt;()</code> 类型写两遍</td><td>局部变量类型推断。只限局部变量，字段和方法签名仍要写明，API 的可读性不受影响</td></tr>
-          <tr><th>有帮助的 NPE</th><td class="num">14</td><td><code>a.b().c().d()</code> 报 NPE，不知道哪个是 null</td><td>异常消息直接写出是哪个表达式为 null（JEP 358，15 起默认开）</td></tr>
-          <tr><th>switch 表达式</th><td class="num">14</td><td>忘写 <code>break</code> 就穿透到下一个 case；switch 不能返回值</td><td><code>case X -&gt;</code> 不穿透，整个 switch 可以当表达式用</td></tr>
-          <tr><th>文本块</th><td class="num">15</td><td>多行 SQL、JSON 要拼字符串、加 <code>\n</code> 和转义</td><td><code>"""</code> 包起来原样写</td></tr>
-          <tr><th>record</th><td class="num">16</td><td>数据类要手写或靠 Lombok 生成 equals、hashCode、toString</td><td>一行声明不可变的数据载体，语言层面的语义，后面的模式匹配能直接解构它</td></tr>
-          <tr><th><code>instanceof</code> 模式</th><td class="num">16</td><td><code>if (o instanceof A) { A a = (A) o; … }</code> 判断完还要强转</td><td><code>if (o instanceof A a)</code> 一步到位</td></tr>
-          <tr><th>sealed</th><td class="num">17</td><td>没法规定“这个接口只有这几种实现”</td><td>列出允许的子类，编译器知道一共就这几种，为穷尽检查打基础</td></tr>
-          <tr><th>record 模式、switch 模式</th><td class="num">21</td><td>按类型分支要写一串 <code>if-else instanceof</code>，漏一种没人提醒</td><td>switch 直接按类型和结构匹配；配合 sealed，漏掉一种就编译不过</td></tr>
-          <tr><th>未命名变量 <code>_</code></th><td class="num">22</td><td><code>catch (Exception e)</code>、解构时用不到的变量也得起名</td><td>用 <code>_</code> 明说“不用它”</td></tr>
-          <tr><th>Markdown 文档注释</th><td class="num">23</td><td>javadoc 里要手写 HTML 标签</td><td><code>///</code> 开头直接写 Markdown</td></tr>
-          <tr><th>灵活的构造器</th><td class="num">25</td><td><code>super(…)</code> 必须是第一句，参数校验只能塞进静态辅助方法</td><td>调用 <code>super(…)</code> 之前可以先校验、先算参数</td></tr>
-          <tr><th>模块导入、紧凑源文件</th><td class="num">25</td><td>写个几行的小工具也要 <code>public class</code>、<code>public static void main(String[] args)</code> 和一串 import</td><td><code>import module java.base;</code> 一次导入整个模块；直接写 <code>void main()</code>，用 <code>IO.println</code></td></tr>
-          <tr class="hl"><th colspan="4">类库 API</th></tr>
-          <tr><th>java.time</th><td class="num">8</td><td><code>Date</code> 可变、<code>SimpleDateFormat</code> 线程不安全、月份从 0 开始</td><td>不可变、线程安全，日期、时间、时区、时长分开建模</td></tr>
-          <tr><th><code>List.of</code>、<code>Map.of</code></th><td class="num">9</td><td><code>Collections.unmodifiableList(Arrays.asList(…))</code></td><td>一行建不可变集合（不允许 null 元素）</td></tr>
-          <tr><th>HttpClient</th><td class="num">11</td><td><code>HttpURLConnection</code> 难用、不支持 HTTP/2，只好引 Apache HttpClient</td><td>JDK 自带，支持 HTTP/2、同步和异步</td></tr>
-          <tr><th><code>Stream.toList()</code></th><td class="num">16</td><td><code>.collect(Collectors.toList())</code></td><td>更短，返回不可修改的 List</td></tr>
-          <tr><th>SequencedCollection</th><td class="num">21</td><td>取最后一个元素：List 要 <code>get(size()-1)</code>，Deque 有 <code>getLast</code>，LinkedHashSet 没办法</td><td>有顺序的集合统一有 <code>getFirst</code>、<code>getLast</code>、<code>reversed</code></td></tr>
-          <tr><th>FFM API</th><td class="num">22</td><td>调本地库要写 JNI 的 C 胶水代码，堆外内存只能靠 <code>ByteBuffer</code> 或 <code>Unsafe</code></td><td>纯 Java 调本地函数、安全地管理堆外内存；也是收紧 <code>Unsafe</code> 和 JNI 的前提</td></tr>
-          <tr><th>Stream Gatherers</th><td class="num">24</td><td>Stream 的中间操作就那几个，按 100 个一批、滑动窗口只能自己写循环或 Collector</td><td><code>gather(Gatherers.windowFixed(100))</code>，也能自定义中间操作</td></tr>
-          <tr><th>Class-File API</th><td class="num">24</td><td>框架各自带一份 ASM，JDK 一升 class 文件版本号，旧 ASM 就读不了</td><td>JDK 自带读写 class 文件的 API，跟着 JDK 一起升级</td></tr>
-          <tr><th>抗量子密码、KDF</th><td class="num">24、25</td><td>现有的公钥算法将来可能被量子计算机破解</td><td>ML-KEM、ML-DSA（24）和密钥派生 API（25）</td></tr>
-          <tr class="hl"><th colspan="4">并发（Project Loom）</th></tr>
-          <tr><th>CompletableFuture</th><td class="num">8</td><td><code>Future.get()</code> 只能阻塞等，没法组合</td><td>多个异步结果能串联、合并、处理异常</td></tr>
-          <tr><th>虚拟线程</th><td class="num">21</td><td>一个请求占一个平台线程，线程贵，并发上不去；改响应式又难写难调</td><td>线程变便宜，照样写阻塞代码也能扛高并发（原理见 <a href="../network/io-models.html">网络 IO 模型</a>）</td></tr>
-          <tr><th>synchronized 不再钉住</th><td class="num">24</td><td>21 里虚拟线程在 <code>synchronized</code> 中阻塞会占住载体线程，高峰时可能全卡住</td><td>重写了 <code>synchronized</code> 的实现，阻塞时照样能卸载（JEP 491）</td></tr>
-          <tr><th>ScopedValue</th><td class="num">25</td><td><code>ThreadLocal</code> 谁都能改、要记得 remove；百万虚拟线程各存一份，子线程继承还要整份复制</td><td>只读、只在一段作用域内有效、子任务共享不复制（机制 5）</td></tr>
-          <tr><th>结构化并发</th><td class="num">25 仍预览</td><td>并发起几个子任务，一个失败了其余的没人取消，线程转储里也看不出父子关系</td><td>把一组子任务当成一个整体管理；还没转正，生产先别用</td></tr>
-          <tr class="hl"><th colspan="4">GC 和性能（升级就白拿）</th></tr>
-          <tr><th>Metaspace</th><td class="num">8</td><td>永久代大小难估，动不动 <code>OutOfMemoryError: PermGen space</code></td><td>类元数据挪到本地内存，按需增长</td></tr>
-          <tr><th>G1 成为默认</th><td class="num">9</td><td>8 默认 Parallel GC，吞吐高但大堆停顿长</td><td>服务端更在乎停顿，G1 能按目标停顿时间分批回收</td></tr>
-          <tr><th>压缩字符串</th><td class="num">9</td><td><code>String</code> 内部是 <code>char[]</code>，每个字符 2 字节，而多数字符串只有拉丁字符</td><td>改成 <code>byte[]</code> 加编码标志，纯拉丁字符的字符串省一半内存</td></tr>
-          <tr><th>容器感知</th><td class="num">10</td><td>JVM 在 Docker 里按宿主机的内存和 CPU 算堆大小和线程数，容易被杀</td><td>读 cgroup 限制；回移植到 8u191，配 <code>MaxRAMPercentage</code></td></tr>
-          <tr><th>AppCDS、默认 CDS</th><td class="num">10、12</td><td>每次启动都重新解析、校验同样的类</td><td>把类数据存成归档共享，启动更快</td></tr>
-          <tr><th>删掉 CMS</th><td class="num">14</td><td>CMS 不整理内存，碎片多了退化成长时间 Full GC，维护成本高</td><td>G1、ZGC 已能替代，删掉省维护</td></tr>
-          <tr><th>ZGC 转正、分代 ZGC</th><td class="num">15、21</td><td>堆越大，停顿越长</td><td>停顿通常不到 1 毫秒，和堆大小基本无关；21 的分代版吞吐更好</td></tr>
-          <tr><th>分代 ZGC 成默认、删不分代</th><td class="num">23、24</td><td>同时维护两种 ZGC</td><td><code>-XX:+UseZGC</code> 直接就是分代的</td></tr>
-          <tr><th>AOT 缓存</th><td class="num">24、25</td><td>Spring Boot 这类应用启动要加载、链接几千个类，刚启动还要慢慢预热</td><td>先做一次训练运行，把加载、链接好的类（24）和方法的运行画像（25）存成缓存，之后启动直接用</td></tr>
-          <tr><th>紧凑对象头</th><td class="num">25</td><td>64 位 JVM 上对象头通常 12 字节，小对象里头的占比很大</td><td>压到 8 字节，对象多而小的应用堆明显变小；25 里要手动开 <code>-XX:+UseCompactObjectHeaders</code>，27 起默认打开（JEP 534）</td></tr>
-          <tr><th>分代 Shenandoah</th><td class="num">25</td><td>Shenandoah 只有不分代模式</td><td>分代模式转为正式特性</td></tr>
-          <tr class="hl"><th colspan="4">平台治理（升级的坑大多在这）</th></tr>
-          <tr><th>模块系统</th><td class="num">9</td><td>JDK 是一整块 rt.jar，<code>sun.*</code> 内部类被到处直接用，JDK 想改内部都怕打坏别人</td><td>用模块划清“公开的”和“内部的”，还能用 <code>jlink</code> 裁出小运行时</td></tr>
-          <tr><th>删 Java EE、CORBA 模块</th><td class="num">11</td><td>JAXB、JAX-WS 等属于 Java EE，跟着 JDK 发版太慢</td><td>移出 JDK，改成普通 Maven 依赖，各自演进</td></tr>
-          <tr><th>删 Nashorn</th><td class="num">15</td><td>内置 JavaScript 引擎跟不上 JS 标准，维护成本高</td><td>需要的自己引独立的引擎</td></tr>
-          <tr><th>强封装</th><td class="num">16、17</td><td>框架靠反射随便改 JDK 内部字段，JDK 一改实现就崩</td><td>16 默认拒绝，17 去掉整体放开的开关，只能按包 <code>--add-opens</code></td></tr>
-          <tr><th>弃用 SecurityManager</th><td class="num">17</td><td>很少有人用，却拖累 JDK 每处权限检查的维护</td><td>标记要删，18 起默认不允许运行时设置</td></tr>
-          <tr><th>默认 UTF-8</th><td class="num">18</td><td>不写编码时用操作系统默认编码，同一个程序在中文 Windows 和 Linux 上结果不同</td><td>统一默认 UTF-8（21 里已生效）</td></tr>
-          <tr><th>动态加载 agent 警告</th><td class="num">21</td><td>运行中随时能往 JVM 里注入代码改行为</td><td>先打警告，为将来默认禁止做准备</td></tr>
-          <tr><th>删字符串模板</th><td class="num">23</td><td>21、22 预览的 <code>STR."…"</code> 设计有争议</td><td>整个撤回重新设计（预览特性的风险，⑥ 坑 6）</td></tr>
-          <tr><th>注解处理默认不跑</th><td class="num">23</td><td>类路径上任何 jar 里的注解处理器都会被 javac 自动执行，是供应链风险</td><td>必须显式指定处理器或加 <code>-proc:full</code>（JDK-8321314，⑥ 坑 9）</td></tr>
-          <tr><th>收紧 <code>Unsafe</code> 和 JNI</th><td class="num">23、24</td><td>库直接用 <code>sun.misc.Unsafe</code> 读写内存、用 JNI 调本地代码，一出错整个 JVM 崩</td><td>23 弃用 Unsafe 的内存访问方法，24 起首次调用打警告；24 起 JNI 也打警告，替代品是 FFM</td></tr>
-          <tr><th>永久禁用 SecurityManager</th><td class="num">24</td><td>17 弃用后，18～23 还能用 <code>-Djava.security.manager=allow</code> 打开</td><td>24 起彻底打不开，<code>setSecurityManager</code> 一律抛异常</td></tr>
-        </tbody>
-      </table>
+    <h3 style="margin-top:8px">每样新东西：是什么、为什么加、怎么用</h3>
+    <div class="feat-tools"><button class="btn" type="button" id="ft-open">全部展开</button><button class="btn" type="button" id="ft-close">全部收起</button><span class="tip">每行是“特性 · 版本 · 解决了什么”，点开看概念、以前的痛点和一段示例。示例未在本机运行，写法按 JEP 和 JDK API 文档核对。</span></div>
+    <div class="lane-h" data-role="pd">语言（Project Amber：让常见写法更短、让编译器多帮你检查）</div>
+    <div class="feats">
+    <details class="ft" data-role="pd"><summary><span class="nm">lambda、Stream</span><span class="vr">8</span><span class="sv">行为可以当参数传，集合操作能链式写，还能 <code>parallelStream</code></span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>lambda 是一段能当参数传的代码；Stream 是对一批数据的流水线操作：过滤、转换、排序、汇总，一步接一步写下去。</dd><dt>以前</dt><dd>传个行为要写匿名内部类；集合处理全靠手写循环</dd></dl><pre><code>List&lt;String&gt; adults = users.stream()
+    .filter(u -&gt; u.getAge() &gt;= 18)      <span class="cm">// lambda：判断条件当参数传进去</span>
+    .map(User::getName)                 <span class="cm">// 方法引用，等价于 u -&gt; u.getName()</span>
+    .sorted()
+    .collect(Collectors.toList());</code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm"><code>var</code></span><span class="vr">10</span><span class="sv">局部变量类型推断。只限局部变量，字段和方法签名仍要写明，API 的可读性不受影响</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>让编译器按等号右边推断局部变量的类型。变量仍然是静态类型，只是不用你手写。</dd><dt>以前</dt><dd><code>Map&lt;String, List&lt;Order&gt;&gt; m = new HashMap&lt;&gt;()</code> 类型写两遍</dd></dl><pre><code>var map = new HashMap&lt;String, List&lt;Order&gt;&gt;();   <span class="cm">// 类型就是 HashMap&lt;String, List&lt;Order&gt;&gt;</span>
+for (var e : map.entrySet()) { ... }
+<span class="cm">// var x;           编译不过：必须有初始值</span>
+<span class="cm">// var n = null;    编译不过：推断不出类型</span>
+<span class="cm">// 字段、方法参数、返回值都不能用 var</span></code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">有帮助的 NPE</span><span class="vr">14</span><span class="sv">异常消息直接写出是哪个表达式为 null（JEP 358，15 起默认开）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>NullPointerException 的消息里直接写出是哪个表达式为 null，不用再一段段加日志猜。</dd><dt>以前</dt><dd><code>a.b().c().d()</code> 报 NPE，不知道哪个是 null</dd></dl><pre><code>String city = order.getUser().getAddress().getCity();
+<span class="cm">// 以前：java.lang.NullPointerException</span>
+<span class="cm">// 现在：Cannot invoke "Address.getCity()" because</span>
+<span class="cm">//       the return value of "User.getAddress()" is null</span></code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">switch 表达式</span><span class="vr">14</span><span class="sv"><code>case X -&gt;</code> 不穿透，整个 switch 可以当表达式用</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>switch 可以当表达式返回一个值；<code>case X -&gt;</code> 只执行这一个分支，不会穿透到下一个。</dd><dt>以前</dt><dd>忘写 <code>break</code> 就穿透到下一个 case；switch 不能返回值</dd></dl><pre><code>int days = switch (month) {
+    case FEBRUARY -&gt; 28;
+    case APRIL, JUNE, SEPTEMBER, NOVEMBER -&gt; 30;
+    default -&gt; {
+        log.debug("31 天");
+        yield 31;                  <span class="cm">// 分支里写多行时，用 yield 返回值</span>
+    }
+};</code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">文本块</span><span class="vr">15</span><span class="sv"><code>"""</code> 包起来原样写</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>用三个双引号包起来的多行字符串，换行和引号原样保留，公共的缩进会自动去掉。</dd><dt>以前</dt><dd>多行 SQL、JSON 要拼字符串、加 <code>\n</code> 和转义</dd></dl><pre><code>String sql = """
+    SELECT id, name
+    FROM orders
+    WHERE status = ?
+    """;                           <span class="cm">// 结束的 """ 放在哪一列，决定去掉多少缩进</span>
+String json = """
+    {"name": "%s"}
+    """.formatted(name);</code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">record</span><span class="vr">16</span><span class="sv">一行声明不可变的数据载体，语言层面的语义，后面的模式匹配能直接解构它</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>一种专门装数据的类：声明一行字段，编译器自动生成构造器、访问器、equals、hashCode、toString。字段都是 final，对象不可变。</dd><dt>以前</dt><dd>数据类要手写或靠 Lombok 生成 equals、hashCode、toString</dd></dl><pre><code>record Point(int x, int y) {
+    Point {                                    <span class="cm">// 紧凑构造器：只写校验</span>
+        if (x &lt; 0) throw new IllegalArgumentException("x &lt; 0");
+    }
+}
+var p = new Point(1, 2);
+p.x();                                 <span class="cm">// 访问器叫 x()，不是 getX()</span>
+p.equals(new Point(1, 2));             <span class="cm">// true</span></code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm"><code>instanceof</code> 模式</span><span class="vr">16</span><span class="sv"><code>if (o instanceof A a)</code> 一步到位</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd><code>instanceof</code> 判断成功时，顺便声明一个已经转好类型的变量。</dd><dt>以前</dt><dd><code>if (o instanceof A) { A a = (A) o; … }</code> 判断完还要强转</dd></dl><pre><code>if (obj instanceof String s &amp;&amp; !s.isEmpty()) {
+    System.out.println(s.length());    <span class="cm">// s 已经是 String，不用强转</span>
+}</code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">sealed</span><span class="vr">17</span><span class="sv">列出允许的子类，编译器知道一共就这几种，为穷尽检查打基础</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>在类或接口上列出“只允许这几个子类”。别人不能再随便继承，编译器也就知道一共有几种情况。</dd><dt>以前</dt><dd>没法规定“这个接口只有这几种实现”</dd></dl><pre><code>public sealed interface Shape permits Circle, Square {}
+public record Circle(double r) implements Shape {}
+public record Square(double side) implements Shape {}
+<span class="cm">// 子类必须是 final、sealed 或 non-sealed 三者之一；record 默认就是 final</span></code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">record 模式、switch 模式</span><span class="vr">21</span><span class="sv">switch 直接按类型和结构匹配；配合 sealed，漏掉一种就编译不过</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>switch 的 case 可以写类型、可以把 record 拆开取字段、可以加 <code>when</code> 条件；对 sealed 类型，漏掉一种情况就编译不过。</dd><dt>以前</dt><dd>按类型分支要写一串 <code>if-else instanceof</code>，漏一种没人提醒</dd></dl><pre><code>double area(Shape s) {
+    return switch (s) {
+        case Circle(double r) -&gt; Math.PI * r * r;     <span class="cm">// 拆开 record 直接拿字段</span>
+        case Square(double side) -&gt; side * side;
+    };                                                <span class="cm">// 不用 default</span>
+}
+String desc = switch (obj) {
+    case null -&gt; "空";                                <span class="cm">// switch 也能处理 null 了</span>
+    case Integer i when i &gt; 0 -&gt; "正整数";
+    case Integer i -&gt; "整数";
+    default -&gt; "其他";
+};</code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">未命名变量 <code>_</code></span><span class="vr">22</span><span class="sv">用 <code>_</code> 明说“不用它”</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>用下划线 <code>_</code> 表示“这个变量我不用”，不用再硬起一个名字。</dd><dt>以前</dt><dd><code>catch (Exception e)</code>、解构时用不到的变量也得起名</dd></dl><pre><code>try { return Integer.parseInt(s); }
+catch (NumberFormatException _) { return 0; }
+
+map.computeIfAbsent(key, _ -&gt; new ArrayList&lt;&gt;());
+if (obj instanceof Point(var x, _)) { ... }      <span class="cm">// 只关心 x</span></code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">Markdown 文档注释</span><span class="vr">23</span><span class="sv"><code>///</code> 开头直接写 Markdown</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>javadoc 可以用 <code>///</code> 开头直接写 Markdown，不用再写 HTML 标签。</dd><dt>以前</dt><dd>javadoc 里要手写 HTML 标签</dd></dl><pre><code><span class="cm">/// 计算订单总价。</span>
+<span class="cm">///</span>
+<span class="cm">/// - 单位是**分**</span>
+<span class="cm">/// - 优惠见 [Order#discount()]</span>
+long total(Order order) { ... }</code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">灵活的构造器</span><span class="vr">25</span><span class="sv">调用 <code>super(…)</code> 之前可以先校验、先算参数</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>构造器里，<code>super(…)</code> 或 <code>this(…)</code> 之前可以先写语句，比如校验参数；只是这时还不能使用 <code>this</code>。</dd><dt>以前</dt><dd><code>super(…)</code> 必须是第一句，参数校验只能塞进静态辅助方法</dd></dl><pre><code>class PositiveRange extends Range {
+    PositiveRange(int lo, int hi) {
+        if (lo &lt; 0) throw new IllegalArgumentException("lo &lt; 0");   <span class="cm">// 25：先校验</span>
+        super(lo, hi);                                                <span class="cm">// 再调父类构造器</span>
+    }
+}</code></pre></div></details>
+    <details class="ft" data-role="pd"><summary><span class="nm">模块导入、紧凑源文件</span><span class="vr">25</span><span class="sv"><code>import module java.base;</code> 一次导入整个模块；直接写 <code>void main()</code>，用 <code>IO.println</code></span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>写小程序可以不声明类、不写 <code>static</code>，直接一个 <code>void main()</code>；<code>import module</code> 一行导入一个模块导出的所有包。</dd><dt>以前</dt><dd>写个几行的小工具也要 <code>public class</code>、<code>public static void main(String[] args)</code> 和一串 import</dd></dl><pre><code><span class="cm">// Hello.java，直接 java Hello.java 运行</span>
+void main() {
+    IO.println(List.of("a", "b"));    <span class="cm">// 紧凑源文件自动导入 java.base 模块</span>
+}
+
+<span class="cm">// 普通类里：</span>
+import module java.sql;               <span class="cm">// 等于导入 java.sql 模块导出的所有包</span></code></pre></div></details>
     </div>
+    <div class="lane-h" data-role="g2">类库 API</div>
+    <div class="feats">
+    <details class="ft" data-role="g2"><summary><span class="nm">java.time</span><span class="vr">8</span><span class="sv">不可变、线程安全，日期、时间、时区、时长分开建模</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>一套新的日期时间 API：日期、时间、带时区的时间、时长分开建模，对象都不可变、线程安全。</dd><dt>以前</dt><dd><code>Date</code> 可变、<code>SimpleDateFormat</code> 线程不安全、月份从 0 开始</dd></dl><pre><code>LocalDate d = LocalDate.of(2026, 11, 7);                  <span class="cm">// 月份从 1 开始</span>
+LocalDateTime t = LocalDateTime.now().plusDays(3);
+static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+String s = t.format(FMT);                                  <span class="cm">// 格式器线程安全，可以做常量</span>
+Duration cost = Duration.between(start, Instant.now());</code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">Optional</span><span class="vr">8</span><span class="sv">用类型提醒“可能没有”，配合 <code>map</code>、<code>orElse</code> 处理</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>一个“可能有值、也可能没有”的盒子，用来做返回值，提醒调用方处理“没有”的情况。</dd><dt>以前</dt><dd>方法返回 null 表示“没有”，调用方忘了判断就 NPE</dd></dl><pre><code>Optional&lt;User&gt; u = userRepo.findById(id);
+String name = u.map(User::getName).orElse("匿名");
+User must = u.orElseThrow(() -&gt; new NotFoundException(id));
+<span class="cm">// 不建议用作字段和方法参数</span></code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm"><code>List.of</code>、<code>Map.of</code></span><span class="vr">9</span><span class="sv">一行建不可变集合（不允许 null 元素）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>一行创建不可变集合。创建后不能增删，也不允许 null 元素。</dd><dt>以前</dt><dd><code>Collections.unmodifiableList(Arrays.asList(…))</code></dd></dl><pre><code>var ids = List.of(1, 2, 3);           <span class="cm">// ids.add(4) 抛 UnsupportedOperationException</span>
+var m = Map.of("a", 1, "b", 2);       <span class="cm">// 最多 10 对，再多用 Map.ofEntries</span>
+var copy = List.copyOf(mutableList);  <span class="cm">// 10 起：拿一份不可变副本</span>
+<span class="cm">// List.of(1, null) 抛 NullPointerException</span></code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">HttpClient</span><span class="vr">11</span><span class="sv">JDK 自带，支持 HTTP/2、同步和异步</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>JDK 自带的 HTTP 客户端，支持 HTTP/2（26 起还支持 HTTP/3）、同步和异步调用。</dd><dt>以前</dt><dd><code>HttpURLConnection</code> 难用、不支持 HTTP/2，只好引 Apache HttpClient</dd></dl><pre><code>var client = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(2)).build();      <span class="cm">// 客户端全局复用一个</span>
+var req = HttpRequest.newBuilder(URI.create("https://example.com/api"))
+        .timeout(Duration.ofSeconds(3)).GET().build();
+HttpResponse&lt;String&gt; resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+client.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+      .thenApply(HttpResponse::body);                      <span class="cm">// 异步版本</span></code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">String 新方法</span><span class="vr">11</span><span class="sv"><code>isBlank</code>、<code>strip</code>、<code>repeat</code>、<code>lines</code> 直接用</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd><code>String</code> 补了几个天天要用的方法，以前多半靠 Apache Commons 或 Guava。</dd><dt>以前</dt><dd>判空白、去空白、重复、按行拆分都要靠工具类</dd></dl><pre><code>"  ".isBlank();          <span class="cm">// true：只有空白字符</span>
+" a ".strip();          <span class="cm">// "a"：和 trim 不同，能识别全角空格等 Unicode 空白</span>
+"ab".repeat(3);         <span class="cm">// "ababab"</span>
+text.lines().count();   <span class="cm">// 按行拆成 Stream</span></code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm"><code>Stream.toList()</code></span><span class="vr">16</span><span class="sv">更短，返回不可修改的 List</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>Stream 直接收集成一个不可修改的 List。</dd><dt>以前</dt><dd><code>.collect(Collectors.toList())</code></dd></dl><pre><code>List&lt;String&gt; names = users.stream().map(User::getName).toList();
+<span class="cm">// 和 collect(Collectors.toList()) 的区别：返回的 List 不能 add / remove</span></code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">SequencedCollection</span><span class="vr">21</span><span class="sv">有顺序的集合统一有 <code>getFirst</code>、<code>getLast</code>、<code>reversed</code></span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>给“有顺序”的集合（List、Deque、LinkedHashSet、LinkedHashMap 等）一套统一的首尾操作。</dd><dt>以前</dt><dd>取最后一个元素：List 要 <code>get(size()-1)</code>，Deque 有 <code>getLast</code>，LinkedHashSet 没办法</dd></dl><pre><code>List&lt;Integer&gt; list = new ArrayList&lt;&gt;(List.of(1, 2, 3));
+list.getFirst();        <span class="cm">// 1</span>
+list.getLast();         <span class="cm">// 3，以前要 list.get(list.size() - 1)</span>
+list.reversed();        <span class="cm">// 反序视图 [3, 2, 1]</span>
+linkedHashSet.getLast();                 <span class="cm">// 以前只能遍历到最后</span>
+linkedHashMap.firstEntry();              <span class="cm">// SequencedMap：首尾的键值对</span></code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">FFM API</span><span class="vr">22</span><span class="sv">纯 Java 调本地函数、安全地管理堆外内存；也是收紧 <code>Unsafe</code> 和 JNI 的前提</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>Foreign Function &amp; Memory API：不写 C 代码，直接从 Java 调本地库的函数，并安全地分配、释放堆外内存。</dd><dt>以前</dt><dd>调本地库要写 JNI 的 C 胶水代码，堆外内存只能靠 <code>ByteBuffer</code> 或 <code>Unsafe</code></dd></dl><pre><code>Linker linker = Linker.nativeLinker();
+MethodHandle strlen = linker.downcallHandle(
+        linker.defaultLookup().find("strlen").orElseThrow(),
+        FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+try (Arena arena = Arena.ofConfined()) {
+    MemorySegment s = arena.allocateFrom("Hello");   <span class="cm">// 堆外内存，离开 try 自动释放</span>
+    long len = (long) strlen.invokeExact(s);         <span class="cm">// 5</span>
+}</code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">Stream Gatherers</span><span class="vr">24</span><span class="sv"><code>gather(Gatherers.windowFixed(100))</code>，也能自定义中间操作</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd><code>gather(…)</code> 是可以自定义的中间操作。JDK 先内置了分批、滑动窗口、累加这几种常用的。</dd><dt>以前</dt><dd>Stream 的中间操作就那几个，按 100 个一批、滑动窗口只能自己写循环或 Collector</dd></dl><pre><code>Stream.of(1, 2, 3, 4, 5).gather(Gatherers.windowFixed(2)).toList();
+<span class="cm">// [[1, 2], [3, 4], [5]]          每 2 个一批</span>
+Stream.of(1, 2, 3, 4).gather(Gatherers.windowSliding(2)).toList();
+<span class="cm">// [[1, 2], [2, 3], [3, 4]]       滑动窗口</span>
+Stream.of(1, 2, 3).gather(Gatherers.scan(() -&gt; 0, Integer::sum)).toList();
+<span class="cm">// [1, 3, 6]                      逐个累加</span></code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">Class-File API</span><span class="vr">24</span><span class="sv">JDK 自带读写 class 文件的 API，跟着 JDK 一起升级</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>JDK 自带的读、写、改 class 文件的 API（包名 <code>java.lang.classfile</code>），给字节码框架用，业务代码一般用不到。</dd><dt>以前</dt><dd>框架各自带一份 ASM，JDK 一升 class 文件版本号，旧 ASM 就读不了</dd></dl><pre><code>ClassModel cm = ClassFile.of().parse(Files.readAllBytes(Path.of("Foo.class")));
+for (MethodModel m : cm.methods()) {
+    System.out.println(m.methodName().stringValue());   <span class="cm">// 列出所有方法名</span>
+}</code></pre></div></details>
+    <details class="ft" data-role="g2"><summary><span class="nm">抗量子密码、KDF</span><span class="vr">24、25</span><span class="sv">ML-KEM、ML-DSA（24）和密钥派生 API（25）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>新的公钥算法 ML-KEM、ML-DSA（24）能抵抗量子计算机；KDF API（25）用来从一个主密钥派生出多把密钥。</dd><dt>以前</dt><dd>现有的公钥算法将来可能被量子计算机破解</dd></dl><pre><code>KeyPairGenerator g = KeyPairGenerator.getInstance("ML-KEM");   <span class="cm">// 24</span>
+KeyPair kp = g.generateKeyPair();
+
+KDF hkdf = KDF.getInstance("HKDF-SHA256");                       <span class="cm">// 25</span>
+SecretKey key = hkdf.deriveKey("AES",
+        HKDFParameterSpec.ofExtract().addIKM(ikm).addSalt(salt).thenExpand(info, 32));</code></pre></div></details>
+    </div>
+    <div class="lane-h" data-role="bk">并发（Project Loom）</div>
+    <div class="feats">
+    <details class="ft" data-role="bk"><summary><span class="nm">CompletableFuture</span><span class="vr">8</span><span class="sv">多个异步结果能串联、合并、处理异常</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>一个“将来会有结果”的对象，可以在结果出来后接着处理、和别的结果合并、统一处理异常，不用阻塞等。</dd><dt>以前</dt><dd><code>Future.get()</code> 只能阻塞等，没法组合</dd></dl><pre><code>var user = CompletableFuture.supplyAsync(() -&gt; userApi.get(id), pool);
+var orders = CompletableFuture.supplyAsync(() -&gt; orderApi.list(id), pool);
+CompletableFuture&lt;Page&gt; page = user
+        .thenCombine(orders, Page::new)        <span class="cm">// 两个都回来再合并</span>
+        .orTimeout(2, TimeUnit.SECONDS)        <span class="cm">// 9 起有超时</span>
+        .exceptionally(e -&gt; Page.empty());     <span class="cm">// 出错给个兜底</span></code></pre></div></details>
+    <details class="ft" data-role="bk"><summary><span class="nm">虚拟线程</span><span class="vr">21</span><span class="sv">线程变便宜，照样写阻塞代码也能扛高并发（原理见 <a href="../network/io-models.html">网络 IO 模型</a>）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>由 JVM 调度的轻量线程，创建几百万个也没问题；遇到阻塞 IO 时自动让出底层的平台线程。写法和普通线程一样。</dd><dt>以前</dt><dd>一个请求占一个平台线程，线程贵，并发上不去；改响应式又难写难调</dd></dl><pre><code>Thread.startVirtualThread(() -&gt; handle(request));
+
+try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {   <span class="cm">// 每个任务一个虚拟线程</span>
+    for (var id : ids) exec.submit(() -&gt; callApi(id));
+}                                                                 <span class="cm">// 退出时等任务做完</span>
+
+<span class="cm">// Spring Boot 3.2+：spring.threads.virtual.enabled=true</span></code></pre></div></details>
+    <details class="ft" data-role="bk"><summary><span class="nm">synchronized 不再钉住</span><span class="vr">24</span><span class="sv">重写了 <code>synchronized</code> 的实现，阻塞时照样能卸载（JEP 491）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>虚拟线程在 <code>synchronized</code> 块里阻塞时，也能从载体线程上卸下来。不用改代码，升到 24 以上就生效。</dd><dt>以前</dt><dd>21 里虚拟线程在 <code>synchronized</code> 中阻塞会占住载体线程，高峰时可能全卡住</dd></dl><pre><code>synchronized (lock) {
+    rs = stmt.executeQuery();   <span class="cm">// 21：阻塞时钉住载体线程；24 起会被卸载</span>
+}
+<span class="cm">// 在 21 上排查钉住：-Djdk.tracePinnedThreads=full，或 JFR 事件 jdk.VirtualThreadPinned</span></code></pre></div></details>
+    <details class="ft" data-role="bk"><summary><span class="nm">ScopedValue</span><span class="vr">25</span><span class="sv">只读、只在一段作用域内有效、子任务共享不复制（机制 5）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>在一段作用域里绑定一个只读的值，调用链上任何地方都能读到；离开作用域自动失效。用来代替 <code>ThreadLocal</code> 传请求上下文。</dd><dt>以前</dt><dd><code>ThreadLocal</code> 谁都能改、要记得 remove；百万虚拟线程各存一份，子线程继承还要整份复制</dd></dl><pre><code>static final ScopedValue&lt;String&gt; TENANT = ScopedValue.newInstance();
+
+ScopedValue.where(TENANT, "t-1").run(() -&gt; service.handle());
+
+<span class="cm">// 调用链任意深处：</span>
+String t = TENANT.get();        <span class="cm">// "t-1"；不在 run 里会抛 NoSuchElementException</span>
+TENANT.isBound();               <span class="cm">// 先判断有没有绑定</span></code></pre></div></details>
+    <details class="ft" data-role="bk"><summary><span class="nm">结构化并发</span><span class="vr">25 仍预览</span><span class="sv">把一组子任务当成一个整体管理；还没转正，生产先别用</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>把一组并发子任务当成一个整体：一起开始、一起结束，一个失败其余自动取消。25 还是预览，要加 <code>--enable-preview</code>，每个版本的 API 都可能变。</dd><dt>以前</dt><dd>并发起几个子任务，一个失败了其余的没人取消，线程转储里也看不出父子关系</dd></dl><pre><code><span class="cm">// 25 的预览写法</span>
+try (var scope = StructuredTaskScope.open()) {
+    var user = scope.fork(() -&gt; findUser(id));
+    var orders = scope.fork(() -&gt; findOrders(id));
+    scope.join();              <span class="cm">// 任一失败：其余自动取消，join 抛异常</span>
+    return new Page(user.get(), orders.get());
+}</code></pre></div></details>
+    </div>
+    <div class="lane-h" data-role="cg">GC 和性能（升级就白拿）</div>
+    <div class="feats">
+    <details class="ft" data-role="cg"><summary><span class="nm">Metaspace</span><span class="vr">8</span><span class="sv">类元数据挪到本地内存，按需增长</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>类的元数据（类名、方法、字段等）放在本地内存里的元空间，取代了以前在堆里、大小固定的永久代。</dd><dt>以前</dt><dd>永久代大小难估，动不动 <code>OutOfMemoryError: PermGen space</code></dd></dl><pre><code>-XX:MaxMetaspaceSize=256m      # 默认不设上限，类加载泄漏时建议设一个
+-XX:MaxPermSize=256m           # 8 起无效，只打警告，可以删了</code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">G1 成为默认</span><span class="vr">9</span><span class="sv">服务端更在乎停顿，G1 能按目标停顿时间分批回收</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>G1 把堆切成很多小块（Region），每次挑垃圾最多的几块回收，尽量满足设定的停顿目标。</dd><dt>以前</dt><dd>8 默认 Parallel GC，吞吐高但大堆停顿长</dd></dl><pre><code>-XX:+UseG1GC                  # 9 起不写也是它
+-XX:MaxGCPauseMillis=200      # 停顿目标，默认 200 ms
+-Xlog:gc*:file=gc.log:time,uptime   # 9 起的统一 GC 日志</code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">压缩字符串</span><span class="vr">9</span><span class="sv">改成 <code>byte[]</code> 加编码标志，纯拉丁字符的字符串省一半内存</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>String 内部的数组按内容选编码：全是拉丁字符时每个字符 1 字节，有中文等字符时 2 字节。对代码透明。</dd><dt>以前</dt><dd><code>String</code> 内部是 <code>char[]</code>，每个字符 2 字节，而多数字符串只有拉丁字符</dd></dl><pre><code><span class="cm">// 不用改代码，自动生效</span>
+-XX:-CompactStrings            # 需要时可以关掉，一般不用</code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">容器感知</span><span class="vr">10</span><span class="sv">读 cgroup 限制；回移植到 8u191，配 <code>MaxRAMPercentage</code></span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>JVM 读取容器（cgroup）的 CPU 和内存限制，按容器的规格而不是宿主机的规格来算默认堆大小和线程数。</dd><dt>以前</dt><dd>JVM 在 Docker 里按宿主机的内存和 CPU 算堆大小和线程数，容易被杀</dd></dl><pre><code>-XX:MaxRAMPercentage=75.0      # 堆最多占容器内存的 75%，比写死 -Xmx 灵活
+-XX:ActiveProcessorCount=2      # 需要时手动指定 JVM 看到的 CPU 数</code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">AppCDS、默认 CDS</span><span class="vr">10、12</span><span class="sv">把类数据存成归档共享，启动更快</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>把类加载、解析好的数据存成归档文件，下次启动直接映射进内存，省掉重复的解析和校验。</dd><dt>以前</dt><dd>每次启动都重新解析、校验同样的类</dd></dl><pre><code><span class="cm"># 13 起：跑一次，退出时生成归档</span>
+java -XX:ArchiveClassesAtExit=app.jsa -jar app.jar
+<span class="cm"># 之后启动带上它</span>
+java -XX:SharedArchiveFile=app.jsa -jar app.jar</code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">删掉 CMS</span><span class="vr">14</span><span class="sv">G1、ZGC 已能替代，删掉省维护</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>CMS 是一个以低停顿为目标、但不整理内存的老 GC，14 起从 JDK 里删除。</dd><dt>以前</dt><dd>CMS 不整理内存，碎片多了退化成长时间 Full GC，维护成本高</dd></dl><pre><code><span class="cm"># 8 上的老参数，15 起会让 JVM 起不来：</span>
+<span class="cm"># -XX:+UseConcMarkSweepGC -XX:CMSInitiatingOccupancyFraction=70</span>
+<span class="cm"># 删掉，用默认的 G1；对停顿要求极高的再试 ZGC</span></code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">ZGC 转正、分代 ZGC</span><span class="vr">15、21</span><span class="sv">停顿通常不到 1 毫秒，和堆大小基本无关；21 的分代版吞吐更好</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>ZGC 几乎所有回收工作都和业务线程并发进行，停顿通常不到 1 毫秒；分代版把新对象和老对象分开回收，吞吐更好。</dd><dt>以前</dt><dd>堆越大，停顿越长</dd></dl><pre><code>-XX:+UseZGC                     # 15 起可用于生产
+-XX:+UseZGC -XX:+ZGenerational  # 21 要用分代版得这样写
+-Xmx16g                         # ZGC 主要靠堆大小调，堆要给够</code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">分代 ZGC 成默认、删不分代</span><span class="vr">23、24</span><span class="sv"><code>-XX:+UseZGC</code> 直接就是分代的</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>从 23 起 ZGC 默认就是分代的，24 起不分代的模式被删掉，只剩一种 ZGC。</dd><dt>以前</dt><dd>同时维护两种 ZGC</dd></dl><pre><code>-XX:+UseZGC                     # 23 起直接就是分代的
+<span class="cm"># -XX:-ZGenerational            24 起只打警告并被忽略</span></code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">AOT 缓存</span><span class="vr">24、25</span><span class="sv">先做一次训练运行，把加载、链接好的类（24）和方法的运行画像（25）存成缓存，之后启动直接用</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>先用典型流量“训练”跑一次，把加载、链接好的类和方法的运行画像存成缓存文件，之后启动直接用，启动和预热都更快。</dd><dt>以前</dt><dd>Spring Boot 这类应用启动要加载、链接几千个类，刚启动还要慢慢预热</dd></dl><pre><code><span class="cm"># 25：一步完成训练并生成缓存（JEP 514）</span>
+java -XX:AOTCacheOutput=app.aot -jar app.jar     # 跑一遍典型请求后退出
+java -XX:AOTCache=app.aot -jar app.jar           # 之后带着缓存启动
+<span class="cm"># 24 要分 -XX:AOTMode=record 和 -XX:AOTMode=create 两步</span></code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">紧凑对象头</span><span class="vr">25</span><span class="sv">压到 8 字节，对象多而小的应用堆明显变小；25 里要手动开 <code>-XX:+UseCompactObjectHeaders</code>，27 起默认打开（JEP 534）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>把每个对象的对象头从通常的 12 字节压到 8 字节，小对象越多，省下的堆越多。</dd><dt>以前</dt><dd>64 位 JVM 上对象头通常 12 字节，小对象里头的占比很大</dd></dl><pre><code>-XX:+UseCompactObjectHeaders    # 25 要手动打开
+-XX:-UseCompactObjectHeaders    # 27 起默认打开，需要时用这个关掉</code></pre></div></details>
+    <details class="ft" data-role="cg"><summary><span class="nm">分代 Shenandoah</span><span class="vr">25</span><span class="sv">分代模式转为正式特性</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>Shenandoah 是另一种低停顿 GC（Oracle 自家构建不带，Temurin 等发行版带）；25 起它的分代模式也转为正式特性。</dd><dt>以前</dt><dd>Shenandoah 只有不分代模式</dd></dl><pre><code>-XX:+UseShenandoahGC -XX:ShenandoahGCMode=generational</code></pre></div></details>
+    </div>
+    <div class="lane-h" data-role="rn">平台治理（升级的坑大多在这）</div>
+    <div class="feats">
+    <details class="ft" data-role="rn"><summary><span class="nm">模块系统</span><span class="vr">9</span><span class="sv">用模块划清“公开的”和“内部的”，还能用 <code>jlink</code> 裁出小运行时</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>模块是比包大一级的单元：在 <code>module-info.java</code> 里声明依赖哪些模块、对外公开哪些包，没公开的包别的模块用不了。</dd><dt>以前</dt><dd>JDK 是一整块 rt.jar，<code>sun.*</code> 内部类被到处直接用，JDK 想改内部都怕打坏别人</dd></dl><pre><code><span class="cm">// module-info.java</span>
+module com.shop.order {
+    requires java.sql;
+    exports com.shop.order.api;      <span class="cm">// 只有这个包对外可见</span>
+}
+<span class="cm">// 大多数 Spring Boot 应用不写 module-info，跑在“未命名模块”里，照样能用</span>
+
+jlink --add-modules java.base,java.sql --output myjre   # 裁出一个小运行时</code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">删 Java EE、CORBA 模块</span><span class="vr">11</span><span class="sv">移出 JDK，改成普通 Maven 依赖，各自演进</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>JAXB、JAX-WS、<code>javax.annotation</code> 等原本属于 Java EE 的模块，11 起不再随 JDK 提供，要自己加依赖。</dd><dt>以前</dt><dd>JAXB、JAX-WS 等属于 Java EE，跟着 JDK 发版太慢</dd></dl><pre><code>&lt;dependency&gt;
+    &lt;groupId&gt;jakarta.xml.bind&lt;/groupId&gt;
+    &lt;artifactId&gt;jakarta.xml.bind-api&lt;/artifactId&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+    &lt;groupId&gt;org.glassfish.jaxb&lt;/groupId&gt;
+    &lt;artifactId&gt;jaxb-runtime&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">删 Nashorn</span><span class="vr">15</span><span class="sv">需要的自己引独立的引擎</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>JDK 内置的 JavaScript 引擎 Nashorn 在 15 被删除，需要的话改用独立发布的版本。</dd><dt>以前</dt><dd>内置 JavaScript 引擎跟不上 JS 标准，维护成本高</dd></dl><pre><code>&lt;dependency&gt;
+    &lt;groupId&gt;org.openjdk.nashorn&lt;/groupId&gt;
+    &lt;artifactId&gt;nashorn-core&lt;/artifactId&gt;
+&lt;/dependency&gt;
+<span class="cm">// 用法不变：new ScriptEngineManager().getEngineByName("nashorn")</span></code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">强封装</span><span class="vr">16、17</span><span class="sv">16 默认拒绝，17 去掉整体放开的开关，只能按包 <code>--add-opens</code></span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>JDK 内部的包默认不再对反射开放：不能再用 <code>setAccessible(true)</code> 去改 JDK 类的私有字段。</dd><dt>以前</dt><dd>框架靠反射随便改 JDK 内部字段，JDK 一改实现就崩</dd></dl><pre><code><span class="cm"># 过渡期：只对某个包放开</span>
+--add-opens java.base/java.lang=ALL-UNNAMED
+<span class="cm"># 先用 jdeps 找出谁在用 JDK 内部 API</span>
+jdeps --jdk-internals app.jar</code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">弃用 SecurityManager</span><span class="vr">17</span><span class="sv">标记要删，18 起默认不允许运行时设置</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>SecurityManager 是早年为 Applet 设计的沙箱机制，17 标记为将要删除。</dd><dt>以前</dt><dd>很少有人用，却拖累 JDK 每处权限检查的维护</dd></dl><pre><code><span class="cm">// 17：调用时打警告</span>
+System.setSecurityManager(new MySecurityManager());
+<span class="cm">// 18～23：默认抛异常，-Djava.security.manager=allow 还能打开</span>
+<span class="cm">// 24 起：永远抛 UnsupportedOperationException</span></code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">默认 UTF-8</span><span class="vr">18</span><span class="sv">统一默认 UTF-8（21 里已生效）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>不指定编码的 API（<code>FileReader</code>、<code>String.getBytes()</code> 等）默认一律用 UTF-8，不再跟操作系统走。</dd><dt>以前</dt><dd>不写编码时用操作系统默认编码，同一个程序在中文 Windows 和 Linux 上结果不同</dd></dl><pre><code>new FileReader(file);                            <span class="cm">// 8：系统默认编码；18 起：UTF-8</span>
+new FileReader(file, StandardCharsets.UTF_8);    <span class="cm">// 11 起有这个构造器，显式写最稳</span>
+Files.readString(path);                          <span class="cm">// 11 起，本来就是 UTF-8</span>
+<span class="cm">// 需要旧行为：-Dfile.encoding=COMPAT</span></code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">动态加载 agent 警告</span><span class="vr">21</span><span class="sv">先打警告，为将来默认禁止做准备</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>运行中通过 attach 往 JVM 里加载 agent 会打警告，将来会默认禁止；启动时用 <code>-javaagent</code> 加载的不受影响。</dd><dt>以前</dt><dd>运行中随时能往 JVM 里注入代码改行为</dd></dl><pre><code>-javaagent:/opt/apm/agent.jar        # APM 推荐这样在启动时加载
+-XX:+EnableDynamicAgentLoading       # 需要 Arthas 临时 attach 的服务，启动时加这个</code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">删字符串模板</span><span class="vr">23</span><span class="sv">整个撤回重新设计（预览特性的风险，⑥ 坑 6）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>21、22 预览过的字符串模板 <code>STR."…"</code> 在 23 被撤回，以后可能换一种设计再来。</dd><dt>以前</dt><dd>21、22 预览的 <code>STR."…"</code> 设计有争议</dd></dl><pre><code><span class="cm">// 21、22 的预览写法，23 起编译不过：</span>
+<span class="cm">// String s = STR."Hello \{name}";</span>
+String s = "Hello %s".formatted(name);   <span class="cm">// 15 起就有的替代写法</span></code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">注解处理默认不跑</span><span class="vr">23</span><span class="sv">必须显式指定处理器或加 <code>-proc:full</code>（JDK-8321314，⑥ 坑 9）</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>javac 不再自动执行类路径上找到的注解处理器（Lombok、MapStruct 等），要在构建里显式声明。</dd><dt>以前</dt><dd>类路径上任何 jar 里的注解处理器都会被 javac 自动执行，是供应链风险</dd></dl><pre><code>javac -proc:full ...              # 临时恢复旧行为
+<span class="cm"># 推荐：Maven 的 maven-compiler-plugin 里配 annotationProcessorPaths（见 ⑤ 的 pom）</span></code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">收紧 <code>Unsafe</code> 和 JNI</span><span class="vr">23、24</span><span class="sv">23 弃用 Unsafe 的内存访问方法，24 起首次调用打警告；24 起 JNI 也打警告，替代品是 FFM</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd><code>sun.misc.Unsafe</code> 的内存访问方法和 JNI 都会打警告，将来默认禁止；替代品是 VarHandle 和 FFM。</dd><dt>以前</dt><dd>库直接用 <code>sun.misc.Unsafe</code> 读写内存、用 JNI 调本地代码，一出错整个 JVM 崩</dd></dl><pre><code><span class="cm">// 以前：UNSAFE.compareAndSwapInt(this, STATE_OFFSET, 0, 1);</span>
+<span class="cm">// 现在用 VarHandle（在 static 块里初始化，findVarHandle 会抛受检异常）：</span>
+static final VarHandle STATE;   <span class="cm">// = MethodHandles.lookup().findVarHandle(Task.class, "state", int.class)</span>
+STATE.compareAndSet(this, 0, 1);
+
+--enable-native-access=ALL-UNNAMED            # 用 JNI 的程序启动时加上，消掉警告</code></pre></div></details>
+    <details class="ft" data-role="rn"><summary><span class="nm">永久禁用 SecurityManager</span><span class="vr">24</span><span class="sv">24 起彻底打不开，<code>setSecurityManager</code> 一律抛异常</span></summary><div class="ft-body"><dl><dt>是什么</dt><dd>24 起 SecurityManager 彻底无法启用，所有相关的权限检查都不再生效。</dd><dt>以前</dt><dd>17 弃用后，18～23 还能用 <code>-Djava.security.manager=allow</code> 打开</dd></dl><pre><code>System.setSecurityManager(sm);   <span class="cm">// 24 起总是抛 UnsupportedOperationException</span>
+<span class="cm">// 隔离不可信代码：改用独立进程、容器或操作系统权限</span></code></pre></div></details>
+    </div>
+  
   </div>
 
   <div class="sub" id="m-amber">
@@ -1510,6 +1732,12 @@ function firstAtRun(res) {
   });
   state.picked = ['gclog', 'jaxb', 'reflect', 'boot2'];
   renderPresets(); sync(); render(); $('lab-guess').hidden = true;
+})();
+(function () {
+  var all = function () { return document.querySelectorAll('details.ft'); };
+  var o = document.getElementById('ft-open'), c = document.getElementById('ft-close');
+  if (o) o.addEventListener('click', function () { [].forEach.call(all(), function (d) { d.open = true; }); });
+  if (c) c.addEventListener('click', function () { [].forEach.call(all(), function (d) { d.open = false; }); });
 })();
 </script>
 
