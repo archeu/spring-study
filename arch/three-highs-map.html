@@ -1,0 +1,1577 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>三高知识地图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a design-idea topic (① 要解决的问题 ② 不用它会怎样 ③ 几种流派 ④ 核心取舍 ⑤ 套进场景 ⑥ 反例和误用 ↺). Colors: performance / "do less" blue (pd), concurrency / "do more at once" teal (bk), availability redundancy purple (cg), availability self-protection brown (g2), production rollout magenta (rn), highlights amber (of), wrong red, right green, old ways grey. Interactive: one guess-first thread-budget lab in ⑥ driven by a pure Little's-law simulator fuzzed in node. Numbers in ⑤ come from a plain-Java demo run on JDK 17 on a 2-vCPU ARM VM. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --rn:#A8327A; --rn-tint:#F7E1EE;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --rn:#F08BC6; --rn-tint:#3D1A30;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --rn:#F08BC6; --rn-tint:#3D1A30;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="rn"]{--rc:var(--rn);--rt:var(--rn-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:660px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-rn{font-size:12px;font-weight:700;fill:var(--rn)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.halo{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+.halo-c{paint-order:stroke;stroke:var(--code-bg);stroke-width:4px;stroke-linejoin:round}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-rn{fill:var(--rn-tint);stroke:var(--rn);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.b-dash{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:5 4}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)} .f-rn{fill:var(--rn)}
+.f-card{fill:var(--card)} .f-code{fill:var(--code-bg)} .f-oft{fill:var(--of-tint)} .f-pdt{fill:var(--pd-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-g2t{fill:var(--g2-tint)} .f-rnt{fill:var(--rn-tint)} .f-neut{fill:var(--neutral-tint)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-life{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:2 5}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-rn{stroke:var(--rn);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-rnd{stroke:var(--rn);stroke-width:2;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev b{color:var(--bad)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+.hl{background:var(--of-tint)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+pre.console .r{color:#FF9B98}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td, .t tr.hl th{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.design.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:20px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way svg{display:block;width:100%;height:auto}
+.way pre{padding:10px 12px;background:var(--code-bg);border-radius:10px;font-size:12px}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.pains code{overflow-wrap:anywhere}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b{color:var(--rc)}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+.mech-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.mech-h .sn{font-size:20px}
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl.span{grid-column:1 / -1}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:10px;border-radius:3px;display:inline-block;background:var(--rc);border:1.5px solid var(--rc)}
+.lg i.t{background:var(--rt)}
+.lg i.mk{width:3px;height:14px;border-radius:1px;border:0}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+.lab-res ul{margin:6px 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:3px}
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.dp svg{display:block;width:100%;height:auto}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metaphor{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ex,.design.three{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+  .ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .facts,.presets,.ctl-grid{grid-template-columns:1fr}
+  .metaphor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+}
+
+/* ---------- knowledge map ---------- */
+.map{display:flex;flex-direction:column;gap:10px}
+.lay{display:grid;grid-template-columns:9.5em minmax(0,1fr);gap:12px;align-items:stretch}
+.lay-h{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 12px;border-radius:12px;background:var(--ink);color:var(--paper)}
+.lay-h b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1.15}
+.lay-h span{font-size:12px;opacity:.75}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;border-radius:12px;background:var(--card);border:1.5px solid var(--line);align-content:center;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:13.5px;line-height:1.3;padding:4px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.chip.ops{border-style:dashed;background:var(--card)}
+a.chip::after{content:"↗";font-size:11px;color:var(--rc)}
+a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
+.life{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.stg{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:14px;background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rn);min-width:0;position:relative}
+.stg h4{font-size:17px;color:var(--rn)}
+.stg h4 i{font-style:normal;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-right:4px}
+.stg ul{margin:0;padding-left:1.05em;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+.stg code{overflow-wrap:anywhere}
+.fam{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fm{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fm h4{color:var(--rc);font-size:20px}
+.fm h4 small{font-family:var(--font-body);font-size:12.5px;color:var(--muted);margin-left:6px}
+.fm p{font-size:14px}
+.fm .pay{font-size:13px;color:var(--muted)}
+.fm .pay b{color:var(--bad);font-weight:600}
+.nines{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.nn{border-radius:12px;padding:8px 12px;background:var(--cg-tint);border:1.5px solid var(--cg);display:flex;flex-direction:column;min-width:0}
+.nn b{font-family:var(--font-mono);font-size:17px;font-variant-numeric:tabular-nums}
+.nn span{font-size:13px;color:var(--muted)}
+.check{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.cl{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.cl h4{color:var(--rc);font-size:20px}
+.cl ol{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:8px}
+.cl li{font-size:14.5px}
+.cl li code{overflow-wrap:anywhere}
+.cl li .g{display:block;font-size:13px;color:var(--muted)}
+.cl li .g::before{content:"防：";color:var(--good);font-weight:700}
+
+/* ---------- thread bar (lab) ---------- */
+.tb-wrap{display:flex;flex-direction:column;gap:6px}
+.tb-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;font-size:13px;color:var(--muted)}
+.tb-head b{color:var(--ink);font-family:var(--font-mono)}
+.tbar{position:relative;height:38px;border-radius:10px;background:var(--code-bg);border:1.5px solid var(--line);overflow:hidden}
+.tseg{position:absolute;top:4px;bottom:4px;border-radius:5px;background:var(--rt);border:1.5px solid var(--rc);font-size:11.5px;line-height:26px;padding:0 5px;white-space:nowrap;overflow:hidden;color:var(--ink)}
+.tseg.over{background:repeating-linear-gradient(135deg,var(--bad-tint) 0 6px,var(--card) 6px 12px);border-color:var(--bad)}
+.tcap{position:absolute;top:0;bottom:0;width:0;border-left:3px solid var(--ink)}
+.tcap span{position:absolute;top:-1px;left:4px;font-size:11px;font-family:var(--font-mono);background:var(--ink);color:var(--paper);padding:0 4px;border-radius:4px;white-space:nowrap}
+.toggles{display:flex;flex-wrap:wrap;gap:8px}
+.tg{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:13.5px;cursor:pointer}
+.tg[aria-pressed="true"]{border-color:var(--g2);background:var(--g2-tint);box-shadow:inset 0 0 0 1px var(--g2);font-weight:600}
+.tg[aria-pressed="true"]::before{content:"✓ ";color:var(--g2)}
+
+@media (max-width:980px){
+  .fam{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .life{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:860px){
+  .check{grid-template-columns:1fr}
+  .lay{grid-template-columns:1fr;gap:4px}
+  .lay-h{flex-direction:row;align-items:baseline;gap:10px}
+}
+@media (max-width:520px){
+  .fam,.nines{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .life{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fam{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-good" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>架构</span><span aria-hidden="true">/</span><span class="tb-here">三高知识地图</span></div></nav>
+
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <p class="kicker">高性能 · 高并发 · 高可用 · LITTLE 定律 · 几个 9 · 超时 · 舱壁 · 降级 · 灰度 · 监控</p>
+  <h1>三高要学的，是一本账</h1>
+  <p class="lead">“三高”听起来是三门功课，其实是同一个系统的三个指标。<b>性能和并发用一条公式连着：同时在忙的线程 = 每秒请求数 × 每个请求的耗时，下游一慢，能扛的并发就塌。可用靠两件事：多备一份，再把坏掉的部分关在小范围里。</b>缓存、异步、加机器、限流、熔断，每一招都在拿一致性、成本或复杂度去换，所以要先算账，再选招。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>要解决的问题</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>不用它会怎样</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>几种流派</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>核心取舍</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>套进场景</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>反例和误用</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>你在做一个电商的下单系统：Spring Boot + MySQL + Redis + Kafka，平时每秒两三百个请求，大促那晚要翻二十倍。日常写代码时要知道哪些写法会埋雷，上线（投产）时要知道该配什么、该看什么、出事了怎么办。本页是一张总地图：④ 把知识点挂到一条请求链路和一条上线流程上，⑥ 给出开发和投产两张清单，很多点链到仓库里已经讲透的页面。</span></p>
+</header>
+
+<!-- ================= ① ================= -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>要解决的问题：三个“高”，各量的是什么</h2>
+    <p class="lead">老板说“大促不能出问题”，落到工程上是三句能量出来的话。先把三个词换成三个指标，后面的讨论才不会各说各的。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="三个指标：高性能看单个请求的 RT 和 P99；高并发看每秒请求数和同时在途的请求数；高可用看一年里能用的时间比例，99.9% 一年停 8.8 小时，99.99% 停 53 分钟">
+        <!-- panel 1 -->
+        <g>
+          <rect x="0" y="0" width="280" height="250" rx="16" class="b-pd"/>
+          <text x="18" y="30" class="t-h">高性能：一个请求要快</text>
+          <rect x="20" y="48" width="48" height="30" rx="5" class="b-card"/><text x="44" y="68" text-anchor="middle" class="t-m">网络</text>
+          <rect x="68" y="48" width="72" height="30" rx="5" class="b-card"/><text x="104" y="68" text-anchor="middle" class="t-m">应用代码</text>
+          <rect x="140" y="48" width="96" height="30" rx="5" class="b-card"/><text x="188" y="68" text-anchor="middle" class="t-m">MySQL</text>
+          <text x="20" y="100" class="t-s">一个请求 RT ≈ 20 + 30 + 40 = 90 ms</text>
+          <g class="f-pd">
+            <circle cx="40" cy="132" r="4"/><circle cx="50" cy="128" r="4"/><circle cx="56" cy="136" r="4"/><circle cx="64" cy="130" r="4"/><circle cx="70" cy="134" r="4"/><circle cx="78" cy="128" r="4"/><circle cx="84" cy="136" r="4"/><circle cx="92" cy="131" r="4"/><circle cx="100" cy="134" r="4"/><circle cx="110" cy="130" r="4"/><circle cx="122" cy="133" r="4"/>
+          </g>
+          <circle cx="236" cy="132" r="5" class="f-bad"/>
+          <text x="20" y="160" class="t-m">每个点是一个请求：大多数很快，</text>
+          <text x="20" y="176" class="t-m">P99 看的是右边那种慢的</text>
+          <text x="20" y="212" class="t-pd">指标：RT、P99</text>
+          <text x="20" y="232" class="t-m">目标举例：P99 &lt; 200 ms</text>
+        </g>
+        <!-- panel 2 -->
+        <g transform="translate(310,0)">
+          <rect x="0" y="0" width="280" height="250" rx="16" class="b-bk"/>
+          <text x="18" y="30" class="t-h">高并发：同时来的都接住</text>
+          <g class="e-ink" marker-end="url(#ah-ink)">
+            <line x1="18" y1="56" x2="96" y2="56"/><line x1="18" y1="76" x2="96" y2="76"/><line x1="18" y1="96" x2="96" y2="96"/><line x1="18" y1="116" x2="96" y2="116"/>
+          </g>
+          <rect x="104" y="44" width="158" height="84" rx="8" class="b-card"/>
+          <g class="f-bkt" stroke="var(--bk)" stroke-width="1.2">
+            <rect x="112" y="52" width="26" height="16" rx="3"/><rect x="142" y="52" width="26" height="16" rx="3"/><rect x="172" y="52" width="26" height="16" rx="3"/><rect x="202" y="52" width="26" height="16" rx="3"/><rect x="232" y="52" width="22" height="16" rx="3"/>
+            <rect x="112" y="72" width="26" height="16" rx="3"/><rect x="142" y="72" width="26" height="16" rx="3"/><rect x="172" y="72" width="26" height="16" rx="3"/><rect x="202" y="72" width="26" height="16" rx="3"/><rect x="232" y="72" width="22" height="16" rx="3"/>
+          </g>
+          <g class="f-card" stroke="var(--line-strong)" stroke-width="1.2">
+            <rect x="112" y="92" width="26" height="16" rx="3"/><rect x="142" y="92" width="26" height="16" rx="3"/><rect x="172" y="92" width="26" height="16" rx="3"/><rect x="202" y="92" width="26" height="16" rx="3"/><rect x="232" y="92" width="22" height="16" rx="3"/>
+          </g>
+          <text x="183" y="122" text-anchor="middle" class="t-xs">工作线程（有限）</text>
+          <text x="20" y="152" class="t-s">每秒进来 4000 个，每个占 0.05 秒</text>
+          <text x="20" y="172" class="t-s">→ 同时在忙的 = 4000 × 0.05 = 200</text>
+          <text x="20" y="212" class="t-bk">指标：QPS、在途并发数</text>
+          <text x="20" y="232" class="t-m">目标举例：大促峰值 4000 QPS</text>
+        </g>
+        <!-- panel 3 -->
+        <g transform="translate(620,0)">
+          <rect x="0" y="0" width="280" height="250" rx="16" class="b-cg"/>
+          <text x="18" y="30" class="t-h">高可用：坏了也不停</text>
+          <text x="20" y="62" class="t-mono">99.9%</text>
+          <rect x="94" y="50" width="150" height="16" rx="3" class="f-bad"/>
+          <text x="20" y="80" class="t-m">一年停 8.8 小时</text>
+          <text x="20" y="108" class="t-mono">99.99%</text>
+          <rect x="94" y="96" width="15" height="16" rx="3" class="f-bad"/>
+          <text x="20" y="126" class="t-m">一年停 53 分钟</text>
+          <text x="20" y="154" class="t-mono">99.999%</text>
+          <rect x="94" y="142" width="2" height="16" class="f-bad"/>
+          <text x="20" y="172" class="t-m">一年停 5 分钟</text>
+          <text x="20" y="212" class="t-cg">指标：可用率（几个 9）</text>
+          <text x="20" y="232" class="t-m">目标举例：下单链路 99.99%</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>红条的长度按停机时间画。每多一个 9，允许停机的时间少到十分之一，靠人半夜爬起来处理已经来不及，必须靠系统自己切换和自保。</figcaption>
+  </figure>
+  <div class="trio">
+    <div class="fact" data-role="pd"><h4>日常开发管“上限”</h4><p>一条 SQL 有没有走索引、一次远程调用有没有超时、循环里是不是一条条查库，这些在写代码时就决定了单机能跑多快、出事时会不会连锁倒下。</p></div>
+    <div class="fact" data-role="rn"><h4>投产管“下限”</h4><p>机器开几台、池子开多大、怎么发版、看哪些监控、出事先关哪个开关。代码写得再好，发版时把正在处理的请求砍掉，照样是事故。</p></div>
+    <div class="fact" data-role="of"><h4>这页要回答</h4><p>三高到底有哪些知识点？它们之间是什么关系，先学哪个？日常写代码和上线各要守哪些规矩？</p></div>
+  </div>
+</section>
+
+<!-- ================= ② ================= -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>不用它会怎样：一台机器、一个库、全同步</h2>
+    <p class="lead">最朴素的做法：一个 Spring Boot 应用直连一个 MySQL，下单时顺手同步调用积分服务和短信服务。平时跑得好好的，问题都出在大促那晚。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 320" role="img" aria-label="朴素架构：用户直接打到一台 Spring Boot，它连一个 MySQL，并同步调用积分和短信服务。四处出事的地方：流量翻二十倍时线程不够；每次查询都打数据库；积分变慢时线程都卡在等它；这台机器宕机或发版重启时全站停。">
+        <rect x="20" y="120" width="120" height="70" rx="12" class="b-neu"/>
+        <text x="80" y="150" text-anchor="middle" class="t-b">用户</text>
+        <text x="80" y="170" text-anchor="middle" class="t-m">平时 200 QPS</text>
+        <line x1="140" y1="155" x2="208" y2="155" class="e-ink" marker-end="url(#ah-ink)"/>
+        <text x="174" y="145" text-anchor="middle" class="t-xs">HTTP</text>
+
+        <rect x="212" y="70" width="230" height="170" rx="14" class="b-neu"/>
+        <text x="327" y="98" text-anchor="middle" class="t-b">一台 Spring Boot</text>
+        <text x="327" y="116" text-anchor="middle" class="t-m">Tomcat 200 个工作线程</text>
+        <g class="f-card" stroke="var(--line-strong)" stroke-width="1.2">
+          <rect x="230" y="132" width="34" height="22" rx="4"/><rect x="268" y="132" width="34" height="22" rx="4"/><rect x="306" y="132" width="34" height="22" rx="4"/><rect x="344" y="132" width="34" height="22" rx="4"/><rect x="382" y="132" width="42" height="22" rx="4"/>
+          <rect x="230" y="160" width="34" height="22" rx="4"/><rect x="268" y="160" width="34" height="22" rx="4"/><rect x="306" y="160" width="34" height="22" rx="4"/><rect x="344" y="160" width="34" height="22" rx="4"/><rect x="382" y="160" width="42" height="22" rx="4"/>
+        </g>
+        <text x="327" y="210" text-anchor="middle" class="t-m">查商品 · 下单 · 都在这些线程上跑</text>
+
+        <rect x="560" y="40" width="170" height="64" rx="12" class="b-neu"/>
+        <text x="645" y="66" text-anchor="middle" class="t-b">MySQL（单库）</text>
+        <text x="645" y="86" text-anchor="middle" class="t-m">连接池 10 个连接</text>
+        <rect x="560" y="140" width="170" height="56" rx="12" class="b-neu"/>
+        <text x="645" y="164" text-anchor="middle" class="t-b">积分服务</text>
+        <text x="645" y="182" text-anchor="middle" class="t-m">同步调用，没设超时</text>
+        <rect x="560" y="226" width="170" height="56" rx="12" class="b-neu"/>
+        <text x="645" y="250" text-anchor="middle" class="t-b">短信服务</text>
+        <text x="645" y="268" text-anchor="middle" class="t-m">同步调用，没设超时</text>
+        <path d="M442 110 C500 100 520 75 556 72" class="e-mut" marker-end="url(#ah-mut)"/>
+        <text x="500" y="84" text-anchor="middle" class="t-xs">每次都查</text>
+        <line x1="442" y1="168" x2="556" y2="168" class="e-mut" marker-end="url(#ah-mut)"/>
+        <text x="500" y="160" text-anchor="middle" class="t-xs">等它回</text>
+        <path d="M442 215 C500 225 520 252 556 254" class="e-mut" marker-end="url(#ah-mut)"/>
+        <text x="500" y="250" text-anchor="middle" class="t-xs">等它回</text>
+
+        <g>
+          <circle cx="80" cy="222" r="13" class="f-bad"/><text x="80" y="227" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">1</text>
+          <circle cx="745" cy="44" r="13" class="f-bad"/><text x="745" y="49" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">2</text>
+          <circle cx="745" cy="146" r="13" class="f-bad"/><text x="745" y="151" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">3</text>
+          <circle cx="440" cy="70" r="13" class="f-bad"/><text x="440" y="75" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">4</text>
+        </g>
+        <text x="760" y="300" text-anchor="end" class="t-m">红圈 = 大促那晚出事的地方</text>
+      </svg>
+    </div>
+  </figure>
+  <div class="misj">
+    <div class="mj"><b><i>1</i>流量 ×20：线程不够用</b><dl><dt>表现</dt><dd>200 个线程全忙，新请求排队，RT 从几十毫秒涨到几秒。<b>能做，但不完美</b>：加大线程数只是把排队挪到数据库。</dd></dl></div>
+    <div class="mj"><b><i>2</i>每次都查库：数据库先倒</b><dl><dt>表现</dt><dd>热门商品被反复查，10 个连接排长队，拿不到连接的线程干等 30 秒（HikariCP 默认 <code>connectionTimeout</code>）。</dd></dl></div>
+    <div class="mj"><b><i>3</i>积分一慢：全站一起挂</b><dl><dt>表现</dt><dd>积分服务从 30 ms 变成 2 秒，下单线程全卡在等它，连不调积分的查商品也排不上队。<b>老办法做不到</b>：同步调用加共享线程池，一个依赖的慢会传给所有接口。</dd></dl></div>
+    <div class="mj"><b><i>4</i>只有一台：宕机和发版都是停机</b><dl><dt>表现</dt><dd>机器挂了就全挂；每次发版重启，正在处理的请求被砍断，重启那几十秒全部报错。<b>老办法做不到</b>：只有一份，就没有可以切过去的地方。</dd></dl></div>
+  </div>
+  <div class="essence">
+    <div class="big">缺的那块</div>
+    <p>1、2 是<b>容量</b>问题：每个请求占用资源太久，或者资源太少。3、4 是<b>故障范围</b>问题：一处坏了，没有东西把它挡住，也没有备份顶上。</p>
+    <p>所以三高的精华就两句：<b>用 Little 定律算清资源账；用冗余和隔离把故障关在小范围里。</b></p>
+  </div>
+  <div class="note-box" data-role="bad"><b>典型误用</b><span>以为“三高 = 上微服务 + 加机器”。加机器救不了 3：积分慢了，每台机器的线程照样被占满，加多少台都会被占满。拆成微服务后调用链更长，每多一个同步依赖，整体可用率就再乘一个小于 1 的数（④ 洞察 2）。</span></div>
+</section>
+
+<!-- ================= ③ ================= -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>几种流派：四类手段，各换来什么、付出什么</h2>
+    <p class="lead">书上和面试里列的三高手段有几十个，归一归只有四类。前两类解决容量，后两类解决故障范围。</p>
+  </div>
+  <div class="fam">
+    <div class="fm" data-role="pd"><h4>少做<small>→ 高性能</small></h4><p>让每个请求占资源的时间变短：索引、缓存、批量、少调几次远程、连接复用。</p><p class="pay">付出：<b>缓存带来数据不一致</b>，内存成本</p></div>
+    <div class="fm" data-role="bk"><h4>多做<small>→ 高并发</small></h4><p>让同一时刻能处理的请求变多：无状态加机器、异步（MQ 削峰）、读写分离、分库分表。</p><p class="pay">付出：<b>异步后结果不是马上可见</b>，拆分后跨库事务难做</p></div>
+    <div class="fm" data-role="cg"><h4>冗余<small>→ 高可用</small></h4><p>每样东西至少两份，坏一份切到另一份：多实例、主从、哨兵和集群、多可用区。</p><p class="pay">付出：<b>成本翻倍</b>，主从之间有复制延迟，切换时可能丢最后几笔</p></div>
+    <div class="fm" data-role="g2"><h4>自保<small>→ 高可用</small></h4><p>坏了不传染：超时、限流、熔断、降级、舱壁隔离、有限重试。</p><p class="pay">付出：<b>一部分请求会被主动拒绝或降级</b>，要提前想好“降成什么样”</p></div>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 240" role="img" aria-label="容量问题的选择顺序是一段台阶：先测量，再单机优化，再加缓存，再异步，再加机器，最后拆分。越往右成本、复杂度和一致性代价越高。">
+        <text x="12" y="24" class="t-of">越往右：成本 ↑ 复杂度 ↑ 一致性代价 ↑</text>
+        <line x1="12" y1="40" x2="420" y2="40" class="e-of" marker-end="url(#ah-of)"/>
+        <rect x="10" y="150" width="140" height="50" rx="10" class="b-neu"/>
+        <text x="80" y="172" text-anchor="middle" class="t-b">0 先测量</text><text x="80" y="190" text-anchor="middle" class="t-xs">压测 · 火焰图 · 慢 SQL</text>
+        <rect x="158" y="126" width="140" height="74" rx="10" class="b-pd"/>
+        <text x="228" y="148" text-anchor="middle" class="t-b">1 单机优化</text><text x="228" y="166" text-anchor="middle" class="t-xs">索引 · 批量 · 池参数</text><text x="228" y="182" text-anchor="middle" class="t-xs">去掉多余的远程调用</text>
+        <rect x="306" y="102" width="140" height="98" rx="10" class="b-pd"/>
+        <text x="376" y="124" text-anchor="middle" class="t-b">2 缓存</text><text x="376" y="142" text-anchor="middle" class="t-xs">本地 Caffeine</text><text x="376" y="158" text-anchor="middle" class="t-xs">+ Redis</text>
+        <rect x="454" y="78" width="140" height="122" rx="10" class="b-bk"/>
+        <text x="524" y="100" text-anchor="middle" class="t-b">3 异步</text><text x="524" y="118" text-anchor="middle" class="t-xs">MQ 削峰</text><text x="524" y="134" text-anchor="middle" class="t-xs">非核心步骤后置</text>
+        <rect x="602" y="54" width="140" height="146" rx="10" class="b-bk"/>
+        <text x="672" y="76" text-anchor="middle" class="t-b">4 加机器</text><text x="672" y="94" text-anchor="middle" class="t-xs">前提：应用无状态</text><text x="672" y="110" text-anchor="middle" class="t-xs">负载均衡分流</text>
+        <rect x="750" y="30" width="140" height="170" rx="10" class="b-bk"/>
+        <text x="820" y="52" text-anchor="middle" class="t-b">5 拆分</text><text x="820" y="70" text-anchor="middle" class="t-xs">读写分离</text><text x="820" y="86" text-anchor="middle" class="t-xs">分库分表 · 微服务</text>
+        <line x1="10" y1="224" x2="890" y2="224" class="e-cg"/>
+        <text x="450" y="229" text-anchor="middle" class="t-cg halo">冗余 + 自保：不在台阶上，第一天就要有</text>
+      </svg>
+    </div>
+    <figcaption>选择规则：容量问题从左往右走，每一步先压测确认瓶颈真的在这里，再上下一级；冗余和自保是地基，和流量大小无关。</figcaption>
+  </figure>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>同一个问题</th><th>可选的招</th><th>先用哪个</th></tr></thead>
+      <tbody>
+        <tr><th>商品详情查得太多</th><td>加索引 / 本地缓存 / Redis / 读写分离</td><td>先看 SQL 有没有走索引；读多写少再加缓存，热点先上本地缓存</td></tr>
+        <tr><th>下单后要发短信、加积分</th><td>同步调用 / 线程池异步 / MQ</td><td>不影响下单结果的步骤都后置；要保证不丢就用 MQ，不能只丢进内存线程池</td></tr>
+        <tr><th>大促流量翻 20 倍</th><td>加机器 / 限流 / 排队 / 预热缓存</td><td>按压测结果算机器数，再配限流兜底；只加机器不限流，算错一次就雪崩</td></tr>
+        <tr><th>依赖的服务不稳定</th><td>重试 / 超时 / 熔断 / 降级 / 舱壁</td><td>先超时 + 降级，再舱壁；重试最后考虑，而且只在一层做</td></tr>
+        <tr><th>单表数据量上亿</th><td>归档历史数据 / 分区表 / 分库分表</td><td>先归档；分库分表代价最大，放最后</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="pick-line">本页学：<b>四类手段背后的两本账（资源账和故障账）</b>，以及它们在一条请求链路和一条上线流程上各落在哪里。具体每一招怎么用，多数已有专页，地图上可以直接点过去。</p>
+</section>
+
+<!-- ================= ④ ================= -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>核心取舍：两本账，四个洞察</h2>
+    <p class="lead">先把背后的账讲透：资源账（洞察 1）、故障账（洞察 2）、为什么非要自保（洞察 3）、每一招在拿什么换（洞察 4）。最后把所有知识点挂到一张地图上。</p>
+  </div>
+
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="other"><h4>QPS 和 RT</h4><p>QPS 是每秒处理多少个请求；RT 是一个请求从进来到返回花了多久。P99 是把 100 个请求按 RT 排队，第 99 个的值。</p></div>
+      <div class="fact" data-role="other"><h4>一个请求占一个线程</h4><p>Tomcat 用固定数量的工作线程接请求（默认最多 200），请求在等数据库、等远程调用时，线程也一直被占着。线程池怎么工作见 <a href="../juc/threadpool-execute.html">ThreadPoolExecutor 那页</a>。</p></div>
+      <div class="fact" data-role="other"><h4>连接池也是有限的</h4><p>数据库连接、Redis 连接、HTTP 连接都放在池子里复用，池子满了就要等。池子开多大见 <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a>。</p></div>
+      <div class="fact" data-role="other"><h4>越满越慢</h4><p>资源用得越接近 100%，排队越长，RT 不是线性涨，而是越来越陡。原因见 <a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a>。</p></div>
+    </div>
+  </div>
+
+  <!-- 洞察 1 -->
+  <div class="sub" id="m-little">
+    <h3><span class="sn">洞察 1</span>性能和并发是一回事：Little 定律<small>资源账</small></h3>
+    <div class="formula">
+      <div class="f">同时在忙的线程数 = <em>每秒请求数（QPS）</em> × <em>每个请求占线程的时间（RT）</em></div>
+      <p>排队论里叫 Little 定律（L = λW）。它不依赖请求怎么到达、怎么分布，只要系统稳定就成立，所以可以直接拿来算账。</p>
+    </div>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="同样每秒 2000 个请求：RT 50 毫秒时占 100 个线程，一半空闲；RT 100 毫秒时刚好占满 200 个；RT 500 毫秒时需要 1000 个，多出的 800 个只能排队，RT 越排越长。">
+          <text x="250" y="22" class="t-m">每台 200 个工作线程（一格 = 10 个）</text>
+          <!-- row A -->
+          <text x="10" y="58" class="t-b">每秒 2000 × 0.05 秒</text>
+          <text x="10" y="76" class="t-good">= 100 个，一半空着</text>
+          <g stroke="var(--good)" stroke-width="1.2">
+            <rect x="250" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="277" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="304" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="331" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="358" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="385" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="412" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="439" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="466" y="44" width="24" height="34" rx="4" class="f-good"/><rect x="493" y="44" width="24" height="34" rx="4" class="f-good"/>
+          </g>
+          <g class="f-card" stroke="var(--line-strong)" stroke-width="1.2">
+            <rect x="520" y="44" width="24" height="34" rx="4"/><rect x="547" y="44" width="24" height="34" rx="4"/><rect x="574" y="44" width="24" height="34" rx="4"/><rect x="601" y="44" width="24" height="34" rx="4"/><rect x="628" y="44" width="24" height="34" rx="4"/><rect x="655" y="44" width="24" height="34" rx="4"/><rect x="682" y="44" width="24" height="34" rx="4"/><rect x="709" y="44" width="24" height="34" rx="4"/><rect x="736" y="44" width="24" height="34" rx="4"/><rect x="763" y="44" width="24" height="34" rx="4"/>
+          </g>
+          <!-- row B -->
+          <text x="10" y="128" class="t-b">每秒 2000 × 0.1 秒</text>
+          <text x="10" y="146" class="t-of">= 200 个，刚好占满</text>
+          <g class="f-of" stroke="var(--of)" stroke-width="1.2" opacity=".85">
+            <rect x="250" y="114" width="24" height="34" rx="4"/><rect x="277" y="114" width="24" height="34" rx="4"/><rect x="304" y="114" width="24" height="34" rx="4"/><rect x="331" y="114" width="24" height="34" rx="4"/><rect x="358" y="114" width="24" height="34" rx="4"/><rect x="385" y="114" width="24" height="34" rx="4"/><rect x="412" y="114" width="24" height="34" rx="4"/><rect x="439" y="114" width="24" height="34" rx="4"/><rect x="466" y="114" width="24" height="34" rx="4"/><rect x="493" y="114" width="24" height="34" rx="4"/><rect x="520" y="114" width="24" height="34" rx="4"/><rect x="547" y="114" width="24" height="34" rx="4"/><rect x="574" y="114" width="24" height="34" rx="4"/><rect x="601" y="114" width="24" height="34" rx="4"/><rect x="628" y="114" width="24" height="34" rx="4"/><rect x="655" y="114" width="24" height="34" rx="4"/><rect x="682" y="114" width="24" height="34" rx="4"/><rect x="709" y="114" width="24" height="34" rx="4"/><rect x="736" y="114" width="24" height="34" rx="4"/><rect x="763" y="114" width="24" height="34" rx="4"/>
+          </g>
+          <text x="800" y="136" class="t-m">再多一点就排队</text>
+          <!-- row C -->
+          <text x="10" y="198" class="t-b">每秒 2000 × 0.5 秒</text>
+          <text x="10" y="216" class="t-bad">= 1000 个，差 800 个</text>
+          <g class="f-bad" stroke="var(--bad)" stroke-width="1.2" opacity=".85">
+            <rect x="250" y="184" width="24" height="34" rx="4"/><rect x="277" y="184" width="24" height="34" rx="4"/><rect x="304" y="184" width="24" height="34" rx="4"/><rect x="331" y="184" width="24" height="34" rx="4"/><rect x="358" y="184" width="24" height="34" rx="4"/><rect x="385" y="184" width="24" height="34" rx="4"/><rect x="412" y="184" width="24" height="34" rx="4"/><rect x="439" y="184" width="24" height="34" rx="4"/><rect x="466" y="184" width="24" height="34" rx="4"/><rect x="493" y="184" width="24" height="34" rx="4"/><rect x="520" y="184" width="24" height="34" rx="4"/><rect x="547" y="184" width="24" height="34" rx="4"/><rect x="574" y="184" width="24" height="34" rx="4"/><rect x="601" y="184" width="24" height="34" rx="4"/><rect x="628" y="184" width="24" height="34" rx="4"/><rect x="655" y="184" width="24" height="34" rx="4"/><rect x="682" y="184" width="24" height="34" rx="4"/><rect x="709" y="184" width="24" height="34" rx="4"/><rect x="736" y="184" width="24" height="34" rx="4"/><rect x="763" y="184" width="24" height="34" rx="4"/>
+          </g>
+          <text x="800" y="198" class="t-bad">+800 在排队</text>
+          <text x="800" y="216" class="t-m">RT 越排越长</text>
+          <line x1="250" y1="236" x2="787" y2="236" class="e-dash"/>
+          <text x="518" y="248" text-anchor="middle" class="t-xs">QPS 不变，只是 RT 变了</text>
+        </svg>
+      </div>
+      <figcaption>三行的流量一样，只是每个请求占线程的时间不同。RT 涨 5 倍，需要的线程也涨 5 倍：性能变差会直接变成并发能力变差。</figcaption>
+    </figure>
+    <div class="two">
+      <ul class="pains">
+        <li class="ok">反过来算单机上限：200 个线程 ÷ 0.05 秒 = 每秒 4000 个。RT 降一半，同样的机器能扛的 QPS 翻倍，这就是“少做”能换来“多做”的原因。</li>
+        <li class="ok">算池子大小：数据库每秒 500 次查询 × 每次占连接 10 ms = 同时 5 个连接在用，池子开 10 个就够，开 100 个只会让数据库更挤。</li>
+      </ul>
+      <ul class="pains">
+        <li>RT 里包括<b>等待</b>的时间：等下游、等锁、等连接都算。下游从 30 ms 变 2 秒，你的代码一行没改，需要的线程却涨了几十倍。</li>
+        <li>所以第三方慢 = 你的线程被借走。不设超时，就等于让别人决定你能占多少线程（⑥ 坑 1）。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 洞察 2 -->
+  <div class="sub" id="m-avail">
+    <h3><span class="sn">洞察 2</span>可用率的算术：串联相乘，并联互补<small>故障账</small></h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 260" role="img" aria-label="串联：网关、订单、库存、积分、短信五个各 99.9% 的环节同步串起来，整体只有 99.5%，一年约 44 小时不可用。并联：负载均衡后面两台各 99% 的实例，只要不同时挂，整体 99.99%。">
+          <text x="10" y="22" class="t-bad">串联：一个请求要经过的同步环节，全都得好</text>
+          <rect x="10" y="38" width="118" height="52" rx="10" class="b-neu"/><text x="69" y="60" text-anchor="middle" class="t-b">网关</text><text x="69" y="78" text-anchor="middle" class="t-mono">99.9%</text>
+          <rect x="160" y="38" width="118" height="52" rx="10" class="b-neu"/><text x="219" y="60" text-anchor="middle" class="t-b">订单</text><text x="219" y="78" text-anchor="middle" class="t-mono">99.9%</text>
+          <rect x="310" y="38" width="118" height="52" rx="10" class="b-neu"/><text x="369" y="60" text-anchor="middle" class="t-b">库存</text><text x="369" y="78" text-anchor="middle" class="t-mono">99.9%</text>
+          <rect x="460" y="38" width="118" height="52" rx="10" class="b-neu"/><text x="519" y="60" text-anchor="middle" class="t-b">积分</text><text x="519" y="78" text-anchor="middle" class="t-mono">99.9%</text>
+          <rect x="610" y="38" width="118" height="52" rx="10" class="b-neu"/><text x="669" y="60" text-anchor="middle" class="t-b">短信</text><text x="669" y="78" text-anchor="middle" class="t-mono">99.9%</text>
+          <g class="e-mut" marker-end="url(#ah-mut)"><line x1="128" y1="64" x2="156" y2="64"/><line x1="278" y1="64" x2="306" y2="64"/><line x1="428" y1="64" x2="456" y2="64"/><line x1="578" y1="64" x2="606" y2="64"/></g>
+          <text x="745" y="58" class="t-bad">= 0.999⁵ ≈ 99.5%</text>
+          <text x="745" y="78" class="t-m">一年约 44 小时</text>
+
+          <text x="10" y="140" class="t-cg">并联：同一件事有两份，坏一份还有另一份</text>
+          <rect x="10" y="182" width="120" height="44" rx="10" class="b-neu"/><text x="70" y="209" text-anchor="middle" class="t-b">负载均衡</text>
+          <rect x="230" y="156" width="150" height="40" rx="10" class="b-cg"/><text x="305" y="181" text-anchor="middle" class="t-b">实例 A · 99%</text>
+          <rect x="230" y="212" width="150" height="40" rx="10" class="b-cg"/><text x="305" y="237" text-anchor="middle" class="t-b">实例 B · 99%</text>
+          <path d="M130 196 C180 196 190 176 226 176" class="e-cg" marker-end="url(#ah-ink)"/>
+          <path d="M130 212 C180 212 190 232 226 232" class="e-cg" marker-end="url(#ah-ink)"/>
+          <text x="420" y="186" class="t-s">两台同时挂的概率 = 1% × 1% = 0.01%</text>
+          <text x="420" y="208" class="t-cg">= 99.99%</text>
+          <text x="420" y="230" class="t-m">前提：两台不会因为同一个原因一起挂，负载均衡自己也不是单点</text>
+        </svg>
+      </div>
+      <figcaption>串联的环节越多，整体越差，这是“拆微服务后反而更不稳”的根源；并联把两个不太可靠的东西变成一个很可靠的东西，前提是故障互相独立。</figcaption>
+    </figure>
+    <div class="formula">
+      <div class="f">可用率 = <em>平均多久坏一次（MTBF）</em> ÷ （MTBF + <em>每次多久修好（MTTR）</em>）</div>
+      <p>提升可用率有两条路：少坏，或者坏了快恢复。少坏很难再提高；快恢复（自动切换、一键回滚、降级开关）往往便宜得多。Google SRE 的统计是大约 70% 的故障由变更引起，所以发布流程本身就是可用性工程（④ 投产流程、⑥ 坑 7）。</p>
+    </div>
+    <div class="nines">
+      <div class="nn"><b>99%</b><span>一年停 3.65 天</span></div>
+      <div class="nn"><b>99.9%</b><span>一年 8.76 小时 · 每月 43 分钟</span></div>
+      <div class="nn"><b>99.99%</b><span>一年 52.6 分钟 · 每月 4.4 分钟</span></div>
+      <div class="nn"><b>99.999%</b><span>一年 5.3 分钟</span></div>
+    </div>
+  </div>
+
+  <!-- 洞察 3 -->
+  <div class="sub" id="m-guard">
+    <h3><span class="sn">洞察 3</span>为什么非要自保：慢比挂更危险<small>设计对比</small></h3>
+    <p class="lead" style="margin-top:0">逼出这个设计的约束只有一条：<b>线程、连接这些资源是有限的，而且被所有接口共用</b>。一个依赖直接挂掉，调用会马上报错，线程很快就还回来；一个依赖变慢，线程会被它一直占着（洞察 1），最后谁都用不上。</p>
+    <div class="design">
+      <div class="way" data-role="bad">
+        <h4>被放弃的：所有调用共用一个池<small>没有超时、没有隔离</small></h4>
+        <svg class="sv" viewBox="0 0 420 210" role="img" aria-label="共用线程池：积分卡住后 20 格线程全被等积分的请求占满，查商品的请求进不来。">
+          <rect x="110" y="50" width="300" height="100" rx="12" class="b-card"/>
+          <text x="260" y="40" text-anchor="middle" class="t-m">200 个线程（一格 10 个）</text>
+          <g class="f-bad" stroke="var(--bad)" stroke-width="1" opacity=".8">
+            <rect x="120" y="62" width="25" height="34" rx="4"/><rect x="148" y="62" width="25" height="34" rx="4"/><rect x="176" y="62" width="25" height="34" rx="4"/><rect x="204" y="62" width="25" height="34" rx="4"/><rect x="232" y="62" width="25" height="34" rx="4"/><rect x="260" y="62" width="25" height="34" rx="4"/><rect x="288" y="62" width="25" height="34" rx="4"/><rect x="316" y="62" width="25" height="34" rx="4"/><rect x="344" y="62" width="25" height="34" rx="4"/><rect x="372" y="62" width="25" height="34" rx="4"/>
+            <rect x="120" y="104" width="25" height="34" rx="4"/><rect x="148" y="104" width="25" height="34" rx="4"/><rect x="176" y="104" width="25" height="34" rx="4"/><rect x="204" y="104" width="25" height="34" rx="4"/><rect x="232" y="104" width="25" height="34" rx="4"/><rect x="260" y="104" width="25" height="34" rx="4"/><rect x="288" y="104" width="25" height="34" rx="4"/><rect x="316" y="104" width="25" height="34" rx="4"/><rect x="344" y="104" width="25" height="34" rx="4"/><rect x="372" y="104" width="25" height="34" rx="4"/>
+          </g>
+          <text x="10" y="82" class="t-s">下单</text>
+          <line x1="44" y1="78" x2="106" y2="78" class="e-ink" marker-end="url(#ah-ink)"/>
+          <text x="10" y="124" class="t-s">查商品</text>
+          <line x1="58" y1="120" x2="90" y2="120" class="e-bad"/>
+          <text x="98" y="126" class="t-bad">✕</text>
+          <text x="10" y="176" class="t-bad">全部卡在“等积分”，每个占 2 秒</text>
+          <text x="10" y="198" class="t-m">查商品不调积分，也排不上</text>
+        </svg>
+      </div>
+      <div class="way" data-role="done">
+        <h4>选中的：超时 + 舱壁 + 降级<small>Resilience4j / Sentinel 做的事</small></h4>
+        <svg class="sv" viewBox="0 0 420 210" role="img" aria-label="舱壁：积分调用最多占 20 个线程，并且 200 毫秒超时；舱壁满了或超时就降级，积分稍后补。其余 180 个线程照常服务查商品和下单。">
+          <rect x="110" y="50" width="300" height="100" rx="12" class="b-card"/>
+          <text x="133" y="40" text-anchor="middle" class="t-g2">积分舱壁 20</text>
+          <g class="f-g2t" stroke="var(--g2)" stroke-width="1.5">
+            <rect x="120" y="62" width="25" height="34" rx="4"/><rect x="148" y="62" width="25" height="34" rx="4"/>
+          </g>
+          <g class="f-good" stroke="var(--good)" stroke-width="1" opacity=".55">
+            <rect x="176" y="62" width="25" height="34" rx="4"/><rect x="204" y="62" width="25" height="34" rx="4"/><rect x="232" y="62" width="25" height="34" rx="4"/>
+            <rect x="120" y="104" width="25" height="34" rx="4"/><rect x="148" y="104" width="25" height="34" rx="4"/><rect x="176" y="104" width="25" height="34" rx="4"/>
+          </g>
+          <g class="f-card" stroke="var(--line-strong)" stroke-width="1">
+            <rect x="260" y="62" width="25" height="34" rx="4"/><rect x="288" y="62" width="25" height="34" rx="4"/><rect x="316" y="62" width="25" height="34" rx="4"/><rect x="344" y="62" width="25" height="34" rx="4"/><rect x="372" y="62" width="25" height="34" rx="4"/>
+            <rect x="204" y="104" width="25" height="34" rx="4"/><rect x="232" y="104" width="25" height="34" rx="4"/><rect x="260" y="104" width="25" height="34" rx="4"/><rect x="288" y="104" width="25" height="34" rx="4"/><rect x="316" y="104" width="25" height="34" rx="4"/><rect x="344" y="104" width="25" height="34" rx="4"/><rect x="372" y="104" width="25" height="34" rx="4"/>
+          </g>
+          <text x="10" y="82" class="t-s">下单</text>
+          <line x1="44" y1="78" x2="106" y2="78" class="e-ink" marker-end="url(#ah-ink)"/>
+          <text x="10" y="124" class="t-s">查商品</text>
+          <line x1="58" y1="120" x2="106" y2="120" class="e-good" marker-end="url(#ah-good)"/>
+          <text x="10" y="176" class="t-g2">舱壁满或超过 200 ms → 降级：积分记一笔稍后补</text>
+          <text x="10" y="198" class="t-good">其余 180 个线程照常服务</text>
+        </svg>
+      </div>
+    </div>
+    <p class="verdict" data-role="of">决定胜负的约束：<b>共享的有限资源</b>。只要资源是共享的，就要给每个外部依赖设一个“最多能占多少”的上限（舱壁）和“最多能占多久”的上限（超时），再准备好“占不到时怎么办”（降级）。熔断是再进一步：发现依赖一直失败，干脆连那 200 ms 也不等，直接降级，过一会儿再放几个请求去试探。这四样是一套，⑤ 会实测它们各自管住了什么。</p>
+    <p class="mismatch">比喻对不上的地方：舱壁常被比作船舱隔板，但真实实现通常不是单独的一组线程，而是一个计数器（Resilience4j 的 <code>SemaphoreBulkhead</code>，默认最多 25 个并发，等待时间 0），满了就立刻拒绝。</p>
+  </div>
+
+  <!-- 洞察 4 -->
+  <div class="sub" id="m-trade">
+    <h3><span class="sn">洞察 4</span>每一招都在交换，没有白拿的<small>CAP 只是其中一种</small></h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>手段</th><th>换来</th><th>付出</th><th>不懂代价会怎样用错</th></tr></thead>
+        <tbody>
+          <tr><th>缓存</th><td>RT ↓、数据库压力 ↓</td><td>数据可能是旧的</td><td>改了库忘了删缓存；缓存一失效，流量全砸到库上（<a href="../redis/cache-problems.html">穿透、击穿、雪崩</a>）</td></tr>
+          <tr><th>异步 / MQ</th><td>削峰、调用方不用等</td><td>结果不是马上可见；消息可能重复</td><td>消费端不做幂等，重复消费导致重复发券（<a href="../kafka/kafka-reliability-group.html">Kafka 可靠性</a>）</td></tr>
+          <tr><th>主从 / 读写分离</th><td>读能力 ↑、主挂了能切</td><td>从库有复制延迟；切换时可能丢最后几笔</td><td>刚下完单马上查从库，提示“订单不存在”</td></tr>
+          <tr><th>分库分表</th><td>写能力和容量 ↑</td><td>跨库事务、跨库查询、扩容迁移都难</td><td>数据量还没到就拆，复杂度先到了</td></tr>
+          <tr><th>限流 / 降级</th><td>系统不被冲垮</td><td>一部分用户被拒绝或拿到简化结果</td><td>阈值拍脑袋定，正常流量也被拦</td></tr>
+          <tr><th>重试</th><td>扛住偶发失败</td><td>放大流量</td><td>每层都重试 3 次，下游被放大几十倍（⑥ 坑 2）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">CAP 说的是网络分区时，一致性和可用性只能保一个。日常更常碰到的是它的弱化版：要快、要扛量、要不停，就得接受“数据晚一点才一致”。哪些数据能接受（商品详情、点赞数），哪些不能（库存扣减、余额），要先分清。</p>
+  </div>
+
+  <!-- 地图 -->
+  <div class="sub" id="m-map">
+    <h3><span class="sn">地图</span>知识点挂在请求链路上<small>点 ↗ 跳到专页</small></h3>
+    <div class="lg">
+      <span data-role="pd"><i class="t"></i>少做 · 性能</span><span data-role="bk"><i class="t"></i>多做 · 并发</span><span data-role="cg"><i class="t"></i>冗余 · 可用</span><span data-role="g2"><i class="t"></i>自保 · 可用</span><span data-role="other"><i class="t" style="background:var(--card);border-style:dashed"></i>虚线 = 主要在投产时配置，实线 = 主要在写代码时决定</span>
+    </div>
+    <div class="map">
+      <div class="lay"><div class="lay-h"><b>客户端 · 边缘</b><span>浏览器 / App / CDN</span></div><div class="chips">
+        <a class="chip ops" data-role="pd" href="../network/url-to-page.html">CDN 与浏览器缓存</a>
+        <span class="chip" data-role="g2">按钮防重复提交</span>
+        <span class="chip ops" data-role="cg">DNS 多地址、就近接入</span>
+        <span class="chip" data-role="g2">客户端超时与退避重试</span>
+      </div></div>
+      <div class="lay"><div class="lay-h"><b>接入层</b><span>Nginx / 网关 / 负载均衡</span></div><div class="chips">
+        <span class="chip ops" data-role="cg">负载均衡 + 健康检查</span>
+        <span class="chip ops" data-role="g2">入口限流（令牌桶）</span>
+        <span class="chip ops" data-role="pd">长连接复用 · HTTPS 卸载</span>
+        <span class="chip ops" data-role="cg">灰度路由</span>
+        <span class="chip ops" data-role="g2">网关超时 &gt; 后端超时</span>
+      </div></div>
+      <div class="lay"><div class="lay-h"><b>应用层</b><span>Spring Boot</span></div><div class="chips">
+        <span class="chip" data-role="bk">无状态（会话放 Redis）</span>
+        <span class="chip ops" data-role="bk">Tomcat 线程数</span>
+        <a class="chip" data-role="bk" href="../juc/threadpool-execute.html">线程池参数与拒绝</a>
+        <a class="chip" data-role="bk" href="../spring/spring-async-pool.html">@Async 异步</a>
+        <span class="chip" data-role="g2">超时 · 重试 · 幂等</span>
+        <span class="chip" data-role="g2">熔断 · 降级 · 舱壁</span>
+        <a class="chip" data-role="pd" href="../mybatis/mybatis-cache.html">本地缓存 Caffeine</a>
+        <span class="chip" data-role="pd">批量代替循环 · 并行调用</span>
+        <a class="chip" data-role="g2" href="../spring/spring-aop-tx.html">事务边界别包远程调用</a>
+        <span class="chip ops" data-role="pd">JVM 堆与 GC</span>
+        <span class="chip ops" data-role="cg">优雅停机 · 健康探针</span>
+      </div></div>
+      <div class="lay"><div class="lay-h"><b>缓存层</b><span>Redis</span></div><div class="chips">
+        <span class="chip" data-role="pd">Cache-Aside 与一致性</span>
+        <a class="chip" data-role="g2" href="../redis/cache-problems.html">穿透 · 击穿 · 雪崩</a>
+        <a class="chip" data-role="bk" href="../redis/redis-bigkey-hotkey.html">大 key · 热 key</a>
+        <a class="chip ops" data-role="cg" href="../redis/redis-ha-cluster.html">主从 · 哨兵 · 集群</a>
+        <a class="chip" data-role="bk" href="../redis/redis-distributed-lock.html">分布式锁</a>
+        <a class="chip ops" data-role="cg" href="../redis/redis-persistence.html">持久化 RDB / AOF</a>
+      </div></div>
+      <div class="lay"><div class="lay-h"><b>消息层</b><span>Kafka / Redis Stream</span></div><div class="chips">
+        <span class="chip" data-role="bk">异步削峰 · 非核心后置</span>
+        <a class="chip ops" data-role="cg" href="../kafka/kafka-reliability-group.html">acks · ISR · 不丢消息</a>
+        <span class="chip" data-role="g2">消费幂等 · 死信</span>
+        <span class="chip ops" data-role="bk">积压监控 · 分区数</span>
+        <a class="chip" data-role="bk" href="../redis/redis-stream-mq.html">Redis Stream 当队列</a>
+      </div></div>
+      <div class="lay"><div class="lay-h"><b>数据层</b><span>MySQL</span></div><div class="chips">
+        <span class="chip" data-role="pd">索引 · 慢 SQL · 深分页</span>
+        <a class="chip ops" data-role="bk" href="../database/db-pool-tx-perf.html">连接池大小 · 长事务</a>
+        <a class="chip" data-role="bk" href="../database/mysql-mvcc-lock.html">MVCC · 行锁 · 死锁</a>
+        <span class="chip ops" data-role="bk">读写分离 · 主从延迟</span>
+        <span class="chip" data-role="bk">分库分表 · 分布式 ID</span>
+        <span class="chip ops" data-role="cg">主从切换 · 备份恢复</span>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="sub" id="m-life">
+    <h3><span class="sn">流程</span>投产要过的六关</h3>
+    <div class="life">
+      <div class="stg"><h4><i>1</i>容量评估</h4><ul><li>按洞察 1 算线程、连接、机器数</li><li>按 70% 水位留余量</li></ul></div>
+      <div class="stg"><h4><i>2</i>压测</h4><ul><li>压到拐点，找到第一个瓶颈</li><li><a href="../perf/load-testing.html">系统压测</a></li></ul></div>
+      <div class="stg"><h4><i>3</i>发布</h4><ul><li>灰度：先放 1%～5%</li><li>优雅停机、就绪探针、预热</li><li>一键回滚</li></ul></div>
+      <div class="stg"><h4><i>4</i>观测</h4><ul><li>四个黄金信号：延迟、流量、错误、饱和度</li><li>日志带 traceId，链路追踪</li></ul></div>
+      <div class="stg"><h4><i>5</i>应急</h4><ul><li>预案：限流、降级开关、扩容</li><li>先止血，再查原因</li></ul></div>
+      <div class="stg"><h4><i>6</i>复盘</h4><ul><li>改流程、补监控、补预案</li><li>回到第 1 关</li></ul></div>
+    </div>
+    <p class="tip">按洞察 2，可用率 = MTBF ÷ (MTBF + MTTR)：第 2、3 关减少“坏”的次数，第 4、5 关缩短“修”的时间。</p>
+  </div>
+
+  <!-- 最少语法 -->
+  <div class="sub" id="m-syntax">
+    <h3><span class="sn">语法</span>落到 Spring Boot 上，最少要认识这几行<small>以 3.x 为例</small></h3>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><b>application.properties</b><span>参数怎么调放到第⑥步</span></div>
+<pre><code><span class="cm"># 资源账：每台最多 200 个请求同时处理（默认值）</span>
+server.tomcat.threads.max=200
+<span class="cm"># 拿不到数据库连接最多等 3 秒（默认 30 秒）</span>
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.connection-timeout=3000
+<span class="cm"># 出站 HTTP 超时：没有默认值，不配可能一直等</span>
+spring.http.client.connect-timeout=1s
+spring.http.client.read-timeout=2s
+<span class="cm"># 发版：处理完手上的请求再停（3.4 起默认就是）</span>
+server.shutdown=graceful
+<span class="cm"># /actuator/health/readiness 给负载均衡判断能不能接流量</span>
+management.endpoint.health.probes.enabled=true
+<span class="cm"># 积分最多同时占 20 个线程</span>
+resilience4j.bulkhead.instances.points.max-concurrent-calls=20</code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><b>PointsClient.java</b><span>resilience4j-spring-boot3 + AOP</span></div>
+<pre><code>@Bulkhead(name = "points", fallbackMethod = "later")
+@CircuitBreaker(name = "points", fallbackMethod = "later")
+public void addPoints(long userId, int points) {
+    restClient.post().uri("/points")
+        .body(new AddPoints(userId, points))
+        .retrieve().toBodilessEntity();   <span class="cm">// 超时来自上面的配置</span>
+}
+
+<span class="cm">// 舱壁满、熔断打开、调用超时：都走这里</span>
+void later(long userId, int points, Throwable t) {
+    compensation.save(userId, points);    <span class="cm">// 记一笔，稍后补发</span>
+}</code></pre>
+      </div>
+    </div>
+    <p class="tip"><code>spring.http.client.*</code> 这组属性按 Spring Boot 3.5.16 的配置元数据核对过（没有默认值）；Spring Boot 4 改名为 <code>spring.http.clients.*</code>；Spring Boot 2 没有这组属性，要在 <code>RestTemplate</code> 的 request factory 上自己设。熔断的阈值、滑动窗口、半开放行几个请求这些参数，放到第⑥步。</p>
+  </div>
+</section>
+
+<!-- ================= ⑤ ================= -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>套进场景：积分卡住 3 秒，四种写法谁活下来</h2>
+    <p class="lead">把 ② 的下单系统缩小到一个 Java 文件：一个 20 线程的“Tomcat”，每秒 200 个请求（30% 下单、70% 查商品），用户最多等 1 秒。然后让积分服务卡 3 秒，换四种写法各跑一遍。不需要任何依赖，JDK 8 / 17 / 21 都能跑。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">1</span><b>Avalanche.java</b><span>缩小比例：20 个线程 ≈ 真实 Tomcat 的 200 个，规律一样</span></div>
+<pre><code>import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+
+/** 积分服务变慢，会不会拖垮整个下单系统？JDK 8 / 17 / 21 都能跑。 */
+public class Avalanche {
+    static final int RPS = 200, SECONDS = 5;          // 每秒 200 个请求，压 5 秒
+    static final int CLIENT_GIVE_UP_MS = 1000;        // 用户（网关）最多等 1 秒
+    static final int WORKERS = 20, QUEUE = 50;        // 缩小版 Tomcat：20 个工作线程，50 个排队位
+    static final int POINTS_TIMEOUT_MS = 200;         // 调积分服务的超时
+    static final int BULKHEAD = 5;                    // 积分调用最多同时占 5 个线程（舱壁）
+
+    enum Mode { NAKED, TIMEOUT, GUARDED }
+    static int pointsDelayMs;                         // 积分服务这次要多久才回
+    static Semaphore bulkhead;
+
+    /** 下单里要调的积分服务；三种写法 */
+    static void callPoints(Mode m) throws Exception {
+        if (m == Mode.NAKED) { Thread.sleep(pointsDelayMs); return; }      // 没超时：它多慢我就等多久
+        if (m == Mode.GUARDED &amp;&amp; !bulkhead.tryAcquire()) throw new RejectedExecutionException("舱壁满");
+        try {
+            if (pointsDelayMs &gt; POINTS_TIMEOUT_MS) { Thread.sleep(POINTS_TIMEOUT_MS); throw new TimeoutException(); }
+            Thread.sleep(pointsDelayMs);
+        } finally { if (m == Mode.GUARDED) bulkhead.release(); }
+    }
+
+    static final class Req { boolean order; long arrive, done; String result; }
+
+    static void handle(Req r, Mode m) {
+        try {
+            if (r.order) {
+                Thread.sleep(10);                                           // 下单自己的活：10 ms
+                try { callPoints(m); r.result = "ok"; }
+                catch (Exception e) { r.result = (m == Mode.GUARDED) ? "degraded" : "error"; } // 降级：积分记下来稍后补
+            } else { Thread.sleep(5); r.result = "ok"; }                     // 查商品：5 ms，不碰积分
+        } catch (InterruptedException e) { r.result = "error"; }
+        r.done = System.nanoTime();
+    }
+
+    static void run(String title, Mode m, int delay) throws Exception {
+        pointsDelayMs = delay; bulkhead = new Semaphore(BULKHEAD);
+        ThreadPoolExecutor tomcat = new ThreadPoolExecutor(WORKERS, WORKERS, 0, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue&lt;Runnable&gt;(QUEUE));
+        List&lt;Req&gt; all = new ArrayList&lt;Req&gt;();
+        int peak = 0;
+        long start = System.nanoTime();
+        for (int i = 0; i &lt; RPS * SECONDS; i++) {
+            long due = start + i * 1_000_000_000L / RPS;
+            while (System.nanoTime() &lt; due) Thread.sleep(0, 200_000);
+            final Req r = new Req(); r.order = i % 10 &lt; 3; r.arrive = System.nanoTime(); all.add(r);
+            try { tomcat.execute(() -&gt; handle(r, m)); } catch (RejectedExecutionException e) { r.result = "rejected"; }
+            peak = Math.max(peak, tomcat.getActiveCount());
+        }
+        tomcat.shutdown(); tomcat.awaitTermination(60, TimeUnit.SECONDS);
+        int[] q = new int[5], o = new int[5];   // 0 成功 1 降级 2 出错 3 超过1秒 4 被拒
+        List&lt;Long&gt; qms = new ArrayList&lt;Long&gt;();
+        for (Req r : all) {
+            int k;
+            if ("rejected".equals(r.result)) k = 4;
+            else {
+                long ms = (r.done - r.arrive) / 1_000_000;
+                if (!r.order) qms.add(ms);
+                k = ms &gt; CLIENT_GIVE_UP_MS ? 3 : "ok".equals(r.result) ? 0 : "degraded".equals(r.result) ? 1 : 2;
+            }
+            (r.order ? o : q)[k]++;
+        }
+        Collections.sort(qms);
+        String p99 = qms.isEmpty() ? "-" : qms.get((int) (qms.size() * 0.99)) + " ms";
+        int nq = RPS * SECONDS * 7 / 10, no = RPS * SECONDS * 3 / 10;
+        System.out.printf("%-16s 查询 成功 %3d%%  p99 %-8s | 下单 成功 %3d%% 降级 %3d%% | 超1秒 %3d  被拒 %3d | 线程峰值 %d/%d%n",
+                title, q[0] * 100 / nq, p99, o[0] * 100 / no, o[1] * 100 / no, q[3] + o[3], q[4] + o[4], peak, WORKERS);
+    }
+
+    public static void main(String[] a) throws Exception {
+        System.out.println("Java " + System.getProperty("java.version") + "，" + RPS + " 请求/秒 × " + SECONDS + " 秒，下单 30% / 查询 70%");
+        run("正常 · 裸奔", Mode.NAKED, 20);
+        run("积分卡 3 秒 · 裸奔", Mode.NAKED, 3000);
+        run("积分卡 3 秒 · 只加超时", Mode.TIMEOUT, 3000);
+        run("积分卡 3 秒 · 超时+隔离+降级", Mode.GUARDED, 3000);
+    }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">2</span><b>运行</b><span>本机 JDK 17，用 <code>--release 8</code> 编译，同一个 class 在 JDK 8 上也能跑</span></div>
+<pre class="console"><b>$ javac -encoding UTF-8 --release 8 Avalanche.java &amp;&amp; java -Dfile.encoding=UTF-8 Avalanche</b>
+<span class="w">Java 17.0.20.1，200 请求/秒 × 5 秒，下单 30% / 查询 70%</span>
+正常 · 裸奔          查询 成功 100%  p99 5 ms     | 下单 成功 100% 降级   0% | 超1秒   0  被拒   0 | 线程峰值 5/20
+<span class="r">积分卡 3 秒 · 裸奔     查询 成功   7%  p99 2936 ms  | 下单 成功   0% 降级   0% | 超1秒 125  被拒 820 | 线程峰值 20/20</span>
+积分卡 3 秒 · 只加超时   查询 成功 100%  p99 6 ms     | 下单 成功   0% 降级   0% | 超1秒   0  被拒   0 | 线程峰值 14/20
+<span class="w">积分卡 3 秒 · 超时+隔离+降级 查询 成功 100%  p99 5 ms     | 下单 成功   0% 降级 100% | 超1秒   0  被拒   0 | 线程峰值 7/20</span></pre>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 270" role="img" aria-label="实测结果：正常时全部成功、线程峰值 5；积分卡 3 秒且没保护时查商品只成功 7%，线程 20 个全满；只加超时时查商品 100% 成功但下单全部失败，线程峰值 14；超时加舱壁加降级时查商品 100%，下单 100% 降级成功，线程峰值 7。">
+        <text x="10" y="24" class="t-m">场景（积分服务 RT）</text>
+        <text x="250" y="24" class="t-m">查商品：1 秒内成功</text>
+        <text x="530" y="24" class="t-m">下单：成功 / 降级成功</text>
+        <text x="800" y="24" class="t-m">线程峰值</text>
+        <!-- r1 -->
+        <text x="10" y="58" class="t-b">正常 · 裸奔</text><text x="10" y="76" class="t-m">积分 20 ms</text>
+        <rect x="250" y="50" width="240" height="24" rx="5" class="b-dash"/><rect x="250" y="50" width="240" height="24" rx="5" class="b-good"/><text x="258" y="67" class="t-s halo">100%</text>
+        <rect x="530" y="50" width="240" height="24" rx="5" class="b-dash"/><rect x="530" y="50" width="240" height="24" rx="5" class="b-good"/><text x="538" y="67" class="t-s halo">成功 100%</text>
+        <text x="800" y="67" class="t-mono">5 / 20</text>
+        <!-- r2 -->
+        <text x="10" y="114" class="t-b">积分卡 3 秒 · 裸奔</text><text x="10" y="132" class="t-bad">没超时、没隔离</text>
+        <rect x="250" y="106" width="240" height="24" rx="5" class="b-dash"/><rect x="250" y="106" width="17" height="24" rx="5" class="b-bad"/><text x="274" y="123" class="t-bad">7%（被拒 820 个）</text>
+        <rect x="530" y="106" width="240" height="24" rx="5" class="b-dash"/><text x="538" y="123" class="t-bad">全部失败</text>
+        <text x="800" y="123" class="t-bad">20 / 20</text>
+        <!-- r3 -->
+        <text x="10" y="170" class="t-b">积分卡 3 秒 · 只加超时</text><text x="10" y="188" class="t-m">200 ms 超时</text>
+        <rect x="250" y="162" width="240" height="24" rx="5" class="b-dash"/><rect x="250" y="162" width="240" height="24" rx="5" class="b-good"/><text x="258" y="179" class="t-s halo">100%</text>
+        <rect x="530" y="162" width="240" height="24" rx="5" class="b-dash"/><text x="538" y="179" class="t-bad">全部失败（超时就报错）</text>
+        <text x="800" y="179" class="t-mono">14 / 20</text>
+        <!-- r4 -->
+        <text x="10" y="226" class="t-b">积分卡 3 秒 · 超时+舱壁+降级</text><text x="10" y="244" class="t-good">最多 5 个线程等积分</text>
+        <rect x="250" y="218" width="240" height="24" rx="5" class="b-dash"/><rect x="250" y="218" width="240" height="24" rx="5" class="b-good"/><text x="258" y="235" class="t-s halo">100%</text>
+        <rect x="530" y="218" width="240" height="24" rx="5" class="b-dash"/><rect x="530" y="218" width="240" height="24" rx="5" class="b-g2"/><text x="538" y="235" class="t-s halo">降级成功 100%（积分稍后补）</text>
+        <text x="800" y="235" class="t-mono">7 / 20</text>
+      </svg>
+    </div>
+    <figcaption><span class="tag-real">实测</span> 2 核 ARM 云主机，JDK 17.0.20.1。没有保护时，查商品明明不调积分，也只剩 7% 能在 1 秒内返回：它和下单共用那 20 个线程。</figcaption>
+  </figure>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>写法</th><th>按洞察 1 估算的线程数</th><th class="num">估算</th><th class="num">实测峰值</th></tr></thead>
+      <tbody>
+        <tr><th>裸奔，积分 3 秒</th><td>下单 60/秒 × 3.01 秒 + 查商品 140/秒 × 0.005 秒</td><td class="num bad">≈ 181</td><td class="num bad">20（满了，其余排队或被拒）</td></tr>
+        <tr><th>只加超时</th><td>60 × (0.01 + 0.2) + 140 × 0.005</td><td class="num">≈ 13.3</td><td class="num">14</td></tr>
+        <tr><th>超时 + 舱壁 + 降级</th><td>舱壁 5 + 60 × 0.01 + 140 × 0.005</td><td class="num">≈ 6.3</td><td class="num">7</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="two">
+    <div class="done-box"><b>到这里已经能交差了。</b>记住三件事就能避开大多数事故：每个出站调用都有超时；非核心依赖有舱壁和降级；上线前用“QPS × RT”算一遍线程和连接够不够。</div>
+    <div class="todo">
+      <b>已知还没处理的细节</b>
+      <ul>
+        <li>重试加在哪、加几次 → <a href="#pit-retry">⑥ 坑 2</a></li>
+        <li>降级时这笔积分怎么保证最终补上 → <a href="#pit-fallback">⑥ 坑 3</a></li>
+        <li>熔断：一直失败时连 200 ms 也不等 → <a href="#loop">↺ 练习 1</a></li>
+        <li>流量本身翻倍时怎么办（限流） → <a href="#lab">⑥ 实验台</a></li>
+        <li>发版时会不会把这些请求砍掉 → <a href="#pit-deploy">⑥ 坑 7</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ⑥ ================= -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>反例和误用：名字套上了，约束没满足</h2>
+    <p class="lead">三圈：第一圈是不知道就会出事故的坑，每条标了根源在 ④ 的哪个洞察；第二圈是日常开发和投产两张清单；第三圈是实验台和几个更深的点。</p>
+  </div>
+
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-timeout">
+        <b><em>坑 1</em>远程调用没设超时<a class="root" href="#m-little">← ④ 洞察 1</a></b>
+        <dl>
+          <dt>现象</dt><dd>下游一抖，自己的接口全部超时；线程 dump 里几百个线程停在 <code>socketRead</code> 或等连接池。</dd>
+          <dt>根源</dt><dd>等待也占线程。很多客户端默认不超时或超时很长：<code>HttpURLConnection</code> 默认 0，即无限等；Spring 的 <code>SimpleClientHttpRequestFactory</code> 不设就沿用它；Boot 的 <code>spring.http.client.read-timeout</code> 没有默认值；OpenFeign 默认连 10 秒、读 60 秒；HikariCP 拿连接默认等 30 秒。</dd>
+          <dt>做法</dt><dd class="fix">HTTP、RPC、数据库、Redis 每个出站调用都显式设超时，按下游 P99 的两三倍定；一层比一层短（网关 &gt; 应用 &gt; 下游），否则上游已经放弃了，下游还在白干。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-retry">
+        <b><em>坑 2</em>每层都重试，下游被放大几十倍<a class="root" href="#m-guard">← ④ 洞察 3</a></b>
+        <dl>
+          <dt>现象</dt><dd>下游刚慢一点，收到的流量反而翻了几倍，从此起不来。</dd>
+          <dt>根源</dt><dd>三层各最多试 3 次，最底层最多收到 3 × 3 × 3 = 27 倍请求；超时后的重试，原来那次往往还在下游跑。排队越长越超时、越超时越重试，是一个正反馈环（<a href="../perf/response-time-queueing.html">响应时间那页</a>有实测）。</dd>
+          <dt>做法</dt><dd class="fix">只在一层重试；指数退避加随机抖动；设重试预算（比如重试量不超过正常请求的 10%）；只重试幂等操作；熔断打开时不重试。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-fallback">
+        <b><em>坑 3</em>只加了超时，下单照样全失败<a class="root" href="#m-guard">← ④ 洞察 3</a></b>
+        <dl>
+          <dt>现象</dt><dd>系统没挂，但积分一慢，下单 100% 报错。<span class="seen">⑤ 实测</span></dd>
+          <dt>根源</dt><dd>超时只是把线程还回来，没有回答“超时以后这一单怎么办”。</dd>
+          <dt>做法</dt><dd class="fix">先分强弱依赖。弱依赖（积分、短信、推荐）失败就降级：写补偿表或发 MQ，由定时任务补发，补发接口要幂等。强依赖（库存、支付）失败就明确返回失败，让用户重试，同样要幂等。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-micro">
+        <b><em>坑 4</em>拆成微服务，可用率反而降了<a class="root" href="#m-avail">← ④ 洞察 2</a></b>
+        <dl>
+          <dt>现象</dt><dd>拆分前一年停几小时；拆分后三天两头“某个服务抖一下，下单就失败”。</dd>
+          <dt>根源</dt><dd>串联相乘：一个请求同步经过 5 个各 99.9% 的服务，整体只剩 99.5%，再加上每次网络调用都可能超时。</dd>
+          <dt>做法</dt><dd class="fix">核心链路上的同步依赖越少越好，能异步就异步、能降级就降级；每个服务至少两个实例，跨可用区部署。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-pool">
+        <b><em>坑 5</em>线程池、连接池开得越大越好？<a class="root" href="#m-little">← ④ 洞察 1</a></b>
+        <dl>
+          <dt>现象</dt><dd>Tomcat 线程开到 2000、Hikari 开到 200，压测反而更慢，数据库 CPU 打满、锁等待变多。</dd>
+          <dt>根源</dt><dd>池子只是排队的位置，真正的容量在数据库和下游。需要的连接数 = QPS × 每次占连接的时间，多出来的连接只会让数据库同时干更多活、互相抢锁。无界队列则让请求一直排，RT 没有上限，还可能 OOM。</dd>
+          <dt>做法</dt><dd class="fix">先按公式算，再压测验证；自建线程池用有界队列、写明拒绝策略（<a href="../juc/threadpool-execute.html">线程池那页</a>）；连接池大小见 <a href="../database/db-pool-tx-perf.html">连接池那页</a>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-cache">
+        <b><em>坑 6</em>缓存挡住了数据库，也藏住了它的真实容量<a class="root" href="#m-trade">← ④ 洞察 4</a></b>
+        <dl>
+          <dt>现象</dt><dd>一批缓存同时过期，或 Redis 重启后，数据库瞬间被打满；刚恢复又被打死。</dd>
+          <dt>根源</dt><dd>平时数据库只承担几个百分点的流量，它扛不扛得住全量从没被测过；缓存一失效，压力是平时的几十倍。</dd>
+          <dt>做法</dt><dd class="fix">过期时间加随机；热点 key 用互斥重建或逻辑过期；压测里加一轮“缓存全失效”；详见 <a href="../redis/cache-problems.html">穿透、击穿、雪崩</a>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-deploy">
+        <b><em>坑 7</em>每次发版都有一小波报错<a class="root" href="#m-avail">← ④ 洞察 2</a></b>
+        <dl>
+          <dt>现象</dt><dd>发版时出现一批 502 / 500；新实例刚接流量时 RT 很高。</dd>
+          <dt>根源</dt><dd>进程被直接停掉，处理到一半的请求断了；负载均衡还没把这台摘掉它就停了；新实例 JIT 没热，连接池和本地缓存是空的。Spring Boot 3.4 之前 <code>server.shutdown</code> 默认是 <code>immediate</code>。</dd>
+          <dt>做法</dt><dd class="fix">优雅停机 + 就绪探针：先让 readiness 变成不可用、摘掉流量，再停；新实例预热后再接流量；灰度 1%～5% 观察指标再全量；回滚一条命令完成。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-replica">
+        <b><em>坑 8</em>读写分离后，刚下的单查不到<a class="root" href="#m-trade">← ④ 洞察 4</a></b>
+        <dl>
+          <dt>现象</dt><dd>下单成功跳到详情页，提示“订单不存在”，刷新一下又有了。</dd>
+          <dt>根源</dt><dd>写主库、读从库，主从复制有延迟：平时毫秒级，大事务或从库压力大时能到秒级。</dd>
+          <dt>做法</dt><dd class="fix">“写完马上读”的场景强制走主库；余额、库存这类数据不走从库；把主从延迟加进监控和告警。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范：两张清单</h3></div>
+    <div class="check">
+      <div class="cl" data-role="pd">
+        <h4>日常开发（代码评审时对照）</h4>
+        <ol>
+          <li>每个出站调用都设连接和读取超时，一层比一层短。<span class="g">线程被下游借走（坑 1）</span></li>
+          <li>重试只在一层做，带退避和抖动，只重试幂等操作。<span class="g">重试风暴（坑 2）</span></li>
+          <li>写接口幂等：唯一业务号 + 唯一索引，或防重 token。<span class="g">重试、重复提交、消息重复导致重复扣款</span></li>
+          <li>弱依赖写好降级：补偿表、MQ 或默认值。<span class="g">非核心服务拖垮主流程（坑 3）</span></li>
+          <li>自建线程池有界、有名字、有拒绝策略，不同业务不共用。<span class="g">OOM、互相拖累</span></li>
+          <li>事务里不调远程、不发 MQ、不做慢操作。<span class="g">长事务占着连接和行锁</span></li>
+          <li>循环里不查库、不调远程，改成批量；互不依赖的远程调用并行发。<span class="g">RT 随数据量线性变长</span></li>
+          <li>SQL 走索引，列表接口限制条数，避免深分页。<span class="g">慢 SQL 拖垮连接池</span></li>
+          <li>缓存有过期时间并加随机，空结果也缓存，先写库再删缓存。<span class="g">雪崩、穿透、脏数据（坑 6）</span></li>
+          <li>日志带 traceId，热路径不打大对象。<span class="g">出事查不到、日志 IO 拖慢 RT</span></li>
+        </ol>
+      </div>
+      <div class="cl" data-role="rn">
+        <h4>应用投产（上线前对照）</h4>
+        <ol>
+          <li>用“QPS × RT”估算线程、连接和机器数，按 70% 水位留余量。<span class="g">大促当天现算</span></li>
+          <li>压测到拐点，知道单机上限和第一个瓶颈（<a href="../perf/load-testing.html">系统压测</a>）。<span class="g">容量靠猜</span></li>
+          <li>每个服务至少两个实例、跨可用区；MySQL、Redis 有主从切换。<span class="g">单点</span></li>
+          <li>优雅停机 + 就绪探针 + 预热。<span class="g">发版时的报错尖峰（坑 7）</span></li>
+          <li>灰度发布、一键回滚，每次变更有记录。<span class="g">变更引起的故障扩散到全量</span></li>
+          <li>监控四个黄金信号（延迟、流量、错误、饱和度），按 SLO 告警。<span class="g">用户比你先发现问题</span></li>
+          <li>限流阈值和降级开关提前配好，演练过。<span class="g">出事时现写代码</span></li>
+          <li>JVM：<code>-Xms</code> 等于 <code>-Xmx</code>，开 GC 日志和 <code>-XX:+HeapDumpOnOutOfMemoryError</code>。<span class="g">出事后没有现场</span></li>
+          <li>数据库开慢查询日志、监控主从延迟和连接数；定期演练从备份恢复。<span class="g">备份其实恢复不了</span></li>
+          <li>写好预案和值班表，事后复盘、改流程。<span class="g">同一个坑踩两次</span></li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>优化和深处</h3></div>
+
+    <h3 id="lab">实验台 · 大促那晚的线程账<small style="font-family:var(--font-body);font-size:14px;color:var(--muted);margin-left:8px">先猜，再运行</small></h3>
+    <div class="lab" id="lab-box">
+      <div class="presets" id="lab-presets"></div>
+      <div class="guess" id="lab-guess"></div>
+      <div class="ctl-grid">
+        <div class="ctl"><span class="lbl">总流量<output id="c-qps-o">6000 QPS</output></span><input type="range" id="c-qps" min="1000" max="40000" step="1000" value="6000" aria-label="总流量"></div>
+        <div class="ctl"><span class="lbl">实例数<output id="c-n-o">3 台</output></span><input type="range" id="c-n" min="1" max="20" step="1" value="3" aria-label="实例数"></div>
+        <div class="ctl"><span class="lbl">积分服务 RT</span><span class="seg-btns" id="c-d" role="group" aria-label="积分服务 RT"><button type="button" data-v="30">30 ms</button><button type="button" data-v="500">500 ms</button><button type="button" data-v="2000">2 s</button><button type="button" data-v="10000">10 s 卡死</button></span></div>
+        <div class="ctl span"><span class="lbl">保护措施</span><span class="toggles" id="c-guards">
+          <button type="button" class="tg" data-k="timeout" aria-pressed="false">超时 200 ms</button>
+          <button type="button" class="tg" data-k="bulkhead" aria-pressed="false">舱壁 20 线程</button>
+          <button type="button" class="tg" data-k="fallback" aria-pressed="false">降级</button>
+          <button type="button" class="tg" data-k="limit" aria-pressed="false">限流 4000/台</button>
+        </span></div>
+      </div>
+      <div class="run-row">
+        <button class="btn primary" type="button" id="lab-run">运行</button>
+        <span class="tip" id="lab-tip">选一个剧情，先猜再运行；之后拖滑块、切开关，结果会跟着变。</span>
+      </div>
+      <div class="tb-wrap">
+        <div class="tb-head"><span>每台的线程（Tomcat 最多 200 个）</span><span id="tb-num"></span></div>
+        <div class="tbar" id="tbar"></div>
+        <div class="lg">
+          <span data-role="pd"><i class="t"></i>查商品</span><span data-role="bk"><i class="t"></i>下单自身</span><span data-role="g2"><i class="t"></i>等积分</span><span data-role="bad"><i class="t"></i>超出 200，只能排队</span>
+        </div>
+      </div>
+      <div class="tiles" id="lab-tiles"></div>
+      <div class="lab-res" id="lab-res" data-role="other">先选一个剧情，猜一下，再点“运行”。</div>
+    </div>
+    <p class="tip">模型：每台 200 个线程；查商品占 20 ms，下单自己占 30 ms 再加调积分的时间；下单占 30%；用户最多等 3 秒。每台在途线程按 Little 定律算（洞察 1），超过 200 就判为“越排越长”，持续一阵后几乎所有请求都超过 3 秒，记为失败。舱壁限制等积分的线程最多 20 个，满了立刻降级；限流每台每秒最多放进 4000 个，多出的立刻返回“稍后再试”。只算稳态，不模拟 GC、数据库和积分服务自己的负载。逻辑在 node 里跑过几组典型参数，又随机测了 2 万组：加机器不会让每台更忙，舱壁打开时等积分的线程不超过 20。</p>
+
+    <div class="deep">
+      <div class="dp" data-role="pd">
+        <h4>尾延迟会被扇出放大</h4>
+        <p>一个请求要并行调 100 个后端，每个后端只有 1% 的概率慢，整体却有 1 − 0.99<sup>100</sup> ≈ 63% 的请求会碰上至少一个慢的（Dean 和 Barroso，《The Tail at Scale》，2013）。</p>
+        <ul>
+          <li>所以扇出大的接口（聚合页、搜索）要盯 P99、P999，平均值没有意义。</li>
+          <li>做法：减少扇出；每个子调用单独超时，缺一部分也能返回；对幂等读请求，等一会儿没回就再发一份给别的副本（hedged request），谁先回用谁。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="g2">
+        <h4>触发原因消失了，系统还是起不来</h4>
+        <p>这类故障叫亚稳态故障（metastable failure，Bronson 等，HotOS 2021）：一次抖动引发重试，重试把负载推高，负载高又引发更多超时和重试。抖动早就结束了，系统却一直卡在高负载状态。</p>
+        <ul>
+          <li>常见的放大器：重试、缓存失效后的回源、请求在队列里排到超时后还被处理。</li>
+          <li>恢复要靠主动卸载负载：限流、熔断、清掉积压的队列，而不是加机器等它自己好。队列里排到时已经超过上游超时的请求直接丢掉，别再白白处理。</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top:12px">版本差异</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>点</th><th>JDK 8 / Spring Boot 2</th><th>JDK 17 / Spring Boot 3</th><th>JDK 21</th></tr></thead>
+        <tbody>
+          <tr><th>线程是不是稀缺资源</th><td>是，一个请求占一个平台线程</td><td>同左</td><td>可以用虚拟线程（JEP 444）：等 IO 时不占平台线程。Boot 3.2 起 <code>spring.threads.virtual.enabled=true</code>，此时 <code>server.tomcat.threads.max</code> 不再生效</td></tr>
+          <tr><th>虚拟线程后 Little 定律还在吗</th><td colspan="2">—</td><td>在。等积分的请求数照样是 QPS × RT，只是不再卡在 Tomcat 线程，而是压到连接池、下游和内存上。超时和舱壁照样要。JDK 21 在 <code>synchronized</code> 里阻塞会钉住载体线程，JDK 24（JEP 491）才解决</td></tr>
+          <tr><th>优雅停机</th><td>Boot 2.3 起可配 <code>server.shutdown=graceful</code>，默认 <code>immediate</code></td><td>3.4 起默认 <code>graceful</code>（3.5.16 配置元数据核对过）</td><td>—</td></tr>
+          <tr><th>健康探针</th><td>Boot 2.3 起有 liveness / readiness</td><td>同左，在 Kubernetes 上自动开启</td><td>—</td></tr>
+          <tr><th>熔断降级库</th><td>Hystrix 已进入维护模式（最后版本 1.5.18），官方建议换 Resilience4j；国内也常用 Sentinel</td><td><code>resilience4j-spring-boot3</code>；Spring Cloud CircuitBreaker 封装了 Resilience4j</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>限流算法：计数器、滑动窗口、漏桶、令牌桶，单机和分布式限流怎么做</li>
+      <li>熔断器的状态机：关闭、打开、半开，滑动窗口怎么统计失败率</li>
+      <li>分库分表和分布式 ID：分片键怎么选，扩容怎么迁移</li>
+      <li>分布式事务：本地消息表、Saga、TCC，以及为什么尽量别用</li>
+      <li>多活和单元化：同城双活、异地多活要解决的数据冲突</li>
+      <li>全链路压测：影子库、流量染色，怎么压生产又不污染数据</li>
+      <li>可观测性：OpenTelemetry 的 trace、metric、log 怎么串起来</li>
+      <li>JVM 调优：GC 停顿怎么变成 P99 的尖刺</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ↺ ================= -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 Avalanche.java</h2>
+    <p class="lead">三个练习各用一条 ⑥ 的内容。下面的预期是按洞察 1 估算的（<b>估算</b>，没有在本机跑过），你跑出来的数字应该落在附近。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="g2">
+      <h4>练习 1 · 加熔断</h4>
+      <p>在 GUARDED 模式里记录最近 20 次积分调用，失败超过一半就“打开”2 秒：这 2 秒内直接降级，不调积分；2 秒后放 1 个请求去试，成功就关上。</p>
+      <p><b>预期：</b>等积分的线程从最多 5 个降到接近 0，线程峰值从 7 降到 2～3 左右（估算：60 × 0.01 + 140 × 0.005 ≈ 1.3，加上偶尔试探的那一个）。</p>
+      <p class="uses">用到：④ 洞察 3</p>
+    </div>
+    <div class="exc" data-role="bad">
+      <h4>练习 2 · 先猜，再加重试</h4>
+      <p>在 TIMEOUT 模式里，积分超时后再重试 2 次（一共 3 次）。先猜：查商品还能 100% 成功吗？</p>
+      <p><b>预期：</b>每个下单占线程 0.01 + 3 × 0.2 = 0.61 秒，60 × 0.61 ≈ 37 个线程，超过 20，系统重新被拖垮，查商品的成功率会掉得很厉害。</p>
+      <p class="uses">用到：坑 2</p>
+    </div>
+    <div class="exc" data-role="pd">
+      <h4>练习 3 · 流量翻 10 倍，加限流</h4>
+      <p>积分恢复 20 ms，把 <code>RPS</code> 改成 2000。再在 <code>execute</code> 之前加一个 <code>Semaphore(16)</code>，拿不到就立刻返回“稍后再试”。</p>
+      <p><b>预期：</b>不限流时需要 2000 × (0.7 × 0.005 + 0.3 × 0.03) = 25 个线程，超过 20 会越排越长；限流后被放进来的请求都能在 1 秒内完成，多出的那部分立刻被拒。</p>
+      <p class="uses">用到：实验台的限流开关</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出三高的精华。</summary><p>两本账：资源账用 Little 定律算（在忙的线程 = QPS × RT，性能差会直接变成并发差）；故障账靠冗余（多一份）和隔离（超时、舱壁、降级）把坏的部分关在小范围。每一招都在拿一致性、成本或复杂度交换。</p><p class="from">← 开头 + ②</p></details>
+    <details><summary>2. 一台机器、一个库、全同步调用，痛在哪？</summary><p>容量上：线程和连接有限，流量一大或者每次都打库就排队。故障上：只有一份，宕机和发版就是停机；同步调用 + 共用线程池，一个依赖慢了会拖死所有接口。</p><p class="from">← ②</p></details>
+    <details><summary>3. “积分慢了，连不调积分的查商品也挂了”，根源是 ④ 的哪一条？</summary><p>洞察 1 + 洞察 3：积分慢让每个下单占线程的时间变长，按 QPS × RT 需要的线程超过 200；而查商品和下单共用这 200 个线程，资源是共享的。</p><p class="from">← ④ 洞察 1、3，⑤ 实测</p></details>
+    <details><summary>4. 预测：每台 2000 QPS（30% 下单），积分从 30 ms 变成 500 ms，没有任何保护，会怎样？</summary><p>会挂。下单 600/秒 × (0.03 + 0.5) 秒 ≈ 318 个线程，加上查商品 1400 × 0.02 = 28 个，共约 346 个，超过 200。下游只慢到半秒就够了，不用等到“卡死”。实验台把积分 RT 切到 500 ms 就能看到。</p><p class="from">← ④ 洞察 1</p></details>
+    <details><summary>5. 预测：限流能挡住“下游变慢”吗？</summary><p>挡不住。限流限的是 QPS，阈值是按正常 RT 算的；下游变慢时 RT 变大，同样的 QPS 需要的线程成倍增加。实验台里只开限流、把积分切到 2 秒，照样会挂。限流防的是流量突增，超时和舱壁防的是下游变慢。</p><p class="from">← ④ 洞察 1 + 洞察 3</p></details>
+    <details><summary>6. 预测：两台各 99.9% 的实例挂在负载均衡后面，理论上整体是多少？实际为什么达不到？</summary><p>理论上 1 − 0.001 × 0.001 = 99.9999%。实际达不到：两台常常因为同一个原因一起挂（同一个版本的 bug、同一个数据库、同一个机房断电），负载均衡和数据库本身也是串联在链路上的环节。</p><p class="from">← ④ 洞察 2</p></details>
+    <details><summary>7. 预测：换成 JDK 21 虚拟线程后，积分卡 2 秒还会拖垮查商品吗？</summary><p>Tomcat 线程不再是瓶颈，查商品不会因为“没有线程”而排队。但等积分的请求数照样是 QPS × RT，会无限往上涨：积分服务自己、HTTP 连接池、内存会先被压垮；如果查商品和下单共用某个连接池，查商品照样受影响。超时和舱壁还是要。</p><p class="from">← ④ 洞察 1 + ⑥ 版本差异</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>档位：标准档。本机实测：⑤ 的 Avalanche.java，在 2 核 ARM 云主机上用 JDK 17.0.20.1 跑（<code>--release 8</code> 编译）。查过的文档和源码：Spring Boot 3.5.16 和 4.1.2 的配置元数据（Tomcat 线程数、<code>server.shutdown</code>、<code>spring.http.client(s).*</code>）、Spring Boot 3.4 发布说明（优雅停机改为默认）、Resilience4j 2.4.0 源码（熔断和舱壁的默认值）、OpenFeign 13.17 源码（<code>Request.Options</code> 默认 10 秒 / 60 秒）、spring-web 6.2.19 源码（<code>SimpleClientHttpRequestFactory</code>）、Google SRE 书“Introduction”一章（约 70% 的故障由变更引起）、Hystrix 仓库 README（维护模式）。实验台是估算模型，不是实测。</p>
+  <p>相关：<a href="../perf/load-testing.html">系统压测</a> · <a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a> · <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../juc/threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../redis/cache-problems.html">缓存穿透、击穿与雪崩</a> · <a href="../redis/redis-ha-cluster.html">Redis 主从、哨兵与集群</a> · <a href="../kafka/kafka-reliability-group.html">Kafka 消息可靠性</a></p>
+</footer>
+</main>
+<script>
+/*SIM-START*/
+// 线程预算模型：每台 Tomcat 200 个工作线程；用 Little 定律算每台同时要占多少个线程。
+var W = 200;                 // server.tomcat.threads.max 默认值
+var TQ = 20, TO = 30;        // 查商品 20 ms；下单自身 30 ms（不含调积分）
+var ORDER = 0.3;             // 30% 是下单
+var TMO = 200;               // 调积分的超时
+var GIVEUP = 3000;           // 网关 / 用户最多等 3 秒
+var LIMIT = 4000;            // 打开限流时，每台每秒最多放进来的请求
+var SAFE = 0.7;              // 容量规划按 70% 水位
+function simulate(p) {
+  // p: {qps, n, d(积分 RT ms), timeout, bulkhead(0=关), fallback, limit}
+  var lam = p.qps / p.n;
+  var adm = p.limit ? Math.min(lam, LIMIT) : lam;          // 放进来的
+  var limitedFrac = lam > 0 ? (lam - adm) / lam : 0;       // 被限流、立刻返回“稍后再试”的
+  var lo = adm * ORDER, lq = adm * (1 - ORDER);
+  var hold = p.timeout ? Math.min(p.d, TMO) : p.d;         // 一次积分调用占住线程多久
+  var wantP = lo * hold / 1000;                             // 想同时调积分的线程数
+  var inP = wantP, bhFrac = 0;
+  if (p.bulkhead > 0 && wantP > p.bulkhead) { inP = p.bulkhead; bhFrac = 1 - p.bulkhead / wantP; }
+  var busyQ = lq * TQ / 1000, busyO = lo * TO / 1000;
+  var C = busyQ + busyO + inP;                              // 每台在途线程
+  var rho = C / W;
+  var callFails = p.timeout ? p.d > TMO : p.d > GIVEUP;     // 进了积分调用的那部分，结果失败吗
+  var orderFailFrac = callFails ? 1 : bhFrac;               // 下单里积分这一步失败的比例
+  var collapse = rho >= 1;
+  var r = { lam: lam, adm: adm, C: C, rho: rho, busyQ: busyQ, busyO: busyO, inP: inP, wantP: wantP,
+            hold: hold, bhFrac: bhFrac, limitedFrac: limitedFrac, collapse: collapse };
+  if (collapse) {
+    // 线程不够：进来的比处理掉的多，队伍只会越排越长；跑上一阵后几乎所有请求都等过了 3 秒
+    r.qOk = 0; r.oOk = 0; r.oDeg = 0;
+  } else {
+    r.qOk = 1;
+    var okPart = 1 - orderFailFrac;
+    r.oOk = okPart;
+    r.oDeg = p.fallback ? orderFailFrac : 0;
+  }
+  // 被限流的那部分算失败（但它们是 1 ms 内返回的，不占线程）
+  r.qOk *= (1 - limitedFrac); r.oOk *= (1 - limitedFrac); r.oDeg *= (1 - limitedFrac);
+  r.wait = !collapse && rho > 0.8;                          // 接近满载，排队开始明显
+  // 不开任何保护、按 70% 水位要几台才扛得住（同样的积分 RT）
+  var perReq = (1 - ORDER) * TQ + ORDER * (TO + hold);      // 每个请求平均占线程的毫秒数
+  r.needN = Math.ceil(p.qps * perReq / 1000 / (W * SAFE));
+  return r;
+}
+/*SIM-END*/
+
+// ---------- DOM ----------
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { qps: 6000, n: 3, d: 30, timeout: false, bulkhead: false, fallback: false, limit: false };
+  var PRESETS = [
+    { name: '积分卡 2 秒', sub: '什么保护都没有',
+      set: { qps: 6000, n: 3, d: 2000, timeout: false, bulkhead: false, fallback: false, limit: false },
+      q: '查商品根本不调积分。积分卡住 2 秒后，查商品会怎样？',
+      opts: ['不受影响', '慢一点，但能用', '跟着一起挂'],
+      answer: function (r) { return r.collapse ? 2 : (r.wait ? 1 : 0); } },
+    { name: '只加超时', sub: '积分 2 秒，超时 200 ms',
+      set: { qps: 6000, n: 3, d: 2000, timeout: true, bulkhead: false, fallback: false, limit: false },
+      q: '加了 200 ms 超时以后，系统和下单分别怎样？',
+      opts: ['都正常了', '系统活着，下单几乎全失败', '系统还是挂'],
+      answer: function (r) { return r.collapse ? 2 : ((r.oOk + r.oDeg) < 0.05 ? 1 : 0); } },
+    { name: '超时 + 舱壁 + 降级', sub: '积分 10 秒卡死',
+      set: { qps: 6000, n: 3, d: 10000, timeout: true, bulkhead: true, fallback: true, limit: false },
+      q: '积分彻底卡死。每台同时要占多少个线程？',
+      opts: ['约 60 个', '约 170 个', '超过 200 个'],
+      answer: function (r) { return r.C > 200 ? 2 : (r.C > 120 ? 1 : 0); } },
+    { name: '大促 5 倍流量', sub: '积分正常，打开限流',
+      set: { qps: 30000, n: 3, d: 30, timeout: false, bulkhead: false, fallback: false, limit: true },
+      q: '流量是平时的 5 倍，机器没加，只开了限流。会怎样？',
+      opts: ['所有人都能正常下单', '一部分人马上收到“稍后再试”，其余正常', '还是全挂'],
+      answer: function (r) { return r.collapse ? 2 : (r.limitedFrac > 0.01 ? 1 : 0); } }
+  ];
+  var cur = -1, guess = -1, ran = false;
+
+  function params() {
+    return { qps: state.qps, n: state.n, d: state.d, timeout: state.timeout,
+             bulkhead: state.bulkhead ? 20 : 0, fallback: state.fallback, limit: state.limit };
+  }
+  function pct(x) { return Math.round(x * 100) + '%'; }
+  function fmt(x) { return x >= 100 ? Math.round(x).toString() : (Math.round(x * 10) / 10).toString(); }
+  function dlabel(d) { return d >= 1000 ? (d / 1000) + ' 秒' : d + ' ms'; }
+
+  function syncControls() {
+    $('c-qps').value = state.qps; $('c-qps-o').textContent = state.qps + ' QPS';
+    $('c-n').value = state.n; $('c-n-o').textContent = state.n + ' 台';
+    [].forEach.call($('c-d').querySelectorAll('button'), function (b) {
+      b.setAttribute('aria-pressed', String(+b.dataset.v === state.d));
+    });
+    [].forEach.call($('c-guards').querySelectorAll('.tg'), function (b) {
+      b.setAttribute('aria-pressed', String(!!state[b.dataset.k]));
+    });
+  }
+
+  function renderPresets() {
+    var box = $('lab-presets'); box.innerHTML = '';
+    PRESETS.forEach(function (p, i) {
+      var b = document.createElement('button'); b.type = 'button';
+      b.setAttribute('aria-pressed', String(i === cur));
+      b.innerHTML = '<b>' + p.name + '</b><span>' + p.sub + '</span>';
+      b.addEventListener('click', function () { pick(i); });
+      box.appendChild(b);
+    });
+  }
+  function renderGuess(r) {
+    var g = $('lab-guess');
+    if (cur < 0) { g.hidden = true; return; }
+    g.hidden = false;
+    var p = PRESETS[cur], ans = ran ? p.answer(r) : -1;
+    var h = '<p><b>先猜：</b>' + p.q + '</p><div class="opts">';
+    p.opts.forEach(function (o, i) {
+      var cls = ran ? (i === ans ? 'right' : (i === guess ? 'wrong' : '')) : '';
+      h += '<button type="button" data-i="' + i + '" class="' + cls + '" aria-pressed="' + (i === guess) + '">' + o + '</button>';
+    });
+    h += '</div>';
+    if (ran && guess >= 0) {
+      h += '<div class="res" data-role="' + (guess === ans ? 'done' : 'bad') + '">' + (guess === ans ? '猜对了。' : '没猜中，答案是“' + p.opts[ans] + '”。') + ' ' + why(r) + '</div>';
+    }
+    g.innerHTML = h;
+    [].forEach.call(g.querySelectorAll('.opts button'), function (b) {
+      b.addEventListener('click', function () { guess = +b.dataset.i; ran = false; renderGuess(r); $('lab-tip').textContent = '已选。点“运行”看结果。'; });
+    });
+  }
+  function why(r) {
+    return '每台每秒放进来 ' + Math.round(r.adm) + ' 个请求：查商品占 ' + fmt(r.busyQ) + ' 个线程，下单自身占 ' + fmt(r.busyO) +
+      ' 个，等积分占 ' + fmt(r.inP) + ' 个，合计 ' + fmt(r.C) + ' / 200（洞察 1：在忙的线程 = QPS × RT）。';
+  }
+
+  function renderBar(r) {
+    var bar = $('tbar'), scale = Math.max(W, Math.min(r.C, W * 4));
+    var segs = [['pd', r.busyQ, '查商品'], ['bk', r.busyO, '下单'], ['g2', r.inP, '等积分']];
+    var h = '', x = 0;
+    segs.forEach(function (s) {
+      var w = Math.min(s[1], scale - x); if (w <= 0) return;
+      h += '<div class="tseg" data-role="' + s[0] + '" style="left:' + (x / scale * 100) + '%;width:' + (w / scale * 100) + '%">' + (w / scale > 0.08 ? s[2] + ' ' + fmt(s[1]) : '') + '</div>';
+      x += w;
+    });
+    if (r.C > W) h += '<div class="tseg over" style="left:' + (W / scale * 100) + '%;width:' + ((Math.min(r.C, scale) - W) / scale * 100) + '%"></div>';
+    h += '<div class="tcap" style="left:' + (W / scale * 100) + '%"><span>200</span></div>';
+    bar.innerHTML = h;
+    $('tb-num').innerHTML = '在途 <b>' + fmt(r.C) + '</b> 个' + (r.C > W * 4 ? '（条只画到 800）' : '');
+  }
+  function tile(role, label, val, sub) {
+    return '<div class="tile" data-role="' + role + '"><small>' + label + '</small><b>' + val + '</b><span>' + sub + '</span></div>';
+  }
+  function render() {
+    var r = simulate(params());
+    renderBar(r);
+    var util = r.collapse ? 'bad' : (r.wait ? 'of' : 'done');
+    $('lab-tiles').innerHTML =
+      tile(util, '每台在途线程', fmt(r.C), '上限 200') +
+      tile(util, '线程利用率', pct(r.rho), r.collapse ? '超过 100%' : (r.wait ? '排队开始明显' : '有余量')) +
+      tile(r.qOk > 0.95 ? 'done' : 'bad', '查商品成功', pct(r.qOk), '3 秒内返回') +
+      tile((r.oOk + r.oDeg) > 0.95 ? 'done' : 'bad', '下单成功', pct(r.oOk + r.oDeg), r.oDeg > 0.005 ? '其中降级 ' + pct(r.oDeg) : '积分正常加上') +
+      tile(r.limitedFrac > 0 ? 'of' : 'other', '被限流', pct(r.limitedFrac), '1 ms 内返回“稍后再试”');
+    var res = $('lab-res'), msg, role;
+    if (r.collapse) {
+      role = 'bad';
+      msg = '<b>挂了。</b>每台要 ' + fmt(r.C) + ' 个线程才够，只有 200 个，请求越排越长，查商品和下单一起超时。';
+      var tips = [];
+      if (!state.timeout && state.d > 30) tips.push('积分慢到 ' + dlabel(state.d) + '，每个下单就占线程这么久：先打开“超时”');
+      if (state.timeout && !state.bulkhead && state.d > 200) tips.push('超时后每个下单仍要等 200 ms，再打开“舱壁”给等积分的线程封顶');
+      if (state.limit) tips.push('限流按正常 RT 定的阈值，挡不住下游变慢');
+      tips.push('只靠加机器，按 70% 水位要 ' + r.needN + ' 台');
+      msg += '<ul><li>' + tips.join('</li><li>') + '</li></ul>';
+    } else {
+      role = r.wait ? 'of' : 'done';
+      msg = r.wait ? '<b>还活着，但很危险。</b>利用率 ' + pct(r.rho) + '，排队已经明显，再来一点抖动就会越排越长（见“响应时间为什么越压越长”）。'
+                   : '<b>稳住了。</b>利用率 ' + pct(r.rho) + '，还有余量。';
+      var notes = [];
+      if (r.oOk + r.oDeg < 0.95 * (1 - r.limitedFrac)) notes.push('但下单只成功 ' + pct(r.oOk + r.oDeg) + '：积分失败时没有降级，整单报错');
+      if (r.oDeg > 0.005) notes.push('下单靠降级成功了 ' + pct(r.oDeg) + '，这些单的积分要事后补');
+      if (r.limitedFrac > 0) notes.push(pct(r.limitedFrac) + ' 的请求被限流挡在门外，换来其余请求正常；想让他们也进来，按 70% 水位要 ' + r.needN + ' 台');
+      if (notes.length) msg += '<ul><li>' + notes.join('</li><li>') + '</li></ul>';
+    }
+    res.setAttribute('data-role', role); res.innerHTML = msg;
+    return r;
+  }
+
+  function pick(i) {
+    cur = i; guess = -1; ran = false;
+    var s = PRESETS[i].set; for (var k in s) state[k] = s[k];
+    syncControls(); renderPresets();
+    var r = render(); renderGuess(r);
+    $('lab-tip').textContent = '先在上面选一个答案，再点“运行”。';
+    $('lab-res').setAttribute('data-role', 'other');
+    $('lab-res').innerHTML = '先猜，再运行。';
+    $('lab-tiles').innerHTML = ''; $('tbar').innerHTML = ''; $('tb-num').textContent = '';
+  }
+  function changed() { cur = -1; ran = false; renderPresets(); renderGuess(null); syncControls(); render(); }
+
+  $('c-qps').addEventListener('input', function () { state.qps = +this.value; changed(); });
+  $('c-n').addEventListener('input', function () { state.n = +this.value; changed(); });
+  [].forEach.call($('c-d').querySelectorAll('button'), function (b) {
+    b.addEventListener('click', function () { state.d = +b.dataset.v; changed(); });
+  });
+  [].forEach.call($('c-guards').querySelectorAll('.tg'), function (b) {
+    b.addEventListener('click', function () { state[b.dataset.k] = !state[b.dataset.k]; changed(); });
+  });
+  $('lab-run').addEventListener('click', function () {
+    if (cur >= 0 && guess < 0) { $('lab-tip').textContent = '先在上面选一个答案。'; return; }
+    ran = true; var r = render(); renderGuess(r);
+    $('lab-tip').textContent = '之后拖滑块、切开关，结果会跟着变。';
+  });
+
+  renderPresets(); syncControls(); render(); $('lab-guess').hidden = true;
+})();
+</script>
+
+</body>
+</html>
