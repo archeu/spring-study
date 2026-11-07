@@ -619,21 +619,89 @@ details.ft code{overflow-wrap:anywhere}
 <!-- ④ -->
 <section id="s4">
   <div>
-    <h2><span class="sn">④</span>原理：五块区域，一个对象的一生</h2>
-    <p class="lead">先看全景：哪几块是线程自己的、哪几块是共享的、哪几块在堆外。再看栈和堆怎么配合、一个对象在堆里长什么样，最后看堆为什么要分代。</p>
+    <h2><span class="sn">④</span>原理：规范里的五块区域，HotSpot 怎么放，一个对象的一生</h2>
+    <p class="lead">先看 JVM 规范规定的五块区域，再看 HotSpot 在不同版本里把它们放在哪；然后看栈和堆怎么配合、一个对象在堆里长什么样，最后看堆为什么要分代。</p>
   </div>
   <div class="sub">
     <h3>先知道这些</h3>
     <div class="facts">
-      <div class="fact" data-role="other"><h4>虚拟内存和 RSS</h4><p>JVM 启动时会先“预留”一大段地址（比如元空间、代码缓存），真正用到才占物理内存。看进程实际占多少，看 RSS 或容器的内存用量。</p></div>
+      <div class="fact" data-role="other"><h4>RSS 是什么</h4><p>RSS（Resident Set Size，常驻内存）是进程<b>实际占着的物理内存</b>。JVM 启动时会先“预留”一大段地址、再“提交”一部分，真正写过的才算进 RSS。下面的图是同一个 JVM 的四个数。</p></div>
       <div class="fact" data-role="other"><h4>引用和对象</h4><p><code>Order o = new Order()</code>：<code>new</code> 出来的对象在堆里，变量 <code>o</code> 里只存一个指向它的引用（地址）。</p></div>
       <div class="fact" data-role="other"><h4>GC 做什么</h4><p>从“根”（各线程栈里的引用、静态变量等）出发，顺着引用找到所有还能用到的对象，其余的就是垃圾，可以回收。</p></div>
       <div class="fact" data-role="other"><h4>JVM 规范和 HotSpot</h4><p>JVM 规范只规定“要有哪几块、各放什么”；具体怎么实现（比如方法区放哪），是 HotSpot 这样的虚拟机决定的，各版本还会变。</p></div>
     </div>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="同一个空闲的 JVM（-Xmx256m）：虚拟地址空间 2796 MB，JVM 预留 1688 MB，已提交 256 MB，真正占着物理内存的 RSS 只有 35 MB。">
+          <text x="20" y="22" class="t-m">同一个什么都不干的 JVM，<tspan class="t-mono">-Xmx256m</tspan>，启动 4 秒后（本机 JDK 17 实测）</text>
+          <text x="20" y="52" class="t-b">虚拟地址空间（VmSize）2796 MB</text><text x="880" y="52" text-anchor="end" class="t-xs">进程能用的地址范围，不等于内存</text>
+          <rect x="20" y="60" width="859" height="18" rx="4" class="b-neu"/>
+          <text x="20" y="104" class="t-b">JVM 预留（reserved）1688 MB</text><text x="880" y="104" text-anchor="end" class="t-xs">先把地址圈下来：堆 256、压缩类空间 1024、代码缓存 242……</text>
+          <rect x="20" y="112" width="518" height="18" rx="4" class="b-cg"/>
+          <text x="20" y="156" class="t-b">已提交（committed）256 MB</text><text x="880" y="156" text-anchor="end" class="t-xs">JVM 向系统要了、保证能用，但还没真正写过</text>
+          <rect x="20" y="164" width="79" height="18" rx="4" class="b-of"/>
+          <text x="20" y="208" class="t-bad">实际占物理内存（RSS）35 MB</text><text x="880" y="208" text-anchor="end" class="t-xs">真正写过、占着物理内存的部分；容器按这个（cgroup 的内存用量）判断超没超</text>
+          <rect x="20" y="216" width="11" height="18" rx="3" class="b-bad"/>
+        </svg>
+      </div>
+      <figcaption><span class="tag-real">实测</span> VmSize、RSS 来自 <code>/proc/&lt;pid&gt;/status</code>，reserved、committed 来自 <code>jcmd &lt;pid&gt; VM.native_memory summary</code>（开了 <code>-XX:NativeMemoryTracking=summary</code>）。四个数差了近 80 倍：看 JVM 占了多少内存，要看 RSS；预留得多不代表用得多。服务跑起来以后，RSS 会随着堆被写满、线程变多而逐步涨上去。</figcaption>
+    </figure>
   </div>
 
   <div class="sub" id="m-map">
-    <h3><span class="sn">机制 1</span>全景：线程私有、共享的堆、堆外</h3>
+    <h3><span class="sn">机制 1</span>五块区域：规范怎么规定，HotSpot 怎么放</h3>
+    <p class="lead" style="margin-top:0">JVM 规范规定了五块运行时数据区：三块每个线程一份，两块所有线程共享。下面先看规范里的五块，再看 HotSpot 实际怎么放（编号对应），最后看各版本怎么变。</p>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 270" role="img" aria-label="JVM 规范的五块运行时数据区：线程私有的程序计数器、虚拟机栈、本地方法栈；线程共享的堆和方法区。每块写了放什么、HotSpot 怎么实现、会出什么错。">
+          <text x="272" y="28" text-anchor="middle" class="t-pd">线程私有：每个线程一份，随线程生灭</text>
+          <text x="717" y="28" text-anchor="middle" class="t-bk">线程共享：所有线程用同一份</text>
+          <line x1="10" y1="38" x2="534" y2="38" class="e-pd"/><line x1="544" y1="38" x2="890" y2="38" class="e-bk"/>
+          <g>
+            <rect x="10" y="50" width="168" height="200" rx="12" class="b-pd"/>
+            <circle cx="32" cy="72" r="12" class="f-pd"/><text x="32" y="77" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">1</text>
+            <text x="52" y="77" class="t-b">程序计数器</text>
+            <text x="22" y="108" class="t-s">放：当前线程执行</text><text x="22" y="126" class="t-s">到哪一条字节码</text>
+            <text x="22" y="160" class="t-xs">HotSpot：每个线程一个</text>
+            <text x="22" y="196" class="t-good">唯一不会 OOM 的区域</text>
+          </g>
+          <g>
+            <rect x="188" y="50" width="168" height="200" rx="12" class="b-pd"/>
+            <circle cx="210" cy="72" r="12" class="f-pd"/><text x="210" y="77" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">2</text>
+            <text x="230" y="77" class="t-b">虚拟机栈</text>
+            <text x="200" y="108" class="t-s">放：每次方法调用</text><text x="200" y="126" class="t-s">一个栈帧（局部变量、</text><text x="200" y="144" class="t-s">操作数栈、返回地址）</text>
+            <text x="200" y="176" class="t-mono">-Xss</text>
+            <text x="200" y="210" class="t-bad">StackOverflowError</text>
+          </g>
+          <g>
+            <rect x="366" y="50" width="168" height="200" rx="12" class="b-pd"/>
+            <circle cx="388" cy="72" r="12" class="f-pd"/><text x="388" y="77" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">3</text>
+            <text x="408" y="77" class="t-b">本地方法栈</text>
+            <text x="378" y="108" class="t-s">放：调用 native</text><text x="378" y="126" class="t-s">方法（C 代码）时的</text><text x="378" y="144" class="t-s">调用现场</text>
+            <text x="378" y="176" class="t-xs">HotSpot：和 ② 合成</text><text x="378" y="192" class="t-xs">同一个栈</text>
+          </g>
+          <g>
+            <rect x="544" y="50" width="168" height="200" rx="12" class="b-bk"/>
+            <circle cx="566" cy="72" r="12" class="f-bk"/><text x="566" y="77" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">4</text>
+            <text x="586" y="77" class="t-b">堆</text>
+            <text x="556" y="108" class="t-s">放：所有 new 出来</text><text x="556" y="126" class="t-s">的对象和数组</text>
+            <text x="556" y="158" class="t-mono">-Xms / -Xmx</text>
+            <text x="556" y="180" class="t-xs">GC 主要管这里，再分代</text>
+            <text x="556" y="210" class="t-bad">Java heap space</text>
+          </g>
+          <g>
+            <rect x="722" y="50" width="168" height="200" rx="12" class="b-cg"/>
+            <circle cx="744" cy="72" r="12" class="f-cg"/><text x="744" y="77" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">5</text>
+            <text x="764" y="77" class="t-b">方法区</text>
+            <text x="734" y="108" class="t-s">放：类的结构、方法</text><text x="734" y="126" class="t-s">字节码、运行时常量池</text>
+            <text x="734" y="158" class="t-xs">HotSpot：7 及以前是永久代，</text><text x="734" y="174" class="t-xs">8 起是元空间</text>
+            <text x="734" y="210" class="t-bad">Metaspace（8 起）</text><text x="734" y="228" class="t-bad">PermGen space（≤7）</text>
+          </g>
+          <text x="10" y="266" class="t-m">规范之外，HotSpot 还有几块“堆外”内存：直接内存、代码缓存、GC 和 JIT 自己的数据结构。它们不算在五块里，但都占进程内存（下一张图）。</text>
+        </svg>
+      </div>
+    </figure>
+    <h4 style="margin-top:6px">HotSpot（JDK 17）里实际怎么放</h4>
     <figure>
       <div class="fig-box wide">
         <svg class="sv" viewBox="0 0 900 410" role="img" aria-label="JVM 内存全景：左边是每个线程私有的程序计数器、虚拟机栈和本地方法栈；中间是所有线程共享的堆，分新生代（Eden、两个 Survivor）和老年代，字符串常量池和静态变量从 7 起也在堆里；右边是堆外的本地内存：元空间、压缩类空间、代码缓存、直接内存，以及 GC 和 JIT 自己用的内存。">
@@ -679,13 +747,95 @@ details.ft code{overflow-wrap:anywhere}
           <text x="760" y="298" text-anchor="middle" class="t-xs">allocateDirect、Netty；默认上限 = 堆上限</text>
           <text x="760" y="334" text-anchor="middle" class="t-xs">还有：线程栈本身、GC 和 JIT</text>
           <text x="760" y="350" text-anchor="middle" class="t-xs">自己的数据结构</text>
+          <!-- 五块区域编号 -->
+          <g class="t-b" style="fill:var(--on-accent)">
+            <circle cx="64" cy="125" r="10" class="f-pd"/><text x="64" y="129" text-anchor="middle" class="t-xs" style="fill:var(--on-accent);font-weight:700">1</text>
+            <circle cx="64" cy="164" r="10" class="f-pd"/><text x="64" y="168" text-anchor="middle" class="t-xs" style="fill:var(--on-accent);font-weight:700">2</text>
+            <circle cx="64" cy="309" r="10" class="f-pd"/><text x="64" y="313" text-anchor="middle" class="t-xs" style="fill:var(--on-accent);font-weight:700">3</text>
+            <circle cx="334" cy="60" r="10" class="f-bk"/><text x="334" y="64" text-anchor="middle" class="t-xs" style="fill:var(--on-accent);font-weight:700">4</text>
+            <circle cx="666" cy="94" r="10" class="f-cg"/><text x="666" y="98" text-anchor="middle" class="t-xs" style="fill:var(--on-accent);font-weight:700">5</text>
+          </g>
           <!-- 引用 -->
           <path d="M236 192 C290 192 300 150 340 146" class="e-ink" marker-end="url(#ah-ink)"/>
           <text x="296" y="186" text-anchor="middle" class="t-xs halo">引用</text>
           <text x="20" y="398" class="t-m">JVM 规范里叫“方法区”的那块：HotSpot 7 及以前用堆里的“永久代”实现，8 起换成本地内存里的元空间。</text>
         </svg>
       </div>
-      <figcaption>数字是本机 JDK 17 的默认值（⑤ 实测打印出来的）：压缩类空间 1 GB、代码缓存 240 MB、元空间不设上限、直接内存上限不设时等于堆上限。</figcaption>
+      <figcaption>圆圈里的编号对应上一张图的五块：① 程序计数器、② 虚拟机栈、③ 本地方法栈、④ 堆、⑤ 方法区（HotSpot 8 起叫元空间）。没有编号的代码缓存、直接内存是规范之外的部分。数字是本机 JDK 17 的默认值（⑤ 实测打印出来的）：压缩类空间 1 GB、代码缓存 240 MB、元空间不设上限、直接内存上限不设时等于堆上限。</figcaption>
+    </figure>
+    <h4 style="margin-top:6px">不同 JDK 版本里，这几块放在哪</h4>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 430" role="img" aria-label="四个版本的对比：JDK 6 里类元数据、运行时常量池、字符串常量池、静态变量都在永久代；JDK 7 把字符串常量池和静态变量搬进了堆；JDK 8 删除永久代，类元数据和运行时常量池放进本地内存里的元空间；JDK 9 到 25 默认 G1，堆切成 Region，其余同 8。">
+        <text x="117" y="26" text-anchor="middle" class="t-h">JDK 6</text>
+        <text x="117" y="44" text-anchor="middle" class="t-xs">默认 Parallel GC</text>
+        <rect x="10" y="54" width="214" height="152" rx="10" class="b-card"/>
+        <text x="20" y="72" class="t-b">堆（-Xmx）</text>
+        <rect x="20" y="80" width="194" height="26" rx="5" class="b-bk"/><text x="30" y="98" class="t-s">新生代 Eden + 2 个 Survivor</text>
+        <rect x="20" y="110" width="194" height="36" rx="5" class="b-g2"/><text x="30" y="133" class="t-s">老年代</text>
+        <text x="20" y="170" class="t-xs">只有普通对象</text>
+        <rect x="10" y="214" width="214" height="104" rx="10" class="b-cg"/>
+        <text x="20" y="232" class="t-b">永久代（MaxPermSize）</text>
+        <text x="20" y="250" class="t-xs">紧挨着堆，GC 管，大小固定</text>
+        <rect x="20" y="258" width="194" height="22" rx="5" class="b-card"/><text x="30" y="273" class="t-xs">类元数据、运行时常量池</text>
+        <rect x="20" y="284" width="194" height="22" rx="5" class="b-of"/><text x="30" y="299" class="t-xs">字符串常量池、静态变量</text>
+        <text x="117" y="356" text-anchor="middle" class="t-xs">（类相关的都在永久代里）</text>
+        <text x="339" y="26" text-anchor="middle" class="t-h">JDK 7</text>
+        <text x="339" y="44" text-anchor="middle" class="t-xs">默认 Parallel GC</text>
+        <rect x="232" y="54" width="214" height="152" rx="10" class="b-card"/>
+        <text x="242" y="72" class="t-b">堆（-Xmx）</text>
+        <rect x="242" y="80" width="194" height="26" rx="5" class="b-bk"/><text x="252" y="98" class="t-s">新生代 Eden + 2 个 Survivor</text>
+        <rect x="242" y="110" width="194" height="36" rx="5" class="b-g2"/><text x="252" y="133" class="t-s">老年代</text>
+        <rect x="242" y="152" width="194" height="22" rx="5" class="b-of"/><text x="252" y="167" class="t-xs">字符串常量池（7 起搬进来）</text>
+        <rect x="242" y="178" width="194" height="22" rx="5" class="b-of"/><text x="252" y="193" class="t-xs">类的静态变量（7 起搬进来）</text>
+        <rect x="232" y="214" width="214" height="76" rx="10" class="b-cg"/>
+        <text x="242" y="232" class="t-b">永久代（MaxPermSize）</text>
+        <text x="242" y="250" class="t-xs">紧挨着堆，GC 管，大小固定</text>
+        <rect x="242" y="258" width="194" height="22" rx="5" class="b-card"/><text x="252" y="273" class="t-xs">类元数据、运行时常量池</text>
+        <text x="339" y="356" text-anchor="middle" class="t-xs">（类相关的都在永久代里）</text>
+        <text x="561" y="26" text-anchor="middle" class="t-h">JDK 8</text>
+        <text x="561" y="44" text-anchor="middle" class="t-xs">默认 Parallel GC</text>
+        <rect x="454" y="54" width="214" height="152" rx="10" class="b-card"/>
+        <text x="464" y="72" class="t-b">堆（-Xmx）</text>
+        <rect x="464" y="80" width="194" height="26" rx="5" class="b-bk"/><text x="474" y="98" class="t-s">新生代 Eden + 2 个 Survivor</text>
+        <rect x="464" y="110" width="194" height="36" rx="5" class="b-g2"/><text x="474" y="133" class="t-s">老年代</text>
+        <rect x="464" y="152" width="194" height="22" rx="5" class="b-of"/><text x="474" y="167" class="t-xs">字符串常量池</text>
+        <rect x="464" y="178" width="194" height="22" rx="5" class="b-of"/><text x="474" y="193" class="t-xs">类的静态变量</text>
+        <text x="561" y="240" text-anchor="middle" class="t-bad">永久代：删除</text>
+        <rect x="454" y="334" width="214" height="64" rx="10" class="b-cg"/>
+        <text x="464" y="352" class="t-b">元空间（默认不限）</text>
+        <text x="464" y="370" class="t-xs">类元数据、运行时常量池</text>
+        <text x="464" y="388" class="t-xs">另有压缩类空间（默认 1 GB）</text>
+        <text x="783" y="26" text-anchor="middle" class="t-h">JDK 9～25</text>
+        <text x="783" y="44" text-anchor="middle" class="t-xs">默认 G1（9 起）</text>
+        <rect x="676" y="54" width="214" height="152" rx="10" class="b-card"/>
+        <text x="686" y="72" class="t-b">堆（-Xmx）</text>
+        <rect x="686" y="80" width="29" height="20" rx="3" class="b-bk"/><text x="700.5" y="94" text-anchor="middle" class="t-xs">E</text>
+        <rect x="719" y="80" width="29" height="20" rx="3" class="b-bk"/><text x="733.5" y="94" text-anchor="middle" class="t-xs">E</text>
+        <rect x="752" y="80" width="29" height="20" rx="3" class="b-bk"/><text x="766.5" y="94" text-anchor="middle" class="t-xs">S</text>
+        <rect x="785" y="80" width="29" height="20" rx="3" class="b-g2"/><text x="799.5" y="94" text-anchor="middle" class="t-xs">O</text>
+        <rect x="818" y="80" width="29" height="20" rx="3" class="b-g2"/><text x="832.5" y="94" text-anchor="middle" class="t-xs">O</text>
+        <rect x="851" y="80" width="29" height="20" rx="3" class="b-g2"/><text x="865.5" y="94" text-anchor="middle" class="t-xs">O</text>
+        <rect x="686" y="104" width="29" height="20" rx="3" class="b-bk"/><text x="700.5" y="118" text-anchor="middle" class="t-xs">E</text>
+        <rect x="719" y="104" width="29" height="20" rx="3" class="b-g2"/><text x="733.5" y="118" text-anchor="middle" class="t-xs">O</text>
+        <rect x="752" y="104" width="29" height="20" rx="3" class="b-g2"/><text x="766.5" y="118" text-anchor="middle" class="t-xs">O</text>
+        <rect x="785" y="104" width="29" height="20" rx="3" class="b-of"/><text x="799.5" y="118" text-anchor="middle" class="t-xs">H</text>
+        <rect x="818" y="104" width="29" height="20" rx="3" class="b-g2"/><text x="832.5" y="118" text-anchor="middle" class="t-xs">O</text>
+        <rect x="851" y="104" width="29" height="20" rx="3" class="b-bk"/><text x="865.5" y="118" text-anchor="middle" class="t-xs">E</text>
+        <text x="686" y="142" class="t-xs">G1：一格一个 Region，E/S/O 随时切换</text>
+        <rect x="686" y="152" width="194" height="22" rx="5" class="b-of"/><text x="696" y="167" class="t-xs">字符串常量池</text>
+        <rect x="686" y="178" width="194" height="22" rx="5" class="b-of"/><text x="696" y="193" class="t-xs">类的静态变量</text>
+        <text x="783" y="240" text-anchor="middle" class="t-bad">永久代：删除</text>
+        <rect x="676" y="334" width="214" height="64" rx="10" class="b-cg"/>
+        <text x="686" y="352" class="t-b">元空间（默认不限）</text>
+        <text x="686" y="370" class="t-xs">类元数据、运行时常量池</text>
+        <text x="686" y="388" class="t-xs">另有压缩类空间（默认 1 GB）</text>
+        <line x1="10" y1="324" x2="890" y2="324" class="e-dash"/>
+        <text x="890" y="318" text-anchor="end" class="t-xs">↑ JVM 管理的堆内存（受 -Xmx、MaxPermSize 限制）</text>
+        <text x="890" y="418" text-anchor="end" class="t-xs">↓ 本地内存（堆外）。每个版本都还有：线程栈、代码缓存、直接内存</text>
+        </svg>
+      </div>
+      <figcaption>琥珀色是“从哪搬到哪”的那几样。7 先把字符串常量池和静态变量从永久代搬进堆，8 再把剩下的类元数据搬到本地内存，永久代就没了。9 起默认 G1，堆不再是两段连续内存，而是一格格的 Region（E = Eden，S = Survivor，O = 老年代，H = 大对象），代码缓存也分成了三段。为什么要这样搬，见 ⑥ 第三圈“永久代为什么换成元空间”。</figcaption>
     </figure>
     <div class="two">
       <ul class="pains">
@@ -1155,7 +1305,7 @@ public class MemDemo {
 </section>
 
 <footer>
-  <p>档位：标准档。本机实测：⑤ 的 MemDemo，在 2 核 ARM 云主机上用 JDK 17.0.20.1 跑（<code>--release 8</code> 编译），每个模式一次。查过的文档和源码：JVM 规范第 2.5 节（运行时数据区）；jdk8u 和 jdk17u 的 <code>java.nio.Bits</code>（直接内存的报错文字）；本机 JDK 17 打印的参数默认值；JEP 122（删除永久代）、JEP 197（分段代码缓存）、JEP 248（G1 默认）、JEP 450 / 519 / 534（紧凑对象头）。实验台是简化的估算模型，不是实测。↺ 的练习预期没有在本机跑过。</p>
+  <p>档位：标准档。本机实测：⑤ 的 MemDemo，在 2 核 ARM 云主机上用 JDK 17.0.20.1 跑（<code>--release 8</code> 编译），每个模式一次。④ 里 RSS 那张图：一个空闲的 JVM（<code>-Xmx256m</code>），读 <code>/proc/&lt;pid&gt;/status</code> 和 <code>jcmd VM.native_memory summary</code>，测一次。各版本里永久代、元空间、字符串常量池、静态变量的位置，按 JEP 122 和 JDK 7 的发布说明核对。查过的文档和源码：JVM 规范第 2.5 节（运行时数据区）；jdk8u 和 jdk17u 的 <code>java.nio.Bits</code>（直接内存的报错文字）；本机 JDK 17 打印的参数默认值；JEP 122（删除永久代）、JEP 197（分段代码缓存）、JEP 248（G1 默认）、JEP 450 / 519 / 534（紧凑对象头）。实验台是简化的估算模型，不是实测。↺ 的练习预期没有在本机跑过。</p>
   <p>相关：<a href="../juc/java-memory-model.html">Java 内存模型</a> · <a href="../jdk/jdk-8-17-21.html">JDK 8、17、21、25</a> · <a href="../network/io-models.html">网络 IO 模型</a> · <a href="../arch/three-highs-map.html">三高知识地图</a> · <a href="../kafka/kafka-storage-zerocopy.html">Kafka 存储与零拷贝</a></p>
 </footer>
 </main>
