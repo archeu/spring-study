@@ -668,6 +668,34 @@ details.ft code{overflow-wrap:anywhere}
     </div>
   </div>
 
+    <div class="sub" id="m-base">
+    <h3><span class="sn">地基</span>8 之前：5、6、7 只记这几样<small>今天还在起作用的</small></h3>
+    <p class="lead" style="margin-top:0">6、7 不单独做对比：主流的免费发行版早就不再给它们出更新，Spring Boot 2.0 起最低就要 8。但 8 以后的很多东西是盖在下面这几样上的，Java 内存模型其实是 5 定下的。</p>
+    <div class="trio">
+      <div class="fact" data-role="pd"><h4>JDK 5（2004）</h4>
+        <ul class="pains">
+          <li class="ok"><b>Java 内存模型（JSR 133）</b>：规定多线程下一个线程的写，另一个线程什么时候、按什么顺序能看到（happens-before），<code>volatile</code>、<code>synchronized</code>、<code>final</code> 的语义都由它定义。AQS、ConcurrentHashMap、虚拟线程都建立在它上面；9 的 VarHandle 又补了更细的内存顺序。</li>
+          <li class="ok"><b>java.util.concurrent（JSR 166）</b>：线程池、<code>Lock</code>、原子类、并发集合。见 <a href="../juc/aqs.html">AQS</a>、<a href="../juc/threadpool-execute.html">线程池</a>。</li>
+          <li class="ok">泛型、注解、枚举、自动装箱：Spring、MyBatis 的注解驱动都从这来。</li>
+        </ul>
+      </div>
+      <div class="fact" data-role="bk"><h4>JDK 6（2006）</h4>
+        <ul class="pains">
+          <li class="ok"><b>synchronized 的锁优化</b>：HotSpot 加入偏向锁和自适应自旋，和已有的轻量级锁一起，构成面试常问的“锁升级”，让没有竞争的 <code>synchronized</code> 几乎不花钱。偏向锁在 15 默认关闭，18 起参数作废，19 起再写这个参数 JVM 就起不来（⑥ 坑 1）。</li>
+          <li class="ok">JDBC 4.0：数据库驱动靠 <code>ServiceLoader</code> 自动注册，不用再写 <code>Class.forName</code>。</li>
+          <li class="ok">脚本引擎 API（JSR 223）：后来的 Nashorn 就挂在它下面，15 被删。</li>
+        </ul>
+      </div>
+      <div class="fact" data-role="g2"><h4>JDK 7（2011）</h4>
+        <ul class="pains">
+          <li class="ok"><b>invokedynamic（JSR 292）</b>：把“调用哪个方法”推迟到运行时再决定的字节码指令。8 的 lambda 就是靠它实现的，不再为每个 lambda 生成一个匿名内部类的 class；9 的字符串拼接也改用了它。</li>
+          <li class="ok"><b>Fork/Join</b>：带工作窃取的 <code>ForkJoinPool</code>。8 的 <code>parallelStream</code>、<code>CompletableFuture</code> 的默认线程池、21 虚拟线程的调度器，用的都是它。</li>
+          <li class="ok">try-with-resources、<code>&lt;&gt;</code> 菱形、multi-catch、switch 字符串；NIO.2 的 <code>Path</code>、<code>Files</code>。字符串常量池从永久代挪到堆，为 8 删永久代铺了路。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
   <div class="sub" id="m-train">
     <h3><span class="sn">机制 1</span>发布方式：从“等大特性”到“半年一班车”<small>8、17、21、25 的关系由它决定</small></h3>
     <div class="design">
@@ -1353,7 +1381,7 @@ List&lt;Order&gt; queryAll(List&lt;String&gt; ids) throws Exception {
         <b><em>坑 1</em>换上新 JDK，JVM 直接起不来<a class="root" href="#m-lanes">← ④ 机制 2 GC 线</a></b>
         <dl>
           <dt>现象</dt><dd><code>Unrecognized VM option 'PrintGCDateStamps'</code>，接着 <code>Error: Could not create the Java Virtual Machine.</code></dd>
-          <dt>根源</dt><dd>9 起 GC 日志统一成 <code>-Xlog</code>，<code>PrintGCDateStamps</code> 这类老参数被删；<code>UseCGroupMemoryLimitForHeap</code> 在 11 里已不认识；CMS 在 14 被删时只是警告并忽略，15 起 <code>-XX:+UseConcMarkSweepGC</code> 也成了不认识的参数（按 jdk11u、14u、15u 的 <code>arguments.cpp</code> 核对）。而 <code>MaxPermSize</code> 只打警告，不影响启动。</dd>
+          <dt>根源</dt><dd>9 起 GC 日志统一成 <code>-Xlog</code>，<code>PrintGCDateStamps</code> 这类老参数被删；<code>UseCGroupMemoryLimitForHeap</code> 在 11 里已不认识；CMS 在 14 被删时只是警告并忽略，15 起 <code>-XX:+UseConcMarkSweepGC</code> 也成了不认识的参数（按 jdk11u、14u、15u 的 <code>arguments.cpp</code> 核对）。偏向锁的 <code>-XX:+UseBiasedLocking</code>、<code>-XX:BiasedLockingStartupDelay=0</code> 在老的调优脚本里很常见：15 弃用、18 作废、19 起不认识（jdk17u 的过期表）。而 <code>MaxPermSize</code> 只打警告，不影响启动。</dd>
           <dt>做法</dt><dd class="fix">升级前先把启动脚本里的 GC 参数清一遍：日志改 <code>-Xlog:gc*:file=gc.log:time,uptime</code>，CMS 删掉用默认 G1，容器用 <code>MaxRAMPercentage</code>。</dd>
         </dl>
       </div>
@@ -1560,11 +1588,12 @@ List&lt;Order&gt; queryAll(List&lt;String&gt; ids) throws Exception {
     <details><summary>9. 预测：在 <code>ScopedValue.where(USER, "u-42").run(…)</code> 里，用 <code>newVirtualThreadPerTaskExecutor</code> 提交一个任务，任务里调 <code>USER.get()</code> 会怎样？换成 21 的写法、用 <code>InheritableThreadLocal</code> 呢？</summary><p>ScopedValue：抛 <code>NoSuchElementException</code>，executor 开的线程不继承绑定，只有结构化并发 fork 的子任务继承。InheritableThreadLocal：能读到，因为新建线程时把父线程的值整份复制了一份；这正是机制 5 说的“海量线程时代太贵、也难推理”的那种行为。</p><p class="from">← ④ 机制 5 + 坑 12</p></details>
     <details><summary>10. 预测：同一个服务开着虚拟线程，代码里 <code>synchronized</code> 包着一次 JDBC 查询，分别跑在 21 和 25 上，高峰时有什么区别？</summary><p>21：阻塞时载体线程被钉住，载体线程数等于 CPU 核数，几个慢查询就能让所有虚拟线程都跑不了。25：24 起 synchronized 里阻塞也能卸载，不会整体卡住；但并发查询数照样受连接池限制，排队还是会发生。</p><p class="from">← ④ 表格“synchronized 不再钉住”+ 坑 8</p></details>
     <details><summary>11. 预测：一个 1 核、1 GB 内存的容器，启动参数里没指定 GC，跑在 JDK 21、25、27 上分别用的是哪个 GC？</summary><p>21 和 25：Serial。JVM 判断这不是“服务器级”机器（只有 1 个 CPU，内存也小于 1792 MB），不选 G1。27：G1，JEP 523 去掉了这条判断，任何环境都默认 G1。三个版本上只要显式写了 <code>-XX:+UseG1GC</code> 或别的 GC，就都按你写的来。</p><p class="from">← ⑥ 第三圈 GC + ③ 末尾 27</p></details>
+    <details><summary>12. 预测：JDK 8 时代的调优脚本里有 <code>-XX:BiasedLockingStartupDelay=0</code>，拿到 17 和 21 上各会怎样？</summary><p>17：打一行弃用警告，照常启动（偏向锁 15 起默认关，这个参数也没什么用了）。21：19 起这个参数已不认识，JVM 报 Unrecognized VM option 起不来。和 CMS 参数是同一个套路：弃用 → 作废只警告 → 过期就报错。</p><p class="from">← ④ 地基 JDK 6 + 坑 1</p></details>
   </div>
 </section>
 
 <footer>
-  <p>档位：标准档的内容和体量；JDK 25 是后来按你的要求补进来的。按你的要求<b>没有在本机运行任何代码或实验</b>，页面上没有“实测”数字，代码示例都标了“未在本机运行”。事实来源：各特性的 JEP（文中给了编号）；HotSpot <code>arguments.cpp</code>（jdk11u、jdk14u、jdk15u、jdk17u，核对 CMS、PrintGCDateStamps、UseCGroupMemoryLimitForHeap、MaxPermSize 的废弃和过期版本）；Adoptium 官网的 Temurin 支持年限表；Spring Boot 4.1.2 jar 的 class 文件版本（61，即 JDK 17）；OpenJDK 官网 JDK 22～25 的特性列表；jdk25u 源码（<code>arguments.cpp</code> 里 ZGenerational 的过期表、<code>UseCompactObjectHeaders</code> 默认值、<code>System.setSecurityManager</code>、<code>LocaleProviderAdapter</code> 的 COMPAT 处理）；JDK-8321314 的提案邮件（23 起注解处理默认不跑）；OpenJDK 官网 JDK 26、27 的特性列表和 JEP 500 / 523 / 534；Oracle Java SE 支持路线图（27 非 LTS、29 计划为 LTS）；Spring Boot 3.5.16 和 4.1.2 官方文档的 Java 兼容范围（分别到 25 和 27）。</p>
+  <p>档位：标准档的内容和体量；JDK 25 是后来按你的要求补进来的。按你的要求<b>没有在本机运行任何代码或实验</b>，页面上没有“实测”数字，代码示例都标了“未在本机运行”。事实来源：各特性的 JEP（文中给了编号）；HotSpot <code>arguments.cpp</code>（jdk11u、jdk14u、jdk15u、jdk17u，核对 CMS、PrintGCDateStamps、UseCGroupMemoryLimitForHeap、MaxPermSize 的废弃和过期版本）；Adoptium 官网的 Temurin 支持年限表；Spring Boot 4.1.2 jar 的 class 文件版本（61，即 JDK 17）；OpenJDK 官网 JDK 22～25 的特性列表；jdk25u 源码（<code>arguments.cpp</code> 里 ZGenerational 的过期表、<code>UseCompactObjectHeaders</code> 默认值、<code>System.setSecurityManager</code>、<code>LocaleProviderAdapter</code> 的 COMPAT 处理）；JDK-8321314 的提案邮件（23 起注解处理默认不跑）；JEP 374 和 jdk17u / jdk21u 的过期表（偏向锁参数 15 弃用、18 作废、19 过期）；OpenJDK 官网 JDK 26、27 的特性列表和 JEP 500 / 523 / 534；Oracle Java SE 支持路线图（27 非 LTS、29 计划为 LTS）；Spring Boot 3.5.16 和 4.1.2 官方文档的 Java 兼容范围（分别到 25 和 27）。</p>
   <p>相关：<a href="../network/io-models.html">网络 IO 模型（虚拟线程）</a> · <a href="../arch/three-highs-map.html">三高知识地图</a> · <a href="../juc/aqs.html">AQS 源码（JDK 8 与 17 / 21 对照）</a> · <a href="../juc/threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../spring/spring-boot-startup.html">Spring Boot 启动流程</a></p>
 </footer>
 </main>
@@ -1582,6 +1611,7 @@ var SEV = [
 var ITEMS = [
   { id: 'gclog', label: '老 GC 日志参数（PrintGCDateStamps 等）', stages: [{ since: 9, sev: 0, msg: '9 起 GC 日志统一成 -Xlog，这些参数被删：Unrecognized VM option，JVM 直接退出' }], fix: '改成 -Xlog:gc*:file=gc.log:time,uptime' },
   { id: 'cms', label: '-XX:+UseConcMarkSweepGC（CMS）', stages: [{ since: 14, sev: 4, msg: '14 删除 CMS，参数只打警告并被忽略，GC 悄悄变成 G1' }, { since: 15, sev: 0, msg: '15 起这个参数已不认识：Unrecognized VM option，JVM 起不来' }], fix: '删掉，用默认 G1；停顿要求高再试 ZGC' },
+  { id: 'biased', label: '-XX:+UseBiasedLocking / BiasedLockingStartupDelay（偏向锁）', stages: [{ since: 15, sev: 4, msg: '15 起偏向锁默认关闭，参数弃用，打警告' }, { since: 18, sev: 4, msg: '18 起参数作废，只打 Ignoring option 警告' }, { since: 19, sev: 0, msg: '19 起参数已不认识：Unrecognized VM option，JVM 起不来' }], fix: '删掉；偏向锁已经不存在了' },
   { id: 'cgroup', label: '-XX:+UseCGroupMemoryLimitForHeap', stages: [{ since: 11, sev: 0, msg: '8u131 的实验参数，11 里已删：JVM 起不来' }], fix: '删掉；10 起（8u191 起）默认读容器限制，用 -XX:MaxRAMPercentage' },
   { id: 'perm', label: '-XX:MaxPermSize / PermSize', always: true, stages: [{ since: 8, sev: 4, msg: '永久代 8 就没了，只打一行 Ignoring option 警告' }], fix: '删掉；要限制就用 MaxMetaspaceSize' },
   { id: 'internal', label: 'sun.misc.BASE64Encoder 等 JDK 内部类', stages: [{ since: 9, sev: 1, msg: '9 起这些内部类被删除或封装进模块，编译不过' }], fix: '换 java.util.Base64 等公开 API；先用 jdeps --jdk-internals 扫一遍' },
