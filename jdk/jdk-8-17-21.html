@@ -9,7 +9,7 @@ body{margin:0}
 img{max-width:100%}
 [hidden]{display:none!important}
 </style>
-<title>JDK 8、17、21</title>
+<title>JDK 8、17、21、25</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
@@ -490,14 +490,14 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
   </defs>
 </svg>
 
-<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>JDK</span><span aria-hidden="true">/</span><span class="tb-here">JDK 8、17、21</span></div></nav>
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>JDK</span><span aria-hidden="true">/</span><span class="tb-here">JDK 8、17、21、25</span></div></nav>
 
 <main>
 
 <header class="hero">
-  <p class="kicker">JDK 8 · 17 · 21 · LTS · JEP · AMBER · LOOM · G1 / ZGC · 模块与强封装</p>
-  <h1>从 8 到 21，Java 改了什么、为什么改</h1>
-  <p class="lead">8、17、21 不是三个孤立的版本，而是一条线上的三个长期支持（LTS）站点：17 包含了 9 到 16 的全部改动，21 又包含了 18 到 20。这些改动可以归成四条主线：<b>写代码更省事（record、模式匹配）、并发更便宜（虚拟线程）、GC 停顿更短（G1、ZGC）、平台更好维护（模块和强封装，删掉旧东西）。</b>前三条是升级的好处，第四条是升级时踩坑的来源。</p>
+  <p class="kicker">JDK 8 · 17 · 21 · 25 · LTS · JEP · AMBER · LOOM · G1 / ZGC · 模块与强封装</p>
+  <h1>从 8 到 25，Java 改了什么、为什么改</h1>
+  <p class="lead">8、17、21、25 不是四个孤立的版本，而是一条线上的四个长期支持（LTS）站点：17 包含了 9 到 16 的全部改动，21 包含 18 到 20，25 又包含 22 到 24。这些改动可以归成四条主线：<b>写代码更省事（record、模式匹配）、并发更便宜（虚拟线程）、GC 停顿更短（G1、ZGC）、平台更好维护（模块和强封装，删掉旧东西）。</b>前三条是升级的好处，第四条是升级时踩坑的来源。21 到 25 这一段，主要是把虚拟线程补完整、让启动和内存更省。</p>
   <nav class="route" aria-label="六步学习路线">
     <a href="#s1"><b>①</b>为什么学</a><i aria-hidden="true">→</i>
     <a href="#s2"><b>②</b>老办法</a><i aria-hidden="true">→</i>
@@ -507,14 +507,14 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
     <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
     <a href="#loop"><b>↺</b>回到⑤</a>
   </nav>
-  <p class="scene"><b>假设场景</b><span>团队的老服务还跑在 JDK 8 + Spring Boot 2 上，新项目要上 Spring Boot 3，它最低要 JDK 17；新同事写的代码里出现了 <code>record</code>、<code>var</code>、<code>switch</code> 里的 <code>-&gt;</code>；面试也常问“8 到 17 有什么变化”。本页按你的要求<b>没有在本机运行任何代码</b>，版本和行为都按 JEP、OpenJDK 源码和发行商文档核对，代码示例标了“未在本机运行”。</span></p>
+  <p class="scene"><b>假设场景</b><span>团队的老服务还跑在 JDK 8 + Spring Boot 2 上，新项目要上 Spring Boot 3，它最低要 JDK 17；新同事写的代码里出现了 <code>record</code>、<code>var</code>、<code>switch</code> 里的 <code>-&gt;</code>；面试也常问“8 到 17 有什么变化”；2025 年 9 月又出了新的长期支持版 25。本页按你的要求<b>没有在本机运行任何代码</b>，版本和行为都按 JEP、OpenJDK 源码和发行商文档核对，代码示例标了“未在本机运行”。</span></p>
 </header>
 
 <!-- ① -->
 <section id="s1">
   <div>
-    <h2><span class="sn">①</span>为什么学：三个版本，隔着十年</h2>
-    <p class="lead">8 是 2014 年的，21 是 2023 年的。中间 Java 换了发布节奏，每半年出一个版本，每两三年挑一个做长期支持。</p>
+    <h2><span class="sn">①</span>为什么学：四个版本，跨了十一年</h2>
+    <p class="lead">8 是 2014 年的，25 是 2025 年的。中间 Java 换了发布节奏，每半年出一个版本，每两三年挑一个做长期支持。</p>
   </div>
   <figure>
     <div class="fig-box wide">
@@ -533,22 +533,24 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
         <circle cx="369" cy="120" r="8" class="b-neu"/><text x="369" y="102" text-anchor="middle" class="t-m">11</text>
         <circle cx="579" cy="120" r="11" class="b-of"/><text x="579" y="124" text-anchor="middle" class="t-b">17</text>
         <circle cx="719" cy="120" r="11" class="b-of"/><text x="719" y="124" text-anchor="middle" class="t-b">21</text>
-        <circle cx="859" cy="120" r="8" class="b-neu"/><text x="859" y="102" text-anchor="middle" class="t-m">25</text>
+        <circle cx="859" cy="120" r="11" class="b-of"/><text x="859" y="124" text-anchor="middle" class="t-b">25</text>
         <!-- 括号 -->
         <path d="M70 72 L70 62 L563 62 L563 72" class="e-of"/>
         <text x="316" y="52" text-anchor="middle" class="t-of">8 → 17：隔了 9 个版本、7 年半</text>
         <path d="M595 72 L595 62 L703 62 L703 72" class="e-of"/>
         <text x="649" y="52" text-anchor="middle" class="t-of">17 → 21：2 年</text>
+        <path d="M735 72 L735 62 L843 62 L843 72" class="e-of"/>
+        <text x="789" y="52" text-anchor="middle" class="t-of">21 → 25：2 年</text>
         <text x="170" y="178" text-anchor="middle" class="t-m">旧节奏：8 到 9 等了 3 年半</text>
         <text x="600" y="178" text-anchor="middle" class="t-m">新节奏：从 10 起每年 3 月、9 月各一个版本</text>
         <text x="600" y="198" text-anchor="middle" class="t-m">长期支持版：11、17、21、25（17 起每两年一个）</text>
       </svg>
     </div>
-    <figcaption>琥珀色是本页的三个版本。灰色大圆点 11、25 也是长期支持版：11 是很多公司的过渡站，25 是 2025 年 9 月的最新长期支持版。</figcaption>
+    <figcaption>琥珀色是本页的四个版本。灰色大圆点 11 也是长期支持版，是很多公司从 8 出来后的过渡站。按两年一个的节奏，下一个长期支持版会是 29。</figcaption>
   </figure>
   <div class="trio">
-    <div class="fact" data-role="pd"><h4>工作要用</h4><p>Spring Boot 3 和 4 最低都要 JDK 17（Boot 4.1.2 的 class 文件版本是 61，即 17）。不升级 JDK，框架就升不上去。</p></div>
-    <div class="fact" data-role="bk"><h4>看得懂新代码</h4><p><code>record</code>、<code>sealed</code>、<code>switch</code> 模式匹配、文本块、<code>var</code>、虚拟线程，在 8 上全都不存在。</p></div>
+    <div class="fact" data-role="pd"><h4>工作要用</h4><p>Spring Boot 3 和 4 最低都要 JDK 17（Boot 4.1.2 的 class 文件版本是 61，即 17）。官方文档写明 Boot 3.5 支持到 25、Boot 4.1 支持到 27。</p></div>
+    <div class="fact" data-role="bk"><h4>看得懂新代码</h4><p><code>record</code>、<code>sealed</code>、<code>switch</code> 模式匹配、文本块、<code>var</code>、虚拟线程，在 8 上全都不存在；25 又多了 <code>ScopedValue</code>、<code>void main()</code>。</p></div>
     <div class="fact" data-role="rn"><h4>升级不出事故</h4><p>升级时 JVM 起不来、反射报错、类找不到，大多来自“平台治理”这条线。知道它为什么改，就知道去哪改。</p></div>
   </div>
 </section>
@@ -606,19 +608,19 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
         <tr><th>11</th><td class="num">2018-09</td><td class="num">2027-10</td><td>模块化后的第一个 LTS、HttpClient、删 Java EE 模块</td><td>多数公司当过渡站</td></tr>
         <tr class="hl"><th>17</th><td class="num">2021-09</td><td class="num">2027-10</td><td>record、sealed、文本块、switch 表达式、默认强封装</td><td>Spring Boot 3 / 4 的最低要求</td></tr>
         <tr class="hl"><th>21</th><td class="num">2023-09</td><td class="num">2029-12</td><td>虚拟线程、模式匹配 switch、record 模式、分代 ZGC</td><td>Boot 3.2 起可一键开虚拟线程</td></tr>
-        <tr><th>25</th><td class="num">2025-09</td><td class="num">2031-09</td><td>ScopedValue 转正、紧凑对象头等（下一圈）</td><td>看依赖是否已支持</td></tr>
+        <tr class="hl"><th>25</th><td class="num">2025-09</td><td class="num">2031-09</td><td>synchronized 不再钉住虚拟线程（24）、ScopedValue、AOT 缓存、紧凑对象头、Stream Gatherers（24）、FFM（22）</td><td>Boot 3.5 起官方支持；注意 23 起注解处理默认不跑</td></tr>
       </tbody>
     </table>
   </div>
   <p class="tip">支持年限来自 Adoptium 官网的 Temurin 支持表，其他发行商的年限各不相同；Oracle 自家 JDK 8 的商用免费更新早在 2019 年就停了，生产上多用上面这些 OpenJDK 发行版。</p>
-  <p class="pick-line">选择规则：<b>新项目直接 21</b>（依赖都支持的话可以考虑 25）；要用 Spring Boot 3 / 4 的至少 17；老项目卡在 8 的，<b>跳过 11 直接规划到 17 或 21</b>，因为 9 到 17 的坑反正都要过一遍。本页学 8 → 17 → 21 这一段改了什么、为什么。</p>
+  <p class="pick-line">选择规则：<b>新项目优先 25</b>（支持期最长，虚拟线程的钉住问题也解决了），某个关键依赖还不支持 25 就用 21；要用 Spring Boot 3 / 4 的至少 17；老项目卡在 8 的，<b>跳过 11 直接规划到 17、21 或 25</b>，因为 9 到 17 的坑反正都要过一遍。本页学 8 → 17 → 21 → 25 这一段改了什么、为什么。</p>
 </section>
 
 <!-- ④ -->
 <section id="s4">
   <div>
     <h2><span class="sn">④</span>原理：一种发布方式，四条主线</h2>
-    <p class="lead">先看 Java 现在怎么出版本（这决定了 8、17、21 的关系），再看 8 到 21 的改动分成哪四条线、每样新东西是为了解决什么问题，最后看几处“为什么非这样设计不可”。</p>
+    <p class="lead">先看 Java 现在怎么出版本（这决定了 8、17、21、25 的关系），再看 8 到 25 的改动分成哪四条线、每样新东西是为了解决什么问题，最后看几处“为什么非这样设计不可”，其中机制 5 专讲 21 到 25 这一段。</p>
   </div>
   <div class="sub">
     <h3>先知道这些</h3>
@@ -631,7 +633,7 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
   </div>
 
   <div class="sub" id="m-train">
-    <h3><span class="sn">机制 1</span>发布方式：从“等大特性”到“半年一班车”<small>8、17、21 的关系由它决定</small></h3>
+    <h3><span class="sn">机制 1</span>发布方式：从“等大特性”到“半年一班车”<small>8、17、21、25 的关系由它决定</small></h3>
     <div class="design">
       <div class="way" data-role="bad">
         <h4>以前：版本等最大的那个特性<small>到 JDK 9 为止</small></h4>
@@ -661,77 +663,109 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
         </svg>
       </div>
     </div>
-    <p class="verdict" data-role="of">决定这个设计的约束：<b>大特性的完成时间没法预测</b>。绑在一起发，小改进跟着等；拆成定期发车，每个特性单独上车，语言新语法还能先以“预览”身份收反馈。后果有两个：一是 17 和 21 只是其中两班车，<b>17 = 8 + 9～16 所有班车的内容</b>；二是不少特性在中间版本里已经出现过预览，到 LTS 才转正（record 14、15 预览，16 转正）。</p>
+    <p class="verdict" data-role="of">决定这个设计的约束：<b>大特性的完成时间没法预测</b>。绑在一起发，小改进跟着等；拆成定期发车，每个特性单独上车，语言新语法还能先以“预览”身份收反馈。后果有两个：一是 17、21、25 只是其中几班车，<b>17 = 8 + 9～16 所有班车的内容，21 = 17 + 18～20，25 = 21 + 22～24</b>；二是不少特性在中间版本里已经出现过预览，到 LTS 才转正（record 14、15 预览，16 转正）。</p>
   </div>
 
   <div class="sub" id="m-lanes">
-    <h3><span class="sn">机制 2</span>8 到 21 的四条主线<small>点在哪一列，就是在哪个版本转正</small></h3>
+    <h3><span class="sn">机制 2</span>8 到 25 的四条主线<small>点在哪一列，就是在哪个版本转正</small></h3>
     <figure>
       <div class="fig-box wide">
-        <svg class="sv" viewBox="0 0 900 420" role="img" aria-label="五条泳道：语言（lambda、var、switch 表达式、文本块、record、sealed、模式匹配 switch）、类库 API（java.time、List.of、HttpClient、Stream.toList、SequencedCollection）、并发（CompletableFuture、虚拟线程在 19、20 预览、21 转正）、GC 和性能（Metaspace、G1 默认和压缩字符串、容器感知、默认 CDS、删 CMS、ZGC 转正、分代 ZGC）、平台治理（模块系统、删 Java EE 模块、删 Nashorn、默认强封装、强封装、默认 UTF-8、动态 agent 警告）。">
+        <svg class="sv" viewBox="0 0 900 420" role="img" aria-label="五条泳道，8 到 25：语言（lambda、var、switch 表达式、文本块、record、sealed、模式匹配 switch）、类库 API（java.time、List.of、HttpClient、Stream.toList、SequencedCollection）、并发（CompletableFuture、虚拟线程在 19、20 预览、21 转正）、GC 和性能（Metaspace、G1 默认和压缩字符串、容器感知、默认 CDS、删 CMS、ZGC 转正、分代 ZGC）、平台治理（模块系统、删 Java EE 模块、删 Nashorn、默认强封装、强封装、默认 UTF-8、动态 agent 警告）。">
           <rect x="128" y="40" width="44" height="370" rx="6" class="f-oft"/>
-          <rect x="296" y="40" width="44" height="370" rx="6" class="f-neut"/>
-          <rect x="632" y="40" width="44" height="370" rx="6" class="f-oft"/>
-          <rect x="856" y="40" width="40" height="370" rx="6" class="f-oft"/>
-          <g class="t-mono">
-            <text x="150" y="30" text-anchor="middle">8</text><text x="206" y="30" text-anchor="middle">9</text><text x="262" y="30" text-anchor="middle">10</text><text x="318" y="30" text-anchor="middle">11</text><text x="374" y="30" text-anchor="middle">12</text><text x="430" y="30" text-anchor="middle">13</text><text x="486" y="30" text-anchor="middle">14</text><text x="542" y="30" text-anchor="middle">15</text><text x="598" y="30" text-anchor="middle">16</text><text x="654" y="30" text-anchor="middle">17</text><text x="710" y="30" text-anchor="middle">18</text><text x="766" y="30" text-anchor="middle">19</text><text x="822" y="30" text-anchor="middle">20</text><text x="876" y="30" text-anchor="middle">21</text>
-          </g>
-          <!-- lanes -->
+          <rect x="257" y="40" width="44" height="370" rx="6" class="f-neut"/>
+          <rect x="515" y="40" width="44" height="370" rx="6" class="f-oft"/>
+          <rect x="687" y="40" width="44" height="370" rx="6" class="f-oft"/>
+          <rect x="859" y="40" width="39" height="370" rx="6" class="f-oft"/>
+          <g class="t-mono"><text x="150" y="30" text-anchor="middle">8</text><text x="193" y="30" text-anchor="middle">9</text><text x="236" y="30" text-anchor="middle">10</text><text x="279" y="30" text-anchor="middle">11</text><text x="322" y="30" text-anchor="middle">12</text><text x="365" y="30" text-anchor="middle">13</text><text x="408" y="30" text-anchor="middle">14</text><text x="451" y="30" text-anchor="middle">15</text><text x="494" y="30" text-anchor="middle">16</text><text x="537" y="30" text-anchor="middle">17</text><text x="580" y="30" text-anchor="middle">18</text><text x="623" y="30" text-anchor="middle">19</text><text x="666" y="30" text-anchor="middle">20</text><text x="709" y="30" text-anchor="middle">21</text><text x="752" y="30" text-anchor="middle">22</text><text x="795" y="30" text-anchor="middle">23</text><text x="838" y="30" text-anchor="middle">24</text><text x="881" y="30" text-anchor="middle">25</text></g>
           <g class="e-grid"><line x1="10" y1="120" x2="896" y2="120"/><line x1="10" y1="190" x2="896" y2="190"/><line x1="10" y1="260" x2="896" y2="260"/><line x1="10" y1="330" x2="896" y2="330"/></g>
-          <text x="10" y="80" class="t-pd">语言</text><text x="10" y="96" class="t-xs">Amber</text>
-          <text x="10" y="152" class="t-g2">类库 API</text>
-          <text x="10" y="222" class="t-bk">并发</text><text x="10" y="238" class="t-xs">Loom</text>
-          <text x="10" y="292" class="t-cg">GC · 性能</text>
-          <text x="10" y="362" class="t-rn">平台治理</text><text x="10" y="378" class="t-xs">模块 · 删旧</text>
-          <!-- 语言 y=86 -->
-          <line x1="150" y1="86" x2="876" y2="86" class="e-grid"/>
-          <g class="f-pd"><circle cx="150" cy="86" r="6"/><circle cx="262" cy="86" r="6"/><circle cx="486" cy="86" r="6"/><circle cx="542" cy="86" r="6"/><circle cx="598" cy="86" r="6"/><circle cx="654" cy="86" r="6"/><circle cx="876" cy="86" r="6"/></g>
-          <text x="142" y="72" class="t-s">lambda · Stream</text>
-          <text x="262" y="108" text-anchor="middle" class="t-s">var</text>
-          <text x="486" y="72" text-anchor="middle" class="t-s">switch 表达式</text>
-          <text x="542" y="108" text-anchor="middle" class="t-s">文本块</text>
-          <text x="598" y="72" text-anchor="middle" class="t-s">record</text>
-          <text x="654" y="108" text-anchor="middle" class="t-s">sealed</text>
-          <text x="890" y="72" text-anchor="end" class="t-s">模式匹配 switch</text>
-          <!-- API y=156 -->
-          <line x1="150" y1="156" x2="876" y2="156" class="e-grid"/>
-          <g class="f-g2"><circle cx="150" cy="156" r="6"/><circle cx="206" cy="156" r="6"/><circle cx="318" cy="156" r="6"/><circle cx="598" cy="156" r="6"/><circle cx="876" cy="156" r="6"/></g>
-          <text x="142" y="142" class="t-s">java.time · Optional</text>
-          <text x="206" y="178" text-anchor="middle" class="t-s">List.of</text>
-          <text x="318" y="142" class="t-s" text-anchor="start">HttpClient</text>
-          <text x="598" y="178" text-anchor="middle" class="t-s">Stream.toList</text>
-          <text x="890" y="142" text-anchor="end" class="t-s">SequencedCollection</text>
-          <!-- 并发 y=226 -->
-          <line x1="150" y1="226" x2="876" y2="226" class="e-grid"/>
+          <text x="10" y="80" class="t-pd">语言</text><text x="10" y="96" class="t-xs">Amber</text><text x="10" y="152" class="t-g2">类库 API</text><text x="10" y="222" class="t-bk">并发</text><text x="10" y="238" class="t-xs">Loom</text><text x="10" y="292" class="t-cg">GC · 性能</text><text x="10" y="362" class="t-rn">平台治理</text><text x="10" y="378" class="t-xs">模块 · 删旧</text>
+          <line x1="150" y1="86" x2="881" y2="86" class="e-grid"/>
+          <circle cx="150" cy="86" r="6" class="f-pd"/>
+          <text x="142" y="72" text-anchor="start" class="t-s">lambda · Stream</text>
+          <circle cx="236" cy="86" r="6" class="f-pd"/>
+          <text x="236" y="108" text-anchor="middle" class="t-s">var</text>
+          <circle cx="408" cy="86" r="6" class="f-pd"/>
+          <text x="408" y="72" text-anchor="middle" class="t-s">switch 表达式</text>
+          <circle cx="451" cy="86" r="6" class="f-pd"/>
+          <text x="451" y="108" text-anchor="middle" class="t-s">文本块</text>
+          <circle cx="494" cy="86" r="6" class="f-pd"/>
+          <text x="494" y="72" text-anchor="middle" class="t-s">record</text>
+          <circle cx="537" cy="86" r="6" class="f-pd"/>
+          <text x="537" y="108" text-anchor="middle" class="t-s">sealed</text>
+          <circle cx="709" cy="86" r="6" class="f-pd"/>
+          <text x="709" y="72" text-anchor="middle" class="t-s">模式匹配 switch</text>
+          <circle cx="752" cy="86" r="6" class="f-pd"/>
+          <text x="752" y="108" text-anchor="middle" class="t-s">未命名变量 _</text>
+          <circle cx="881" cy="86" r="6" class="f-pd"/>
+          <text x="892" y="72" text-anchor="end" class="t-s">简化 main</text>
+          <line x1="150" y1="156" x2="881" y2="156" class="e-grid"/>
+          <circle cx="150" cy="156" r="6" class="f-g2"/>
+          <text x="142" y="142" text-anchor="start" class="t-s">java.time · Optional</text>
+          <circle cx="193" cy="156" r="6" class="f-g2"/>
+          <text x="193" y="178" text-anchor="middle" class="t-s">List.of</text>
+          <circle cx="279" cy="156" r="6" class="f-g2"/>
+          <text x="279" y="178" text-anchor="middle" class="t-s">HttpClient</text>
+          <circle cx="494" cy="156" r="6" class="f-g2"/>
+          <text x="494" y="142" text-anchor="middle" class="t-s">Stream.toList</text>
+          <circle cx="709" cy="156" r="6" class="f-g2"/>
+          <text x="709" y="178" text-anchor="middle" class="t-s">SequencedCollection</text>
+          <circle cx="752" cy="156" r="6" class="f-g2"/>
+          <text x="752" y="142" text-anchor="middle" class="t-s">FFM</text>
+          <circle cx="838" cy="156" r="6" class="f-g2"/>
+          <text x="838" y="178" text-anchor="middle" class="t-s">Gatherers</text>
+          <line x1="150" y1="226" x2="881" y2="226" class="e-grid"/>
           <circle cx="150" cy="226" r="6" class="f-bk"/>
-          <circle cx="766" cy="226" r="6" class="b-dash"/><circle cx="822" cy="226" r="6" class="b-dash"/>
-          <circle cx="876" cy="226" r="7" class="f-bk"/>
-          <text x="142" y="212" class="t-s">CompletableFuture</text>
-          <text x="794" y="248" text-anchor="middle" class="t-xs">19、20 预览</text>
-          <text x="890" y="212" text-anchor="end" class="t-s">虚拟线程</text>
-          <!-- GC y=296 -->
-          <line x1="150" y1="296" x2="876" y2="296" class="e-grid"/>
-          <g class="f-cg"><circle cx="150" cy="296" r="6"/><circle cx="206" cy="296" r="6"/><circle cx="262" cy="296" r="6"/><circle cx="374" cy="296" r="6"/><circle cx="486" cy="296" r="6"/><circle cx="542" cy="296" r="6"/><circle cx="876" cy="296" r="6"/></g>
-          <text x="142" y="318" class="t-s">Metaspace</text>
-          <text x="206" y="282" text-anchor="middle" class="t-s">G1 默认 · 压缩字符串</text>
-          <text x="262" y="318" class="t-s" text-anchor="start">容器感知</text>
-          <text x="374" y="282" text-anchor="middle" class="t-s">默认 CDS</text>
-          <text x="486" y="318" text-anchor="middle" class="t-s">删 CMS</text>
-          <text x="542" y="282" text-anchor="middle" class="t-s">ZGC 转正</text>
-          <text x="890" y="282" text-anchor="end" class="t-s">分代 ZGC</text>
-          <!-- 治理 y=366 -->
-          <line x1="150" y1="366" x2="876" y2="366" class="e-grid"/>
-          <g class="f-rn"><circle cx="206" cy="366" r="6"/><circle cx="318" cy="366" r="6"/><circle cx="542" cy="366" r="6"/><circle cx="598" cy="366" r="6"/><circle cx="654" cy="366" r="6"/><circle cx="710" cy="366" r="6"/><circle cx="876" cy="366" r="6"/></g>
-          <text x="206" y="352" text-anchor="middle" class="t-s">模块系统</text>
-          <text x="318" y="388" text-anchor="middle" class="t-s">删 Java EE 模块</text>
-          <text x="542" y="352" text-anchor="middle" class="t-s">删 Nashorn</text>
-          <text x="598" y="388" text-anchor="middle" class="t-s">默认强封装</text>
-          <text x="654" y="352" text-anchor="middle" class="t-s">强封装</text>
-          <text x="710" y="388" text-anchor="middle" class="t-s">默认 UTF-8</text>
-          <text x="890" y="352" text-anchor="end" class="t-s">动态 agent 警告</text>
+          <text x="142" y="212" text-anchor="start" class="t-s">CompletableFuture</text>
+          <circle cx="623" cy="226" r="6" class="b-dash"/>
+          <circle cx="666" cy="226" r="6" class="b-dash"/>
+          <circle cx="709" cy="226" r="6" class="f-bk"/>
+          <text x="709" y="212" text-anchor="middle" class="t-s">虚拟线程</text>
+          <circle cx="838" cy="226" r="6" class="f-bk"/>
+          <text x="838" y="248" text-anchor="middle" class="t-s">不再钉住</text>
+          <circle cx="881" cy="226" r="6" class="f-bk"/>
+          <text x="892" y="212" text-anchor="end" class="t-s">ScopedValue</text>
+          <text x="644" y="248" text-anchor="middle" class="t-xs">19、20 预览</text>
+          <line x1="150" y1="296" x2="881" y2="296" class="e-grid"/>
+          <circle cx="150" cy="296" r="6" class="f-cg"/>
+          <text x="142" y="318" text-anchor="start" class="t-s">Metaspace</text>
+          <circle cx="193" cy="296" r="6" class="f-cg"/>
+          <text x="193" y="282" text-anchor="middle" class="t-s">G1 默认 · 压缩字符串</text>
+          <circle cx="236" cy="296" r="6" class="f-cg"/>
+          <text x="236" y="318" text-anchor="middle" class="t-s">容器感知</text>
+          <circle cx="322" cy="296" r="6" class="f-cg"/>
+          <text x="322" y="282" text-anchor="middle" class="t-s">默认 CDS</text>
+          <circle cx="408" cy="296" r="6" class="f-cg"/>
+          <text x="408" y="318" text-anchor="middle" class="t-s">删 CMS</text>
+          <circle cx="451" cy="296" r="6" class="f-cg"/>
+          <text x="451" y="282" text-anchor="middle" class="t-s">ZGC 转正</text>
+          <circle cx="709" cy="296" r="6" class="f-cg"/>
+          <text x="709" y="282" text-anchor="middle" class="t-s">分代 ZGC</text>
+          <circle cx="838" cy="296" r="6" class="f-cg"/>
+          <text x="838" y="318" text-anchor="middle" class="t-s">AOT 缓存</text>
+          <circle cx="881" cy="296" r="6" class="f-cg"/>
+          <text x="892" y="282" text-anchor="end" class="t-s">紧凑对象头</text>
+          <line x1="150" y1="366" x2="881" y2="366" class="e-grid"/>
+          <circle cx="193" cy="366" r="6" class="f-rn"/>
+          <text x="193" y="352" text-anchor="middle" class="t-s">模块系统</text>
+          <circle cx="279" cy="366" r="6" class="f-rn"/>
+          <text x="279" y="388" text-anchor="middle" class="t-s">删 Java EE 模块</text>
+          <circle cx="451" cy="366" r="6" class="f-rn"/>
+          <text x="451" y="352" text-anchor="middle" class="t-s">删 Nashorn</text>
+          <circle cx="494" cy="366" r="6" class="f-rn"/>
+          <text x="494" y="388" text-anchor="middle" class="t-s">默认强封装</text>
+          <circle cx="537" cy="366" r="6" class="f-rn"/>
+          <text x="537" y="352" text-anchor="middle" class="t-s">强封装</text>
+          <circle cx="580" cy="366" r="6" class="f-rn"/>
+          <text x="580" y="388" text-anchor="middle" class="t-s">默认 UTF-8</text>
+          <circle cx="709" cy="366" r="6" class="f-rn"/>
+          <text x="709" y="352" text-anchor="middle" class="t-s">agent 警告</text>
+          <circle cx="795" cy="366" r="6" class="f-rn"/>
+          <text x="795" y="388" text-anchor="middle" class="t-s">注解处理默认关</text>
+          <circle cx="838" cy="366" r="6" class="f-rn"/>
+          <text x="892" y="352" text-anchor="end" class="t-s">禁用 SecurityManager</text>
         </svg>
       </div>
-      <figcaption>琥珀色的三列是 8、17、21，灰色是 11。前三条泳道是“得到”，最后一条是“要还的账”：它让 JDK 内部能放心重构，代价是升级时依赖 JDK 内部的老代码会坏。容器感知最早在 10，后来回移植到了 8u191。</figcaption>
+      <figcaption>琥珀色的四列是 8、17、21、25，灰色是 11；虚线圆圈是预览。前三条泳道是“得到”，最后一条是“要还的账”：它让 JDK 内部能放心重构，代价是升级时依赖 JDK 内部的老代码会坏。容器感知最早在 10，后来回移植到了 8u191。</figcaption>
     </figure>
 
     <h3 style="margin-top:8px">每样新东西，为什么要加</h3>
@@ -749,15 +783,26 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
           <tr><th><code>instanceof</code> 模式</th><td class="num">16</td><td><code>if (o instanceof A) { A a = (A) o; … }</code> 判断完还要强转</td><td><code>if (o instanceof A a)</code> 一步到位</td></tr>
           <tr><th>sealed</th><td class="num">17</td><td>没法规定“这个接口只有这几种实现”</td><td>列出允许的子类，编译器知道一共就这几种，为穷尽检查打基础</td></tr>
           <tr><th>record 模式、switch 模式</th><td class="num">21</td><td>按类型分支要写一串 <code>if-else instanceof</code>，漏一种没人提醒</td><td>switch 直接按类型和结构匹配；配合 sealed，漏掉一种就编译不过</td></tr>
+          <tr><th>未命名变量 <code>_</code></th><td class="num">22</td><td><code>catch (Exception e)</code>、解构时用不到的变量也得起名</td><td>用 <code>_</code> 明说“不用它”</td></tr>
+          <tr><th>Markdown 文档注释</th><td class="num">23</td><td>javadoc 里要手写 HTML 标签</td><td><code>///</code> 开头直接写 Markdown</td></tr>
+          <tr><th>灵活的构造器</th><td class="num">25</td><td><code>super(…)</code> 必须是第一句，参数校验只能塞进静态辅助方法</td><td>调用 <code>super(…)</code> 之前可以先校验、先算参数</td></tr>
+          <tr><th>模块导入、紧凑源文件</th><td class="num">25</td><td>写个几行的小工具也要 <code>public class</code>、<code>public static void main(String[] args)</code> 和一串 import</td><td><code>import module java.base;</code> 一次导入整个模块；直接写 <code>void main()</code>，用 <code>IO.println</code></td></tr>
           <tr class="hl"><th colspan="4">类库 API</th></tr>
           <tr><th>java.time</th><td class="num">8</td><td><code>Date</code> 可变、<code>SimpleDateFormat</code> 线程不安全、月份从 0 开始</td><td>不可变、线程安全，日期、时间、时区、时长分开建模</td></tr>
           <tr><th><code>List.of</code>、<code>Map.of</code></th><td class="num">9</td><td><code>Collections.unmodifiableList(Arrays.asList(…))</code></td><td>一行建不可变集合（不允许 null 元素）</td></tr>
           <tr><th>HttpClient</th><td class="num">11</td><td><code>HttpURLConnection</code> 难用、不支持 HTTP/2，只好引 Apache HttpClient</td><td>JDK 自带，支持 HTTP/2、同步和异步</td></tr>
           <tr><th><code>Stream.toList()</code></th><td class="num">16</td><td><code>.collect(Collectors.toList())</code></td><td>更短，返回不可修改的 List</td></tr>
           <tr><th>SequencedCollection</th><td class="num">21</td><td>取最后一个元素：List 要 <code>get(size()-1)</code>，Deque 有 <code>getLast</code>，LinkedHashSet 没办法</td><td>有顺序的集合统一有 <code>getFirst</code>、<code>getLast</code>、<code>reversed</code></td></tr>
+          <tr><th>FFM API</th><td class="num">22</td><td>调本地库要写 JNI 的 C 胶水代码，堆外内存只能靠 <code>ByteBuffer</code> 或 <code>Unsafe</code></td><td>纯 Java 调本地函数、安全地管理堆外内存；也是收紧 <code>Unsafe</code> 和 JNI 的前提</td></tr>
+          <tr><th>Stream Gatherers</th><td class="num">24</td><td>Stream 的中间操作就那几个，按 100 个一批、滑动窗口只能自己写循环或 Collector</td><td><code>gather(Gatherers.windowFixed(100))</code>，也能自定义中间操作</td></tr>
+          <tr><th>Class-File API</th><td class="num">24</td><td>框架各自带一份 ASM，JDK 一升 class 文件版本号，旧 ASM 就读不了</td><td>JDK 自带读写 class 文件的 API，跟着 JDK 一起升级</td></tr>
+          <tr><th>抗量子密码、KDF</th><td class="num">24、25</td><td>现有的公钥算法将来可能被量子计算机破解</td><td>ML-KEM、ML-DSA（24）和密钥派生 API（25）</td></tr>
           <tr class="hl"><th colspan="4">并发（Project Loom）</th></tr>
           <tr><th>CompletableFuture</th><td class="num">8</td><td><code>Future.get()</code> 只能阻塞等，没法组合</td><td>多个异步结果能串联、合并、处理异常</td></tr>
           <tr><th>虚拟线程</th><td class="num">21</td><td>一个请求占一个平台线程，线程贵，并发上不去；改响应式又难写难调</td><td>线程变便宜，照样写阻塞代码也能扛高并发（原理见 <a href="../network/io-models.html">网络 IO 模型</a>）</td></tr>
+          <tr><th>synchronized 不再钉住</th><td class="num">24</td><td>21 里虚拟线程在 <code>synchronized</code> 中阻塞会占住载体线程，高峰时可能全卡住</td><td>重写了 <code>synchronized</code> 的实现，阻塞时照样能卸载（JEP 491）</td></tr>
+          <tr><th>ScopedValue</th><td class="num">25</td><td><code>ThreadLocal</code> 谁都能改、要记得 remove；百万虚拟线程各存一份，子线程继承还要整份复制</td><td>只读、只在一段作用域内有效、子任务共享不复制（机制 5）</td></tr>
+          <tr><th>结构化并发</th><td class="num">25 仍预览</td><td>并发起几个子任务，一个失败了其余的没人取消，线程转储里也看不出父子关系</td><td>把一组子任务当成一个整体管理；还没转正，生产先别用</td></tr>
           <tr class="hl"><th colspan="4">GC 和性能（升级就白拿）</th></tr>
           <tr><th>Metaspace</th><td class="num">8</td><td>永久代大小难估，动不动 <code>OutOfMemoryError: PermGen space</code></td><td>类元数据挪到本地内存，按需增长</td></tr>
           <tr><th>G1 成为默认</th><td class="num">9</td><td>8 默认 Parallel GC，吞吐高但大堆停顿长</td><td>服务端更在乎停顿，G1 能按目标停顿时间分批回收</td></tr>
@@ -766,6 +811,10 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
           <tr><th>AppCDS、默认 CDS</th><td class="num">10、12</td><td>每次启动都重新解析、校验同样的类</td><td>把类数据存成归档共享，启动更快</td></tr>
           <tr><th>删掉 CMS</th><td class="num">14</td><td>CMS 不整理内存，碎片多了退化成长时间 Full GC，维护成本高</td><td>G1、ZGC 已能替代，删掉省维护</td></tr>
           <tr><th>ZGC 转正、分代 ZGC</th><td class="num">15、21</td><td>堆越大，停顿越长</td><td>停顿通常不到 1 毫秒，和堆大小基本无关；21 的分代版吞吐更好</td></tr>
+          <tr><th>分代 ZGC 成默认、删不分代</th><td class="num">23、24</td><td>同时维护两种 ZGC</td><td><code>-XX:+UseZGC</code> 直接就是分代的</td></tr>
+          <tr><th>AOT 缓存</th><td class="num">24、25</td><td>Spring Boot 这类应用启动要加载、链接几千个类，刚启动还要慢慢预热</td><td>先做一次训练运行，把加载、链接好的类（24）和方法的运行画像（25）存成缓存，之后启动直接用</td></tr>
+          <tr><th>紧凑对象头</th><td class="num">25</td><td>64 位 JVM 上对象头通常 12 字节，小对象里头的占比很大</td><td>压到 8 字节，对象多而小的应用堆明显变小；25 里要手动开 <code>-XX:+UseCompactObjectHeaders</code></td></tr>
+          <tr><th>分代 Shenandoah</th><td class="num">25</td><td>Shenandoah 只有不分代模式</td><td>分代模式转为正式特性</td></tr>
           <tr class="hl"><th colspan="4">平台治理（升级的坑大多在这）</th></tr>
           <tr><th>模块系统</th><td class="num">9</td><td>JDK 是一整块 rt.jar，<code>sun.*</code> 内部类被到处直接用，JDK 想改内部都怕打坏别人</td><td>用模块划清“公开的”和“内部的”，还能用 <code>jlink</code> 裁出小运行时</td></tr>
           <tr><th>删 Java EE、CORBA 模块</th><td class="num">11</td><td>JAXB、JAX-WS 等属于 Java EE，跟着 JDK 发版太慢</td><td>移出 JDK，改成普通 Maven 依赖，各自演进</td></tr>
@@ -774,6 +823,10 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
           <tr><th>弃用 SecurityManager</th><td class="num">17</td><td>很少有人用，却拖累 JDK 每处权限检查的维护</td><td>标记要删，18 起默认不允许运行时设置</td></tr>
           <tr><th>默认 UTF-8</th><td class="num">18</td><td>不写编码时用操作系统默认编码，同一个程序在中文 Windows 和 Linux 上结果不同</td><td>统一默认 UTF-8（21 里已生效）</td></tr>
           <tr><th>动态加载 agent 警告</th><td class="num">21</td><td>运行中随时能往 JVM 里注入代码改行为</td><td>先打警告，为将来默认禁止做准备</td></tr>
+          <tr><th>删字符串模板</th><td class="num">23</td><td>21、22 预览的 <code>STR."…"</code> 设计有争议</td><td>整个撤回重新设计（预览特性的风险，⑥ 坑 6）</td></tr>
+          <tr><th>注解处理默认不跑</th><td class="num">23</td><td>类路径上任何 jar 里的注解处理器都会被 javac 自动执行，是供应链风险</td><td>必须显式指定处理器或加 <code>-proc:full</code>（JDK-8321314，⑥ 坑 9）</td></tr>
+          <tr><th>收紧 <code>Unsafe</code> 和 JNI</th><td class="num">23、24</td><td>库直接用 <code>sun.misc.Unsafe</code> 读写内存、用 JNI 调本地代码，一出错整个 JVM 崩</td><td>23 弃用 Unsafe 的内存访问方法，24 起首次调用打警告；24 起 JNI 也打警告，替代品是 FFM</td></tr>
+          <tr><th>永久禁用 SecurityManager</th><td class="num">24</td><td>17 弃用后，18～23 还能用 <code>-Djava.security.manager=allow</code> 打开</td><td>24 起彻底打不开，<code>setSecurityManager</code> 一律抛异常</td></tr>
         </tbody>
       </table>
     </div>
@@ -850,10 +903,48 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
     <p class="verdict" data-role="of">决定这个设计的约束：<b>JDK 要持续重构内部（压缩字符串、虚拟线程都改了 <code>String</code>、<code>Thread</code> 的内部），而一大批库依赖着这些内部</b>。不封起来，每次重构都会打坏别人，JDK 就只能停在原地。9 先给警告，16 默认拒绝，17 去掉一键放开的开关，前后给了生态四年多时间迁移。坏掉的老库，修法是升级库本身，<code>--add-opens</code> 只是过渡。</p>
   </div>
 
+  <div class="sub" id="m-scoped">
+    <h3><span class="sn">机制 5</span>21 → 25：有了虚拟线程，为什么还要 ScopedValue<small>设计对比</small></h3>
+    <p class="lead" style="margin-top:0">21 让线程变便宜，一个请求开几十个子任务成了常态。<code>ThreadLocal</code> 是为“少量、长寿、池化”的平台线程设计的，放到“海量、短命、层层派生”的虚拟线程上，三个毛病一起放大。</p>
+    <div class="design">
+      <div class="way" data-role="bad">
+        <h4>ThreadLocal：每个线程一份可变副本</h4>
+        <svg class="sv" viewBox="0 0 420 210" role="img" aria-label="ThreadLocal：父线程的值可以被任何代码 set 修改，要记得 remove；用 InheritableThreadLocal 时每个子线程整份复制一份。一百万个虚拟线程就是一百万份可变副本。">
+          <rect x="20" y="20" width="170" height="56" rx="10" class="b-card"/>
+          <text x="105" y="44" text-anchor="middle" class="t-b">父线程</text>
+          <text x="105" y="62" text-anchor="middle" class="t-mono">user = A</text>
+          <text x="210" y="40" class="t-bad">任何代码都能 set() 改它</text>
+          <text x="210" y="60" class="t-bad">用完要记得 remove()</text>
+          <rect x="20" y="120" width="110" height="44" rx="8" class="b-card"/><text x="75" y="140" text-anchor="middle" class="t-s">子线程 1</text><text x="75" y="156" text-anchor="middle" class="t-monos">user = A（副本）</text>
+          <rect x="150" y="120" width="110" height="44" rx="8" class="b-card"/><text x="205" y="140" text-anchor="middle" class="t-s">子线程 2</text><text x="205" y="156" text-anchor="middle" class="t-monos">user = A（副本）</text>
+          <rect x="280" y="120" width="110" height="44" rx="8" class="b-card"/><text x="335" y="140" text-anchor="middle" class="t-s">子线程 …</text><text x="335" y="156" text-anchor="middle" class="t-monos">user = A（副本）</text>
+          <g class="e-badd"><path d="M90 76 L75 116"/><path d="M120 76 L205 116"/><path d="M160 76 L335 116"/></g>
+          <text x="236" y="98" class="t-xs">继承时整份复制</text>
+          <text x="20" y="196" class="t-bad">100 万个虚拟线程 = 100 万份可变副本</text>
+        </svg>
+      </div>
+      <div class="way" data-role="done">
+        <h4>ScopedValue：一段作用域里的只读绑定</h4>
+        <svg class="sv" viewBox="0 0 420 210" role="img" aria-label="ScopedValue：ScopedValue.where 把 USER 绑定为 A，只在 run 的作用域内有效、只读；里面调用的方法和派生的子任务都读同一份，不复制；离开作用域自动失效。">
+          <rect x="20" y="20" width="380" height="130" rx="12" class="b-dash"/>
+          <text x="34" y="42" class="t-mono">ScopedValue.where(USER, A).run(…)</text>
+          <rect x="150" y="56" width="120" height="30" rx="15" class="b-good"/><text x="210" y="76" text-anchor="middle" class="t-mono">USER = A</text>
+          <rect x="40" y="108" width="100" height="30" rx="8" class="b-card"/><text x="90" y="128" text-anchor="middle" class="t-s">handle()</text>
+          <rect x="160" y="108" width="100" height="30" rx="8" class="b-card"/><text x="210" y="128" text-anchor="middle" class="t-s">子任务 1</text>
+          <rect x="280" y="108" width="100" height="30" rx="8" class="b-card"/><text x="330" y="128" text-anchor="middle" class="t-s">子任务 2</text>
+          <g class="e-good"><path d="M90 108 L170 86" marker-end="url(#ah-good)"/><path d="M210 108 L210 90" marker-end="url(#ah-good)"/><path d="M330 108 L250 86" marker-end="url(#ah-good)"/></g>
+          <text x="20" y="176" class="t-good">只读，子任务读同一份，不复制</text>
+          <text x="20" y="196" class="t-good">离开 run() 自动失效，没有 remove 可忘</text>
+        </svg>
+      </div>
+    </div>
+    <p class="verdict" data-role="of">决定这个设计的约束：<b>线程数从几百涨到上百万，而且父子任务层层派生</b>。可变、无限寿命、继承时复制，这三点在少量平台线程上无所谓，在海量虚拟线程上就变成了内存和正确性问题。ScopedValue 的答案是只读、限定作用域、共享不复制。它和结构化并发（25 仍是预览）是一对：子任务的生命周期不超过父任务，父任务绑定的值就能安全地给所有子任务共享。注意只有 <code>StructuredTaskScope</code> 里 fork 出来的子任务会继承绑定，普通线程池、executor 开的线程读不到（⑥ 坑 12）。<code>ThreadLocal</code> 没被弃用，池化平台线程上的缓存类用途照样可以用。</p>
+  </div>
+
   <div class="sub" id="m-syntax">
-    <h3><span class="sn">语法</span>21 的写法，最少要认得这些<small>每行注明是哪个版本来的</small></h3>
+    <h3><span class="sn">语法</span>21 和 25 的写法，最少要认得这些<small>每行注明是哪个版本来的</small></h3>
     <div class="codebox">
-      <div class="code-bar"><b>PayResults.java</b><span>未在本机运行；按 JEP 395 / 409 / 440 / 441 / 444 的写法核对</span></div>
+      <div class="code-bar"><b>PayResults.java</b><span>未在本机运行；按 JEP 395 / 409 / 440 / 441 / 444 / 485 / 506 / 512 的写法核对</span></div>
 <pre><code>sealed interface PayResult permits Paid, Failed, Pending {}            <span class="cm">// 17 sealed</span>
 record Paid(String orderId, long cents) implements PayResult {}         <span class="cm">// 16 record</span>
 record Failed(String orderId, String reason) implements PayResult {}
@@ -870,7 +961,15 @@ static String describe(PayResult r) {
 
 try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {          <span class="cm">// 21 虚拟线程，10 var</span>
     exec.submit(() -&gt; query(orderId));
-}</code></pre>
+}
+
+static final ScopedValue&lt;String&gt; USER = ScopedValue.newInstance();      <span class="cm">// 25 ScopedValue</span>
+ScopedValue.where(USER, "u-42").run(() -&gt; handle());                     <span class="cm">// run 里这条调用链上 USER.get() 都是 u-42</span>
+
+ids.stream().gather(Gatherers.windowFixed(100))                          <span class="cm">// 24 Gatherers：每 100 个一批</span>
+   .forEach(batch -&gt; batchQuery(batch));
+
+void main() { IO.println("hello"); }                                     <span class="cm">// 25 紧凑源文件：小工具不用写 class</span></code></pre>
     </div>
     <p class="tip">参数、GC 选择、各个特性的边角规则放到第⑥步。注意带 <code>when</code> 的 case 要写在同类型的普通 case 前面，否则会被它“盖住”而编译报错。</p>
   </div>
@@ -879,8 +978,8 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {          <span cl
 <!-- ⑤ -->
 <section id="s5">
   <div>
-    <h2><span class="sn">⑤</span>跑起来：同一段代码，8 和 21 各写一遍，再升一次级</h2>
-    <p class="lead">一个小场景：拿到一批支付结果，按类型生成描述，再并发查 1000 个订单。左边是 JDK 8 的写法，右边是 21 的写法。代码<b>未在本机运行</b>，写法按 JEP 和 JLS 核对。</p>
+    <h2><span class="sn">⑤</span>跑起来：同一段代码，8、21、25 各写一遍，再升一次级</h2>
+    <p class="lead">一个小场景：拿到一批支付结果，按类型生成描述，再并发查 1000 个订单。左边是 JDK 8 的写法，右边是 21 的写法，下面再用 25 补两样。代码<b>未在本机运行</b>，写法按 JEP 和 JLS 核对。</p>
   </div>
   <div class="two">
     <div class="codebox">
@@ -942,31 +1041,64 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
     </div>
   </div>
   <div class="codebox">
+    <div class="code-bar"><b>JDK 25</b><span>同一个场景再补两样：ScopedValue 传当前用户，Gatherers 分批；未在本机运行</span></div>
+<pre><code>static final ScopedValue&lt;String&gt; USER = ScopedValue.newInstance();
+
+void handle(String user, List&lt;String&gt; ids) throws Exception {
+    ScopedValue.where(USER, user).call(() -&gt; queryAll(ids));   <span class="cm">// 25：这段调用链里绑定 USER，只读</span>
+}
+
+List&lt;Order&gt; queryAll(List&lt;String&gt; ids) throws Exception {
+    String user = USER.get();                                    <span class="cm">// 同一线程的调用链里读得到</span>
+    try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
+        var fs = ids.stream()
+                    .gather(Gatherers.windowFixed(100))           <span class="cm">// 24：每 100 个 id 一批</span>
+                    .map(batch -&gt; exec.submit(() -&gt; batchQuery(user, batch)))   <span class="cm">// 显式把 user 传下去</span>
+                    .toList();
+        var all = new ArrayList&lt;Order&gt;();
+        for (var f : fs) all.addAll(f.get());
+        return all;
+    }
+}
+<span class="cm">// 注意：executor 开出来的线程不继承 USER，在 batchQuery 里调 USER.get() 会抛 NoSuchElementException。</span>
+<span class="cm">// 只有结构化并发（25 仍是预览）的 StructuredTaskScope.fork 出来的子任务才继承。</span></code></pre>
+  </div>
+  <div class="codebox">
     <div class="code-bar"><b>pom.xml</b><span>用 release，而不是 source / target</span></div>
 <pre><code>&lt;properties&gt;
-    &lt;maven.compiler.release&gt;21&lt;/maven.compiler.release&gt;   <span class="cm">&lt;!-- 用了 Spring Boot 父 POM 时写 &lt;java.version&gt;21&lt;/java.version&gt; --&gt;</span>
-&lt;/properties&gt;</code></pre>
+    &lt;maven.compiler.release&gt;25&lt;/maven.compiler.release&gt;   <span class="cm">&lt;!-- 用了 Spring Boot 父 POM 时写 &lt;java.version&gt;25&lt;/java.version&gt; --&gt;</span>
+&lt;/properties&gt;
+<span class="cm">&lt;!-- 23 起注解处理器要显式声明，否则 Lombok 不生效（⑥ 坑 9） --&gt;</span>
+&lt;plugin&gt;
+    &lt;artifactId&gt;maven-compiler-plugin&lt;/artifactId&gt;
+    &lt;configuration&gt;
+        &lt;annotationProcessorPaths&gt;
+            &lt;path&gt;&lt;groupId&gt;org.projectlombok&lt;/groupId&gt;&lt;artifactId&gt;lombok&lt;/artifactId&gt;&lt;version&gt;${lombok.version}&lt;/version&gt;&lt;/path&gt;
+        &lt;/annotationProcessorPaths&gt;
+    &lt;/configuration&gt;
+&lt;/plugin&gt;</code></pre>
   </div>
   <p class="tip"><code>release</code>（9 起）同时限定语法和可用的 JDK API；只写 <code>source</code>/<code>target</code> 时，高版本 javac 会放过只有新 JDK 才有的方法，程序拿到老 JDK 上才报 <code>NoSuchMethodError</code>。<code>ExecutorService</code> 实现 <code>AutoCloseable</code> 是 JDK 19 加的，21 里能直接用。</p>
 
   <div class="sub">
-    <h3>老项目从 8 升到 17 / 21：五步</h3>
+    <h3>老项目从 8 升到 17 / 21 / 25：五步</h3>
     <ol class="callouts">
       <li><b>1</b><span><b>先扫一遍。</b><code>jdeps --jdk-internals app.jar</code> 列出用到的 JDK 内部 API；<code>jdeprscan --release 17 app.jar</code> 列出用到的已弃用、已删除 API。两个工具 JDK 9 起自带。</span></li>
-      <li><b>2</b><span><b>先升依赖，再换 JDK。</b>Lombok、Spring、ASM / cglib、Mockito、字节码类 APM、Maven 编译插件都要升到支持目标 JDK 的版本，这一步解决大部分强封装问题。</span></li>
+      <li><b>2</b><span><b>先升依赖，再换 JDK。</b>Lombok、Spring、ASM / cglib、Mockito、字节码类 APM、Maven 编译插件都要升到支持目标 JDK 的版本，这一步解决大部分强封装问题；目标是 23 以上的，顺手把注解处理器写进 <code>annotationProcessorPaths</code>。</span></li>
       <li><b>3</b><span><b>换 JDK 编译。</b>改成 <code>release</code>；补上被移出 JDK 的依赖（JAXB 等）；内部类换成公开 API。</span></li>
-      <li><b>4</b><span><b>改启动参数。</b>删掉 CMS、<code>PrintGCDateStamps</code>、<code>PermSize</code> 等老参数；GC 日志改成 <code>-Xlog:gc*:file=gc.log:time,uptime</code>；容器里用 <code>-XX:MaxRAMPercentage</code> 代替写死的 <code>-Xmx</code>。</span></li>
+      <li><b>4</b><span><b>改启动参数。</b>删掉 CMS、<code>PrintGCDateStamps</code>、<code>PermSize</code>、<code>ZGenerational</code> 等老参数；用 JNI 的加 <code>--enable-native-access</code>；GC 日志改成 <code>-Xlog:gc*:file=gc.log:time,uptime</code>；容器里用 <code>-XX:MaxRAMPercentage</code> 代替写死的 <code>-Xmx</code>。</span></li>
       <li><b>5</b><span><b>测、压、灰度。</b>跑全量测试，压测对比 GC 停顿和 RT（默认 GC 从 Parallel 变成了 G1），再灰度上线。</span></li>
     </ol>
   </div>
   <div class="two">
-    <div class="done-box"><b>到这里已经能交差了。</b>能说清 8、17、21 的关系（同一条线上的三个 LTS 站点），能看懂新写法、知道每样为什么加，能按五步把一个老服务升上去。</div>
+    <div class="done-box"><b>到这里已经能交差了。</b>能说清 8、17、21、25 的关系（同一条线上的四个 LTS 站点），能看懂新写法、知道每样为什么加，能按五步把一个老服务升上去。</div>
     <div class="todo">
       <b>已知还没处理的细节</b>
       <ul>
         <li>换上新 JDK 后 JVM 直接起不来 → <a href="#pit-flags">⑥ 坑 1</a></li>
         <li>编译通过、一跑就报反射错误 → <a href="#pit-open">⑥ 坑 2</a></li>
         <li>没报错，但输出悄悄变了 → <a href="#pit-charset">⑥ 坑 5</a></li>
+        <li>升到 25 后 Lombok 不生效 → <a href="#pit-apt">⑥ 坑 9</a></li>
         <li>自己的项目到底会碰到哪些 → <a href="#lab">⑥ 升级检查器</a></li>
       </ul>
     </div>
@@ -977,7 +1109,7 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
 <section id="s6">
   <div>
     <h2><span class="sn">⑥</span>细节：升级时会在哪出事</h2>
-    <p class="lead">第一圈是升级时最常见的坑，按“起不来 → 编译不过 → 运行报错 → 悄悄变了”排，每条标了根源在 ④ 的哪一条；第二圈是团队规范；第三圈是几处更深的原因，最后是升级检查器。</p>
+    <p class="lead">第一圈是升级时最常见的坑，前 8 条覆盖 8 → 21，后 4 条是升到 25 新增的，每条标了根源在 ④ 的哪一条；第二圈是团队规范；第三圈是几处更深的原因，最后是升级检查器。</p>
   </div>
   <div class="sub" id="c1">
     <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
@@ -1019,7 +1151,7 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
         <dl>
           <dt>现象</dt><dd>升到 21 后，中文 Windows 上读出来的文件乱码；或者升到 9 以上，某些语言的日期、数字格式化结果和以前不一样。</dd>
           <dt>根源</dt><dd>18 起（JEP 400）不写编码时默认用 UTF-8，不再跟操作系统走，以前按 GBK 读写的代码行为就变了。9 起（JEP 252）默认的本地化数据换成了 CLDR。</dd>
-          <dt>做法</dt><dd class="fix">读写文件、转字节一律显式写 <code>StandardCharsets.UTF_8</code>；格式化写死 pattern 和 <code>Locale</code>。过渡期可用 <code>-Dfile.encoding=COMPAT</code>、<code>-Djava.locale.providers=COMPAT,CLDR</code>（后者在 21 里已标记要删）。</dd>
+          <dt>做法</dt><dd class="fix">读写文件、转字节一律显式写 <code>StandardCharsets.UTF_8</code>；格式化写死 pattern 和 <code>Locale</code>。过渡期可用 <code>-Dfile.encoding=COMPAT</code>；<code>-Djava.locale.providers=COMPAT</code> 在 21 里还能兜底，23 起 COMPAT 被删，只打警告、照样用 CLDR。</dd>
         </dl>
       </div>
       <div class="pit" id="pit-preview">
@@ -1042,8 +1174,41 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
         <b><em>坑 8</em>开了虚拟线程，压力一大全卡住<a class="root" href="#m-lanes">← ④ 机制 2 并发线</a></b>
         <dl>
           <dt>现象</dt><dd>21 上打开 <code>spring.threads.virtual.enabled</code>，平时正常，高峰时请求全部不动。</dd>
-          <dt>根源</dt><dd>21 里虚拟线程在 <code>synchronized</code> 块里阻塞会钉住载体线程，载体线程默认和 CPU 核数一样多；24（JEP 491）才解决。下游连接池也会变成新瓶颈。</dd>
+          <dt>根源</dt><dd>21 里虚拟线程在 <code>synchronized</code> 块里阻塞会钉住载体线程，载体线程默认和 CPU 核数一样多；24（JEP 491）才解决，所以升到 25 就没有这个问题了。但下游连接池会变成新瓶颈，这一点 25 也一样。</dd>
           <dt>做法</dt><dd class="fix">用 JFR 事件 <code>jdk.VirtualThreadPinned</code> 找钉住点，换 <code>ReentrantLock</code>；对下游加并发上限。详见 <a href="../network/io-models.html#pit-pin">网络 IO 模型 · 坑 7</a>。</dd>
+        </dl>
+      </div>
+
+      <div class="pit" id="pit-apt">
+        <b><em>坑 9</em>升到 23 以上，Lombok 突然不生效<a class="root" href="#m-lanes">← ④ 机制 2 治理线</a></b>
+        <dl>
+          <dt>现象</dt><dd>Maven 项目换 JDK 25 编译，满屏 <code>cannot find symbol: method getXxx()</code>。21、22 上编译时其实已经打过一条 Note 提醒。</dd>
+          <dt>根源</dt><dd>23 起（JDK-8321314）javac 不再自动执行类路径上的注解处理器：任何依赖 jar 里的处理器都会被自动执行，是供应链风险。Lombok 只写在 <code>dependencies</code> 里，就是靠这种“自动发现”。</dd>
+          <dt>做法</dt><dd class="fix">在 <code>maven-compiler-plugin</code> 里把 Lombok、MapStruct 等写进 <code>annotationProcessorPaths</code>（⑤ 的 pom），或临时加 <code>-proc:full</code>。Gradle 用 <code>annotationProcessor</code> 配置，本来就是显式的，不受影响。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-sm">
+        <b><em>坑 10</em>24 起 SecurityManager 彻底打不开<a class="root" href="#m-lanes">← ④ 机制 2 治理线</a></b>
+        <dl>
+          <dt>现象</dt><dd>17 上只是警告，18～23 加 <code>-Djava.security.manager=allow</code> 还能跑；升到 25，<code>System.setSecurityManager</code> 一调就抛 <code>UnsupportedOperationException</code>。</dd>
+          <dt>根源</dt><dd>JEP 486 永久禁用了 SecurityManager，jdk25u 源码里 <code>setSecurityManager</code> 只剩一行抛异常。老的插件沙箱、脚本沙箱、部分测试框架会用到它。</dd>
+          <dt>做法</dt><dd class="fix">去掉对它的依赖：隔离不可信代码改用独立进程、容器或操作系统的权限控制。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-unsafe">
+        <b><em>坑 11</em>升到 24 以上，日志里冒出 Unsafe 和 JNI 警告<a class="root" href="#m-gov">← ④ 机制 4 强封装</a></b>
+        <dl>
+          <dt>现象</dt><dd>启动后出现 “A terminally deprecated method in sun.misc.Unsafe has been called”，或者调用本地库时出现 restricted method 的警告。</dd>
+          <dt>根源</dt><dd>和强封装同一个思路：<code>Unsafe</code> 的内存访问和 JNI 都能绕过 Java 的安全保证。23 弃用 Unsafe 内存访问方法，24 起首次调用打警告（JEP 498）；24 起 JNI 也打警告（JEP 472）。替代品分别是 VarHandle / FFM 和 FFM。</dd>
+          <dt>做法</dt><dd class="fix">先升级依赖（老版本 Netty 等底层库是常见来源）；确实要用 JNI 的，启动时加 <code>--enable-native-access=ALL-UNNAMED</code>。现在只是警告，将来会变成报错。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-scoped">
+        <b><em>坑 12</em>线程池里的任务读不到 ScopedValue<a class="root" href="#m-scoped">← ④ 机制 5</a></b>
+        <dl>
+          <dt>现象</dt><dd>把 <code>ThreadLocal</code> 换成 <code>ScopedValue</code> 后，提交到线程池或 executor 的任务里 <code>USER.get()</code> 抛 <code>NoSuchElementException</code>。</dd>
+          <dt>根源</dt><dd>绑定只在 <code>where(…).run(…)</code> 这条调用链上有效，只会被结构化并发里 fork 出来的子任务继承。普通线程池的线程活得比这段作用域还久，所以故意不继承。</dd>
+          <dt>做法</dt><dd class="fix">要传给线程池任务的值显式当参数传（⑤ 的写法）；等结构化并发转正后，用 <code>StructuredTaskScope</code> 派生子任务。读之前不确定有没有绑定，用 <code>isBound()</code> 判断。</dd>
         </dl>
       </div>
     </div>
@@ -1057,6 +1222,8 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
       <div class="rl"><b>record 用在 DTO、值对象，不用在 JPA 实体</b><p>record 是 final、字段不可变、没有无参构造器，JPA 的代理和懒加载用不了它。</p><p class="guard">实体映射在运行时报错</p></div>
       <div class="rl"><b><code>var</code> 只在右边一眼能看出类型时用</b><p><code>var list = new ArrayList&lt;Order&gt;()</code> 可以；<code>var x = service.load()</code> 别用。</p><p class="guard">读代码要跳进方法才知道类型</p></div>
       <div class="rl"><b>多分支的业务类型用 sealed + switch，不写 default</b><p>写了 default，编译器就不再提醒你漏掉了新类型。</p><p class="guard">新增一种状态，旧代码悄悄走进 default</p></div>
+      <div class="rl"><b>构建里显式声明注解处理器</b><p>Maven 写 <code>annotationProcessorPaths</code>，不靠类路径自动发现。</p><p class="guard">升到 23 以上 Lombok、MapStruct 失效（坑 9）</p></div>
+      <div class="rl"><b>上下文传递：同一调用链用 ScopedValue，跨线程池就显式传参</b><p>新代码里请求级的上下文（用户、租户、traceId）优先用 ScopedValue；要交给线程池的就当参数传。</p><p class="guard">ThreadLocal 忘了 remove 串数据、线程池里读不到绑定（坑 12）</p></div>
       <div class="rl"><b>升级 JDK 时，先在启动参数上过一遍</b><p>GC 选择、GC 日志、堆大小、<code>--add-opens</code> 都写进同一个文件里审。</p><p class="guard">坑 1、坑 2 在生产上才暴露</p></div>
     </div>
   </div>
@@ -1072,7 +1239,8 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
         <h4>默认 GC 换了，升级后要看什么</h4>
         <ul>
           <li>8 默认 Parallel（吞吐优先），9 起默认 G1（停顿优先）。同样的堆，升级后吞吐可能略降、停顿明显变短，压测要两样都看。</li>
-          <li>21 的 ZGC 要分代的话，得加 <code>-XX:+UseZGC -XX:+ZGenerational</code>；23 起分代成了默认，24 删了不分代的模式。</li>
+          <li>21 的 ZGC 要分代的话，得加 <code>-XX:+UseZGC -XX:+ZGenerational</code>；23 起分代成了默认，24 删了不分代的模式，25 上 <code>ZGenerational</code> 只打警告、被忽略（jdk25u 源码核对）。</li>
+          <li>25 的紧凑对象头默认不开，要加 <code>-XX:+UseCompactObjectHeaders</code>；对象多而小的服务值得压测对比一下堆占用。</li>
           <li>容器里 JVM 只拿到 1 个 CPU、内存小于约 1792 MB 时，会自动选 Serial GC。规格太小的 Pod 要显式指定 GC。</li>
         </ul>
       </div>
@@ -1081,8 +1249,8 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
         <p>每一样留在 JDK 里的东西都有维护成本：CMS 拖累 GC 代码重构，SecurityManager 让每个敏感操作都要多一层权限检查，Nashorn 要追 JS 标准。Java 的承诺是“公开 API 尽量兼容”，所以删之前都会先弃用、打警告，给几个版本的缓冲。升级时看一眼 <code>jdeprscan</code> 的输出，就能提前知道下一次会坏什么。</p>
       </div>
       <div class="dp" data-role="bk">
-        <h4>17 到 21 其实改得不多，为什么值得升</h4>
-        <p>语言上主要是模式匹配补齐了（record 模式、switch 模式），API 上是 SequencedCollection；真正的分量在运行时：虚拟线程和分代 ZGC。如果服务是“大量阻塞 IO + 线程池不够用”，或者大堆、对停顿敏感，21 的收益最直接；如果都不是，17 → 21 的升级风险也很小（主要是坑 5、7、8，外加用了 SecurityManager 的会在 18 起报错）。</p>
+        <h4>17 → 21、21 → 25，各值不值得升</h4>
+        <p>语言上主要是模式匹配补齐了（record 模式、switch 模式），API 上是 SequencedCollection；真正的分量在运行时：虚拟线程和分代 ZGC。如果服务是“大量阻塞 IO + 线程池不够用”，或者大堆、对停顿敏感，21 的收益最直接；如果都不是，17 → 21 的升级风险也很小（主要是坑 5、7、8，外加用了 SecurityManager 的会在 18 起报错）。21 → 25 是“把虚拟线程补完整”：synchronized 不再钉住、ScopedValue 转正，外加 AOT 缓存和紧凑对象头省启动时间和内存，支持期也最长（到 2031 年）；要处理的主要是坑 9～11。</p>
       </div>
     </div>
 
@@ -1091,8 +1259,8 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
       <div class="presets" id="lab-presets"></div>
       <div class="guess" id="lab-guess"></div>
       <div class="ctl-grid">
-        <div class="ctl"><span class="lbl">现在的 JDK</span><span class="seg-btns" id="c-from" role="group" aria-label="现在的 JDK"><button type="button" data-v="8">8</button><button type="button" data-v="11">11</button><button type="button" data-v="17">17</button></span></div>
-        <div class="ctl"><span class="lbl">要升到</span><span class="seg-btns" id="c-to" role="group" aria-label="要升到"><button type="button" data-v="17">17</button><button type="button" data-v="21">21</button></span></div>
+        <div class="ctl"><span class="lbl">现在的 JDK</span><span class="seg-btns" id="c-from" role="group" aria-label="现在的 JDK"><button type="button" data-v="8">8</button><button type="button" data-v="11">11</button><button type="button" data-v="17">17</button><button type="button" data-v="21">21</button></span></div>
+        <div class="ctl"><span class="lbl">要升到</span><span class="seg-btns" id="c-to" role="group" aria-label="要升到"><button type="button" data-v="17">17</button><button type="button" data-v="21">21</button><button type="button" data-v="25">25</button></span></div>
         <div class="ctl span"><span class="lbl">项目里有这些吗（可多选）</span><span class="toggles" id="c-items"></span></div>
       </div>
       <div class="run-row">
@@ -1102,15 +1270,16 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
       <div class="tiles" id="lab-tiles"></div>
       <div class="lab-res" id="lab-res" data-role="other">点“检查”看结果。</div>
     </div>
-    <p class="tip">规则来自 ④ 的那张表和第一圈的坑：每一项记着“从哪个版本开始出问题、出什么问题”，只有当现在的版本早于它、要升到的版本不早于它时才算进来；启动参数和 Spring Boot 2.x 这类“一直带着的东西”不管从哪个版本升都算。规则在 node 里逐项测过（例如 17 → 21 不会报 JAXB，8 → 17 不会报默认 UTF-8）。它只是一份提醒清单，真实项目以 <code>jdeps</code>、<code>jdeprscan</code> 和测试为准。</p>
+    <p class="tip">规则来自 ④ 的那张表和第一圈的坑：每一项记着“从哪个版本开始出问题、出什么问题”，只有当现在的版本早于它、要升到的版本不早于它时才算进来；启动参数和 Spring Boot 2.x 这类“一直带着的东西”不管从哪个版本升都算。规则在 node 里逐项测过（例如 17 → 21 不会报 JAXB，8 → 17 不会报默认 UTF-8，升到 25 时虚拟线程钉住不再算问题）。它只是一份提醒清单，真实项目以 <code>jdeps</code>、<code>jdeprscan</code> 和测试为准。</p>
   </div>
 
   <div class="sub">
     <h3>下一圈</h3>
     <ul class="next">
-      <li>JDK 25（LTS）：ScopedValue 转正、紧凑对象头、AOT 缓存，以及 24 解决的 synchronized 钉住</li>
-      <li>FFM API（22 转正）：不写 JNI 调本地库</li>
-      <li>Stream Gatherers（24 转正）：自定义中间操作</li>
+      <li>结构化并发（25 仍预览）：StructuredTaskScope 怎么管一组子任务、怎么和 ScopedValue 配合</li>
+      <li>AOT 缓存实战：给 Spring Boot 做训练运行，启动能快多少</li>
+      <li>FFM API 实战：不写 JNI，用 Java 直接调本地库</li>
+      <li>25 里的预览：Stable Values、原始类型模式、PEM 编码</li>
       <li>Project Valhalla：值类型，让对象像 int 一样不占对象头</li>
       <li>G1 和 ZGC 调优：停顿从哪来、参数为什么有效</li>
       <li>jlink + CDS / AOT：容器里的小镜像和快启动</li>
@@ -1121,7 +1290,7 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
 <!-- ↺ -->
 <section id="loop">
   <div>
-    <h2><span class="sn">↺</span>回到第⑤步：改 PayResult</h2>
+    <h2><span class="sn">↺</span>回到第⑤步：改 PayResult 和 queryAll</h2>
     <p class="lead">三个练习各用一条 ⑥ 的内容。“做对了会看到”是按 JLS 和 JEP 推出来的，没有在本机跑过。</p>
   </div>
   <div class="ex">
@@ -1133,9 +1302,9 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
     </div>
     <div class="exc" data-role="rn">
       <h4>练习 2 · 扫自己的项目</h4>
-      <p>在公司项目上跑 <code>jdeps --jdk-internals</code> 和 <code>jdeprscan --release 21</code>，再把启动脚本里的 <code>-XX</code> 参数逐个对照坑 1。</p>
+      <p>在公司项目上跑 <code>jdeps --jdk-internals</code> 和 <code>jdeprscan --release 25</code>，把启动脚本里的 <code>-XX</code> 参数逐个对照坑 1，再看 pom 里有没有 <code>annotationProcessorPaths</code>。</p>
       <p><b>做对了会看到：</b>一份“内部 API → 建议替代”的清单；常见的是 <code>sun.misc.Unsafe</code>（多半来自依赖）和 <code>sun.misc.BASE64Encoder</code>（换 <code>java.util.Base64</code>）。</p>
-      <p class="uses">用到：⑤ 五步、坑 1、坑 2</p>
+      <p class="uses">用到：⑤ 五步、坑 1、坑 2、坑 9</p>
     </div>
     <div class="exc" data-role="bk">
       <h4>练习 3 · 先猜，再看线程数</h4>
@@ -1145,18 +1314,21 @@ try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
     </div>
   </div>
   <div class="faq">
-    <details><summary>1. 用一句话说出 8、17、21 的关系和升级的精华。</summary><p>它们是半年一班车里的三个长期支持站点，17 包含 9～16、21 包含 18～20 的全部改动；升级拿到的是只有平台能做的改进（编译器检查、虚拟线程、GC、字符串布局），要还的是“平台治理”那条线的账（强封装、删模块、删旧参数）。</p><p class="from">← 开头 + ②</p></details>
+    <details><summary>1. 用一句话说出 8、17、21、25 的关系和升级的精华。</summary><p>它们是半年一班车里的四个长期支持站点，17 包含 9～16、21 包含 18～20、25 包含 22～24 的全部改动；升级拿到的是只有平台能做的改进（编译器检查、虚拟线程、GC、字符串布局），要还的是“平台治理”那条线的账（强封装、删模块、删旧参数）。</p><p class="from">← 开头 + ②</p></details>
     <details><summary>2. 留在 JDK 8 靠第三方库补，痛在哪？</summary><p>库只能补 API 和语法糖，补不了要改编译器、JVM、类库内部的东西（穷尽检查、虚拟线程、新 GC、压缩字符串）；而且 Spring Boot 3 / 4 最低要 17，框架生态已经往前走了。</p><p class="from">← ②</p></details>
     <details><summary>3. “编译通过、一跑就报 InaccessibleObjectException”，根源是 ④ 的哪一条？</summary><p>机制 4 强封装：为了让 JDK 能改自己的内部，9 起用模块划清公开和内部，16 默认拒绝反射访问内部，17 去掉了总开关。老库用反射改 JDK 私有字段，就撞上了。</p><p class="from">← ④ 机制 4 + 坑 2</p></details>
     <details><summary>4. 预测：JDK 8 的服务，启动脚本里有 <code>-XX:+UseConcMarkSweepGC -XX:MaxPermSize=256m</code>，直接换 JDK 14 和 JDK 17 各会怎样？</summary><p>14：两个参数都只打“Ignoring option …”警告，JVM 照常启动，GC 悄悄变成默认的 G1。17：CMS 参数在 15 起已经不认识，JVM 报 Unrecognized VM option 起不来；MaxPermSize 仍只是警告。</p><p class="from">← 坑 1（按 HotSpot 源码里的过期表推出）</p></details>
     <details><summary>5. 预测：<code>sealed interface Shape permits Circle, Square</code>，某处 switch 写了 <code>default -&gt; 0</code>。后来加了 <code>Triangle</code>，这个 switch 会怎样？</summary><p>照样编译通过，Triangle 走进 default 返回 0，悄悄算错。写了 default，编译器就认为你已经处理了“其他所有情况”，穷尽检查帮不上忙。这就是第二圈说“不写 default”的原因。</p><p class="from">← ④ 机制 3</p></details>
     <details><summary>6. 预测：一个小工具在中文 Windows 上用 <code>new FileReader("a.txt")</code> 读 GBK 编码的文件，JDK 8 和 JDK 21 上结果一样吗？</summary><p>不一样。8 上默认编码跟系统走（GBK），能正常读；21 上默认是 UTF-8（18 起），读 GBK 文件会乱码。显式指定编码就两边一致。</p><p class="from">← ④ 表格“默认 UTF-8”+ 坑 5</p></details>
     <details><summary>7. 预测：17 上用 <code>--enable-preview</code> 编译的 class，拿到 21 上运行会怎样？</summary><p>跑不起来。启用预览特性编出来的 class 文件带着版本标记，只能在编译它的那个 JDK 大版本上、并且同样加 <code>--enable-preview</code> 才能运行。</p><p class="from">← ④ 机制 1 预览 + 坑 6</p></details>
+    <details><summary>8. 预测：Maven 项目把 Lombok 只写在 dependencies 里（scope 是 provided），分别用 JDK 21 和 25 编译会怎样？</summary><p>21：照常编译，只多一条 Note，提醒以后可能默认不跑类路径上的注解处理器。25：Lombok 不会被执行，所有靠它生成的 getter、构造器都不存在，编译报找不到符号。写进 <code>annotationProcessorPaths</code> 两边都正常。</p><p class="from">← ④ 表格“注解处理默认不跑”+ 坑 9</p></details>
+    <details><summary>9. 预测：在 <code>ScopedValue.where(USER, "u-42").run(…)</code> 里，用 <code>newVirtualThreadPerTaskExecutor</code> 提交一个任务，任务里调 <code>USER.get()</code> 会怎样？换成 21 的写法、用 <code>InheritableThreadLocal</code> 呢？</summary><p>ScopedValue：抛 <code>NoSuchElementException</code>，executor 开的线程不继承绑定，只有结构化并发 fork 的子任务继承。InheritableThreadLocal：能读到，因为新建线程时把父线程的值整份复制了一份；这正是机制 5 说的“海量线程时代太贵、也难推理”的那种行为。</p><p class="from">← ④ 机制 5 + 坑 12</p></details>
+    <details><summary>10. 预测：同一个服务开着虚拟线程，代码里 <code>synchronized</code> 包着一次 JDBC 查询，分别跑在 21 和 25 上，高峰时有什么区别？</summary><p>21：阻塞时载体线程被钉住，载体线程数等于 CPU 核数，几个慢查询就能让所有虚拟线程都跑不了。25：24 起 synchronized 里阻塞也能卸载，不会整体卡住；但并发查询数照样受连接池限制，排队还是会发生。</p><p class="from">← ④ 表格“synchronized 不再钉住”+ 坑 8</p></details>
   </div>
 </section>
 
 <footer>
-  <p>档位：标准档的内容和体量；按你的要求<b>没有在本机运行任何代码或实验</b>，页面上没有“实测”数字，代码示例都标了“未在本机运行”。事实来源：各特性的 JEP（文中给了编号）；HotSpot <code>arguments.cpp</code>（jdk11u、jdk14u、jdk15u、jdk17u，核对 CMS、PrintGCDateStamps、UseCGroupMemoryLimitForHeap、MaxPermSize 的废弃和过期版本）；Adoptium 官网的 Temurin 支持年限表；Spring Boot 4.1.2 jar 的 class 文件版本（61，即 JDK 17）。</p>
+  <p>档位：标准档的内容和体量；JDK 25 是后来按你的要求补进来的。按你的要求<b>没有在本机运行任何代码或实验</b>，页面上没有“实测”数字，代码示例都标了“未在本机运行”。事实来源：各特性的 JEP（文中给了编号）；HotSpot <code>arguments.cpp</code>（jdk11u、jdk14u、jdk15u、jdk17u，核对 CMS、PrintGCDateStamps、UseCGroupMemoryLimitForHeap、MaxPermSize 的废弃和过期版本）；Adoptium 官网的 Temurin 支持年限表；Spring Boot 4.1.2 jar 的 class 文件版本（61，即 JDK 17）；OpenJDK 官网 JDK 22～25 的特性列表；jdk25u 源码（<code>arguments.cpp</code> 里 ZGenerational 的过期表、<code>UseCompactObjectHeaders</code> 默认值、<code>System.setSecurityManager</code>、<code>LocaleProviderAdapter</code> 的 COMPAT 处理）；JDK-8321314 的提案邮件（23 起注解处理默认不跑）；Spring Boot 3.5.16 和 4.1.2 官方文档的 Java 兼容范围（分别到 25 和 27）。</p>
   <p>相关：<a href="../network/io-models.html">网络 IO 模型（虚拟线程）</a> · <a href="../arch/three-highs-map.html">三高知识地图</a> · <a href="../juc/aqs.html">AQS 源码（JDK 8 与 17 / 21 对照）</a> · <a href="../juc/threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../spring/spring-boot-startup.html">Spring Boot 启动流程</a></p>
 </footer>
 </main>
@@ -1180,11 +1352,15 @@ var ITEMS = [
   { id: 'jaxb', label: 'JAXB、JAX-WS、javax.annotation', stages: [{ since: 11, sev: 1, msg: '11 把 Java EE 模块移出 JDK（JEP 320）：编译不过，或运行时 ClassNotFoundException' }], fix: '加对应的 Maven 依赖，比如 jakarta.xml.bind-api 加一个实现' },
   { id: 'reflect', label: '老 Lombok / cglib / Mockito，或反射改 JDK 私有字段', stages: [{ since: 9, sev: 4, msg: '9～15 只打 illegal reflective access 警告' }, { since: 16, sev: 2, msg: '16 默认强封装、17 去掉总开关：InaccessibleObjectException' }], fix: '升级这些库；过渡期按包 --add-opens' },
   { id: 'nashorn', label: '用 ScriptEngine 跑 JavaScript（Nashorn）', stages: [{ since: 11, sev: 4, msg: '11 起 Nashorn 标记弃用，会打警告' }, { since: 15, sev: 2, msg: '15 删除 Nashorn：getEngineByName("nashorn") 返回 null，随后 NPE' }], fix: '引独立的 nashorn-core，或换 GraalJS' },
-  { id: 'secmgr', label: '调用 System.setSecurityManager', stages: [{ since: 17, sev: 4, msg: '17 起 SecurityManager 弃用，调用时打警告' }, { since: 18, sev: 2, msg: '18 起默认不允许：setSecurityManager 抛 UnsupportedOperationException' }], fix: '去掉；过渡期加 -Djava.security.manager=allow' },
+  { id: 'secmgr', label: '调用 System.setSecurityManager', stages: [{ since: 17, sev: 4, msg: '17 起 SecurityManager 弃用，调用时打警告' }, { since: 18, sev: 2, msg: '18 起默认不允许：setSecurityManager 抛 UnsupportedOperationException（18～23 可用 -Djava.security.manager=allow 打开）' }, { since: 24, sev: 2, msg: '24 起永久禁用：setSecurityManager 总是抛异常，allow 也不管用了' }], fix: '去掉对它的依赖，隔离不可信代码改用独立进程或容器' },
   { id: 'charset', label: '读写文件没写编码，跑在中文 Windows 上', stages: [{ since: 18, sev: 3, msg: '18 起默认编码统一为 UTF-8，以前按 GBK 读写的文件会乱码' }], fix: '显式写 StandardCharsets.UTF_8；过渡期 -Dfile.encoding=COMPAT' },
-  { id: 'locale', label: '依赖日期 / 数字格式化的固定输出', stages: [{ since: 9, sev: 3, msg: '9 起默认本地化数据换成 CLDR，部分语言的格式会变' }], fix: '写死 pattern 和 Locale；过渡期 -Djava.locale.providers=COMPAT,CLDR' },
+  { id: 'locale', label: '依赖日期 / 数字格式化的固定输出', stages: [{ since: 9, sev: 3, msg: '9 起默认本地化数据换成 CLDR，部分语言的格式会变' }, { since: 23, sev: 3, msg: '9 起默认换成 CLDR；23 起连 COMPAT 都删了，-Djava.locale.providers=COMPAT 只打警告' }], fix: '写死 pattern 和 Locale' },
   { id: 'agent', label: 'Arthas 临时 attach / APM 动态加载 agent', stages: [{ since: 21, sev: 4, msg: '21 起动态加载 agent 会打警告，将来默认禁止（JEP 451）' }], fix: 'APM 用 -javaagent；要临时 attach 的加 -XX:+EnableDynamicAgentLoading' },
-  { id: 'vt', label: '打算开虚拟线程，代码里有 synchronized 包着 IO', stages: [{ since: 21, sev: 3, msg: '21 里在 synchronized 中阻塞会钉住载体线程，高峰时可能整体卡住（24 才解决）' }], fix: '换 ReentrantLock，用 JFR 的 jdk.VirtualThreadPinned 找钉住点' },
+  { id: 'vt', label: '打算开虚拟线程，代码里有 synchronized 包着 IO', stages: [{ since: 21, sev: 3, msg: '21 里在 synchronized 中阻塞会钉住载体线程，高峰时可能整体卡住（24 才解决）' }, { since: 24, sev: null }], fix: '换 ReentrantLock，用 JFR 的 jdk.VirtualThreadPinned 找钉住点；或者直接升到 24 以上' },
+  { id: 'apt', label: 'Maven 里 Lombok 等注解处理器只写在依赖里', stages: [{ since: 23, sev: 1, msg: '23 起 javac 不再自动执行类路径上的注解处理器：Lombok 生成的方法全没了，编译报找不到符号' }], fix: '在 maven-compiler-plugin 里配 annotationProcessorPaths，或临时加 -proc:full' },
+  { id: 'zgen', label: '-XX:+UseZGC -XX:-ZGenerational（不分代 ZGC）', stages: [{ since: 23, sev: 4, msg: '23 起 ZGenerational 弃用，打警告' }, { since: 24, sev: 3, msg: '24 删除不分代模式：参数只打警告并被忽略，ZGC 悄悄变成分代的' }], fix: '去掉 ZGenerational，按分代 ZGC 重新压测' },
+  { id: 'unsafe', label: '依赖里有直接用 sun.misc.Unsafe 读写内存的库（如老版本 Netty）', stages: [{ since: 23, sev: 4, msg: '23 弃用 Unsafe 的内存访问方法' }, { since: 24, sev: 4, msg: '24 起第一次调用就打警告（JEP 498），将来会变成报错' }], fix: '升级到改用 VarHandle / FFM 的版本' },
+  { id: 'jni', label: '代码或依赖里用 JNI 加载本地库', stages: [{ since: 24, sev: 4, msg: '24 起调用 System.loadLibrary 等受限方法会打警告（JEP 472）' }], fix: '启动时加 --enable-native-access=ALL-UNNAMED（或指定模块）' },
   { id: 'boot2', label: 'Spring Boot 2.x', always: true, stages: [{ since: 8, sev: 4, msg: 'Boot 2.x 开源支持已结束；要上 Boot 3 / 4（最低 JDK 17），得把 javax.* 改成 jakarta.*' }], fix: '先升到 2.7 最新版清掉弃用，再按官方迁移指南升 3' }
 ];
 function check(from, to, picked) {
@@ -1196,7 +1372,7 @@ function check(from, to, picked) {
       var applies = to >= st.since && (it.always || from < st.since);
       if (applies) hit = st;               // 取最晚生效的那一档
     });
-    if (hit) out.push({ id: it.id, label: it.label, since: hit.since, sev: hit.sev, msg: hit.msg, fix: it.fix });
+    if (hit && hit.sev !== null) out.push({ id: it.id, label: it.label, since: hit.since, sev: hit.sev, msg: hit.msg, fix: it.fix });
   });
   out.sort(function (a, b) { return a.sev - b.sev || a.since - b.since; });
   var counts = [0, 0, 0, 0, 0];
@@ -1224,7 +1400,11 @@ function firstAtRun(res) {
     { name: 'Windows 小工具', sub: '8 → 21，重新编译', set: { from: 8, to: 21, picked: ['internal', 'charset', 'locale'] },
       q: '在 JDK 21 上重新编译这个小工具，会怎样？',
       opts: ['编译不过', '能编译能跑，但输出可能变了', '完全没变化'],
-      answer: function (r) { return r.counts[1] ? 0 : ((r.counts[2] || r.counts[3]) ? 1 : 2); } }
+      answer: function (r) { return r.counts[1] ? 0 : ((r.counts[2] || r.counts[3]) ? 1 : 2); } },
+    { name: '21 升 25', sub: 'Maven + Lombok + 虚拟线程', set: { from: 21, to: 25, picked: ['apt', 'unsafe', 'vt', 'agent', 'boot2'] },
+      q: '从 21 升到 25，重新编译这一步会怎样？',
+      opts: ['编译不过', '能编译，但运行时报错', '能编译能跑，只有警告'],
+      answer: function (r) { return r.counts[1] ? 0 : ((r.counts[0] || r.counts[2]) ? 1 : 2); } }
   ];
   var cur = -1, guess = -1, ran = false;
 
