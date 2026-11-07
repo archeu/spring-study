@@ -668,6 +668,8 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
         <tr><th>商品详情查得太多</th><td>加索引 / 本地缓存 / Redis / 读写分离</td><td>先看 SQL 有没有走索引；读多写少再加缓存，热点先上本地缓存</td></tr>
         <tr><th>下单后要发短信、加积分</th><td>同步调用 / 线程池异步 / MQ</td><td>不影响下单结果的步骤都后置；要保证不丢就用 MQ，不能只丢进内存线程池</td></tr>
         <tr><th>大促流量翻 20 倍</th><td>加机器 / 限流 / 排队 / 预热缓存</td><td>按压测结果算机器数，再配限流兜底；只加机器不限流，算错一次就雪崩</td></tr>
+        <tr><th>选哪个消息队列</th><td>Kafka / RocketMQ / RabbitMQ / Redis Stream</td><td>日志、埋点、流处理要吞吐，选 Kafka；订单这类业务消息要事务消息、延迟消息、顺序消息、重试和死信开箱即用，选 RocketMQ；量不大、路由规则复杂选 RabbitMQ；已有 Redis、量小选 Stream</td></tr>
+        <tr><th>写完订单要发消息，两边必须一致</th><td>先写库再发 / 本地消息表 / RocketMQ 事务消息</td><td>直接“写库再发”中间挂了就丢；用本地消息表或 RocketMQ 事务消息。Kafka 的事务只保证几条 Kafka 消息一起成功，管不到你的数据库</td></tr>
         <tr><th>依赖的服务不稳定</th><td>重试 / 超时 / 熔断 / 降级 / 舱壁</td><td>先超时 + 降级，再舱壁；重试最后考虑，而且只在一层做</td></tr>
         <tr><th>单表数据量上亿</th><td>归档历史数据 / 分区表 / 分库分表</td><td>先归档；分库分表代价最大，放最后</td></tr>
       </tbody>
@@ -912,10 +914,13 @@ a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
         <a class="chip" data-role="bk" href="../redis/redis-distributed-lock.html">分布式锁</a>
         <a class="chip ops" data-role="cg" href="../redis/redis-persistence.html">持久化 RDB / AOF</a>
       </div></div>
-      <div class="lay"><div class="lay-h"><b>消息层</b><span>Kafka / Redis Stream</span></div><div class="chips">
+      <div class="lay"><div class="lay-h"><b>消息层</b><span>Kafka / RocketMQ / Redis Stream</span></div><div class="chips">
         <span class="chip" data-role="bk">异步削峰 · 非核心后置</span>
         <a class="chip ops" data-role="cg" href="../kafka/kafka-reliability-group.html">acks · ISR · 不丢消息</a>
         <span class="chip" data-role="g2">消费幂等 · 死信</span>
+        <a class="chip" data-role="cg" href="#pit-dualwrite">事务消息：写库和发消息一起成功</a>
+        <span class="chip" data-role="bk">延迟消息：订单超时取消</span>
+        <a class="chip" data-role="g2" href="#pit-orderly">顺序消息与消费重试</a>
         <span class="chip ops" data-role="bk">积压监控 · 分区数</span>
         <a class="chip" data-role="bk" href="../redis/redis-stream-mq.html">Redis Stream 当队列</a>
       </div></div>
@@ -1230,6 +1235,22 @@ public class Avalanche {
           <dt>做法</dt><dd class="fix">开 GC 日志，把 GC 停顿和 P99 曲线叠在一起看；JDK 17 / 21 默认 G1，对停顿敏感的服务可以试 ZGC（JDK 21 起有分代 ZGC）；从源头减少大对象，列表接口限制条数。</dd>
         </dl>
       </div>
+      <div class="pit" id="pit-dualwrite">
+        <b><em>坑 11</em>订单写成功了，消息没发出去<a class="root" href="#m-trade">← ④ 洞察 4</a></b>
+        <dl>
+          <dt>现象</dt><dd>订单创建成功，积分、物流却没收到消息；或者反过来，消息发出去了，订单事务却回滚了，下游处理了一个不存在的订单。</dd>
+          <dt>根源</dt><dd>数据库和消息队列是两个系统，没有共同的事务。在 <code>@Transactional</code> 方法里发消息，提交前就发出去了；提交后再发，进程可能正好在两步之间挂掉。</dd>
+          <dt>做法</dt><dd class="fix">本地消息表：业务表和消息表在同一个本地事务里写，再由定时任务投递。或用 RocketMQ 事务消息：先发“半消息”（消费者看不到），本地事务提交后再确认；Broker 迟迟拿不到结果就回查业务方，默认每 30 秒查一次、最多 15 次（5.5.1 源码）。两种做法消费端都要幂等。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-orderly">
+        <b><em>坑 12</em>顺序消息一条消费失败，整个队列卡住<a class="root" href="#m-guard">← ④ 洞察 3</a></b>
+        <dl>
+          <dt>现象</dt><dd>RocketMQ 某个队列的消费堆积越来越多，消费者日志里同一条消息反复失败。</dd>
+          <dt>根源</dt><dd>为了保证顺序，顺序消费失败的消息原地重试，后面的消息只能等着；客户端默认最大重试次数是 <code>Integer.MAX_VALUE</code>，一条坏消息就能把这个队列堵死。并发消费不一样：默认重试 16 次后进死信队列 <code>%DLQ%消费组名</code>（5.5.1 源码）。</dd>
+          <dt>做法</dt><dd class="fix">只在真正需要顺序的业务用顺序消息，并显式设 <code>maxReconsumeTimes</code>，超过就记录下来跳过、人工补偿；死信队列和消费堆积都要有告警。</dd>
+        </dl>
+      </div>
       <div class="pit" id="pit-replica">
         <b><em>坑 8</em>读写分离后，刚下的单查不到<a class="root" href="#m-trade">← ④ 洞察 4</a></b>
         <dl>
@@ -1251,6 +1272,7 @@ public class Avalanche {
           <li>重试只在一层做，带退避和抖动，只重试幂等操作。<span class="g">重试风暴（坑 2）</span></li>
           <li>写接口幂等：唯一业务号 + 唯一索引，或防重 token。<span class="g">重试、重复提交、消息重复导致重复扣款</span></li>
           <li>弱依赖写好降级：补偿表、MQ 或默认值。<span class="g">非核心服务拖垮主流程（坑 3）</span></li>
+          <li>写库和发消息要一致时，用本地消息表或 RocketMQ 事务消息；顺序消费设最大重试次数。<span class="g">消息丢失或错发（坑 11）、一条坏消息堵死队列（坑 12）</span></li>
           <li>自建线程池有界、有名字、有拒绝策略，不同业务不共用。<span class="g">OOM、互相拖累</span></li>
           <li>事务里不调远程、不发 MQ、不做慢操作。<span class="g">长事务占着连接和行锁</span></li>
           <li>循环里不查库、不调远程，改成批量；互不依赖的远程调用并行发。<span class="g">RT 随数据量线性变长</span></li>
@@ -1273,6 +1295,7 @@ public class Avalanche {
           <li>限流阈值和降级开关提前配好，演练过。<span class="g">出事时现写代码</span></li>
           <li>JVM：<code>-Xms</code> 等于 <code>-Xmx</code>，开 GC 日志和 <code>-XX:+HeapDumpOnOutOfMemoryError</code>。<span class="g">出事后没有现场</span></li>
           <li>数据库开慢查询日志、监控主从延迟和连接数；定期演练从备份恢复。<span class="g">备份其实恢复不了</span></li>
+          <li>消息队列监控消费堆积、死信队列和重试次数。<span class="g">消费者卡住几小时才被发现</span></li>
           <li>写好预案和值班表，事后复盘、改流程。<span class="g">同一个坑踩两次</span></li>
           <li>定下 RTO 和 RPO，按它选复制方式和备份频率，并定期演练切换。<span class="g">出大事时才发现恢复要半天</span></li>
           <li>查系统参数：<code>ulimit -n</code>、<code>somaxconn</code>、临时端口范围。<span class="g">连接数一上来就撞到系统上限</span></li>
@@ -1356,6 +1379,7 @@ public class Avalanche {
       <li>熔断器的状态机：关闭、打开、半开，滑动窗口怎么统计失败率</li>
       <li>分库分表和分布式 ID：分片键怎么选，扩容怎么迁移</li>
       <li>分布式事务：本地消息表、Saga、TCC，以及为什么尽量别用</li>
+      <li>RocketMQ：事务消息、延迟消息、顺序消息的原理，以及和 Kafka 怎么选</li>
       <li>多活和单元化：同城双活、异地多活要解决的数据冲突</li>
       <li>全链路压测：影子库、流量染色，怎么压生产又不污染数据</li>
       <li>可观测性：OpenTelemetry 的 trace、metric、log 怎么串起来</li>
@@ -1404,7 +1428,7 @@ public class Avalanche {
 </section>
 
 <footer>
-  <p>档位：标准档。本机实测：⑤ 的 Avalanche.java，在 2 核 ARM 云主机上用 JDK 17.0.20.1 跑（<code>--release 8</code> 编译）。查过的文档和源码：Spring Boot 3.5.16 和 4.1.2 的配置元数据（Tomcat 线程数、<code>server.shutdown</code>、<code>spring.http.client(s).*</code>）、Spring Boot 3.4 发布说明（优雅停机改为默认）、Resilience4j 2.4.0 源码（熔断和舱壁的默认值）、OpenFeign 13.17 源码（<code>Request.Options</code> 默认 10 秒 / 60 秒）、spring-web 6.2.19 源码（<code>SimpleClientHttpRequestFactory</code>）、Google SRE 书“Introduction”一章（约 70% 的故障由变更引起）、Hystrix 仓库 README（维护模式）、Apache HttpClient 4.5.14 和 5.4.4 源码（连接池默认值）。实验台是估算模型，不是实测。</p>
+  <p>档位：标准档。本机实测：⑤ 的 Avalanche.java，在 2 核 ARM 云主机上用 JDK 17.0.20.1 跑（<code>--release 8</code> 编译）。查过的文档和源码：Spring Boot 3.5.16 和 4.1.2 的配置元数据（Tomcat 线程数、<code>server.shutdown</code>、<code>spring.http.client(s).*</code>）、Spring Boot 3.4 发布说明（优雅停机改为默认）、Resilience4j 2.4.0 源码（熔断和舱壁的默认值）、OpenFeign 13.17 源码（<code>Request.Options</code> 默认 10 秒 / 60 秒）、spring-web 6.2.19 源码（<code>SimpleClientHttpRequestFactory</code>）、Google SRE 书“Introduction”一章（约 70% 的故障由变更引起）、Hystrix 仓库 README（维护模式）、Apache HttpClient 4.5.14 和 5.4.4 源码（连接池默认值）、RocketMQ 5.5.1 源码（消费重试 16 次和死信前缀 <code>%DLQ%</code>、顺序消费默认重试 <code>Integer.MAX_VALUE</code> 次、事务回查 30 秒一次最多 15 次）。实验台是估算模型，不是实测。</p>
   <p>相关：<a href="../network/io-models.html">网络 IO 模型</a> · <a href="../perf/load-testing.html">系统压测</a> · <a href="../perf/response-time-queueing.html">响应时间为什么越压越长</a> · <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a> · <a href="../juc/threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../redis/cache-problems.html">缓存穿透、击穿与雪崩</a> · <a href="../redis/redis-ha-cluster.html">Redis 主从、哨兵与集群</a> · <a href="../kafka/kafka-reliability-group.html">Kafka 消息可靠性</a></p>
 </footer>
 </main>
