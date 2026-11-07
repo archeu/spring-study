@@ -1,0 +1,1410 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>JDK 8、17、21</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a tool-type topic (① 为什么学 ② 老办法 ③ 选谁 ④ 原理 ⑤ 跑起来 ⑥ 细节 ↺). Colors: language features / Project Amber blue (pd), concurrency / Project Loom teal (bk), GC and performance purple (cg), platform governance (modules, removals) magenta (rn), APIs brown (g2), highlights and the three LTS versions amber (of), breakage red, right green, old ways grey. Interactive: one guess-first upgrade checker in ⑥ driven by a pure rules function tested in node. No local JDK runs: facts come from JEPs, OpenJDK source and vendor docs, as the user asked. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --rn:#A8327A; --rn-tint:#F7E1EE;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --rn:#F08BC6; --rn-tint:#3D1A30;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --rn:#F08BC6; --rn-tint:#3D1A30;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="rn"]{--rc:var(--rn);--rt:var(--rn-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:660px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-rn{font-size:12px;font-weight:700;fill:var(--rn)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.halo{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+.halo-c{paint-order:stroke;stroke:var(--code-bg);stroke-width:4px;stroke-linejoin:round}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-rn{fill:var(--rn-tint);stroke:var(--rn);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.b-dash{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:5 4}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)} .f-rn{fill:var(--rn)}
+.f-card{fill:var(--card)} .f-code{fill:var(--code-bg)} .f-oft{fill:var(--of-tint)} .f-pdt{fill:var(--pd-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-g2t{fill:var(--g2-tint)} .f-rnt{fill:var(--rn-tint)} .f-neut{fill:var(--neutral-tint)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-life{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:2 5}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-rn{stroke:var(--rn);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-rnd{stroke:var(--rn);stroke-width:2;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev b{color:var(--bad)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+.hl{background:var(--of-tint)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+pre.console .r{color:#FF9B98}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td, .t tr.hl th{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.design.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:20px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way svg{display:block;width:100%;height:auto}
+.way pre{padding:10px 12px;background:var(--code-bg);border-radius:10px;font-size:12px}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{position:relative;padding-left:28px}
+.pains li::before{content:"✕";position:absolute;left:0;top:0;width:22px;color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.pains code{overflow-wrap:anywhere}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b{color:var(--rc)}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+.mech-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.mech-h .sn{font-size:20px}
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl.span{grid-column:1 / -1}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:10px;border-radius:3px;display:inline-block;background:var(--rc);border:1.5px solid var(--rc)}
+.lg i.t{background:var(--rt)}
+.lg i.mk{width:3px;height:14px;border-radius:1px;border:0}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+.lab-res ul{margin:6px 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:3px}
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.dp svg{display:block;width:100%;height:auto}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metaphor{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ex,.design.three{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+  .ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .facts,.presets,.ctl-grid{grid-template-columns:1fr}
+  .metaphor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+}
+
+/* ---------- knowledge map ---------- */
+.map{display:flex;flex-direction:column;gap:10px}
+.lay{display:grid;grid-template-columns:9.5em minmax(0,1fr);gap:12px;align-items:stretch}
+.lay-h{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 12px;border-radius:12px;background:var(--ink);color:var(--paper)}
+.lay-h b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1.15}
+.lay-h span{font-size:12px;opacity:.75}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;border-radius:12px;background:var(--card);border:1.5px solid var(--line);align-content:center;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:13.5px;line-height:1.3;padding:4px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.chip.ops{border-style:dashed;background:var(--card)}
+a.chip::after{content:"↗";font-size:11px;color:var(--rc)}
+a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
+.life{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.stg{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:14px;background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rn);min-width:0;position:relative}
+.stg h4{font-size:17px;color:var(--rn)}
+.stg h4 i{font-style:normal;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-right:4px}
+.stg ul{margin:0;padding-left:1.05em;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+.stg code{overflow-wrap:anywhere}
+.fam{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fm{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fm h4{color:var(--rc);font-size:20px}
+.fm h4 small{font-family:var(--font-body);font-size:12.5px;color:var(--muted);margin-left:6px}
+.fm p{font-size:14px}
+.fm .pay{font-size:13px;color:var(--muted)}
+.fm .pay b{color:var(--bad);font-weight:600}
+.nines{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.nn{border-radius:12px;padding:8px 12px;background:var(--cg-tint);border:1.5px solid var(--cg);display:flex;flex-direction:column;min-width:0}
+.nn b{font-family:var(--font-mono);font-size:17px;font-variant-numeric:tabular-nums}
+.nn span{font-size:13px;color:var(--muted)}
+.check{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.cl{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.cl h4{color:var(--rc);font-size:20px}
+.cl ol{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:8px}
+.cl li{font-size:14.5px}
+.cl li code{overflow-wrap:anywhere}
+.cl li .g{display:block;font-size:13px;color:var(--muted)}
+.cl li .g::before{content:"防：";color:var(--good);font-weight:700}
+
+/* ---------- thread bar (lab) ---------- */
+.tb-wrap{display:flex;flex-direction:column;gap:6px}
+.tb-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;font-size:13px;color:var(--muted)}
+.tb-head b{color:var(--ink);font-family:var(--font-mono)}
+.tbar{position:relative;height:38px;border-radius:10px;background:var(--code-bg);border:1.5px solid var(--line);overflow:hidden}
+.tseg{position:absolute;top:4px;bottom:4px;border-radius:5px;background:var(--rt);border:1.5px solid var(--rc);font-size:11.5px;line-height:26px;padding:0 5px;white-space:nowrap;overflow:hidden;color:var(--ink)}
+.tseg.over{background:repeating-linear-gradient(135deg,var(--bad-tint) 0 6px,var(--card) 6px 12px);border-color:var(--bad)}
+.tcap{position:absolute;top:0;bottom:0;width:0;border-left:3px solid var(--ink)}
+.tcap span{position:absolute;top:-1px;left:4px;font-size:11px;font-family:var(--font-mono);background:var(--ink);color:var(--paper);padding:0 4px;border-radius:4px;white-space:nowrap}
+.toggles{display:flex;flex-wrap:wrap;gap:8px}
+.tg{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:13.5px;cursor:pointer}
+.tg[aria-pressed="true"]{border-color:var(--g2);background:var(--g2-tint);box-shadow:inset 0 0 0 1px var(--g2);font-weight:600}
+.tg[aria-pressed="true"]::before{content:"✓ ";color:var(--g2)}
+
+@media (max-width:980px){
+  .fam{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .life{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:860px){
+  .check{grid-template-columns:1fr}
+  .lay{grid-template-columns:1fr;gap:4px}
+  .lay-h{flex-direction:row;align-items:baseline;gap:10px}
+}
+@media (max-width:520px){
+  .fam,.nines{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .life{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fam{grid-template-columns:1fr}
+}
+</style>
+<style id="tocx-css">
+/* tocx：顶栏里的跳转导航，由 learn skill 的 add_toc.py 注入（wrap.py 会自动调用）。
+   有六步路线条（main nav.route）的页面：把路线条复制进顶栏，滚动时高亮当前一步；窄屏只留序号。
+   没有路线条的老页面：顶栏右侧加“目录 ▾”，下拉列出各个 h2，滚动时高亮当前一节。
+   只用各页都有的颜色变量：--paper --card --ink --muted --line --line-strong。 */
+.tocx-steps{margin-left:auto;flex:none;display:flex;align-items:center;gap:3px;overflow-x:auto;scrollbar-width:none;max-width:100%}
+.tocx-steps::-webkit-scrollbar{display:none}
+.tocx-steps a{flex:none;display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;border:1.5px solid transparent;color:var(--muted);text-decoration:none;font-size:13px;line-height:1.4;white-space:nowrap}
+.tocx-steps a b{font-weight:700;color:var(--ink)}
+.tocx-steps a:hover{border-color:var(--line-strong);color:var(--ink)}
+.tocx-steps a.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.tocx-steps a.on b{color:var(--paper)}
+.tocx-dd{margin-left:auto;flex:none;position:relative}
+.tocx-btn{font:inherit;font-size:13.5px;line-height:1.4;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);cursor:pointer;white-space:nowrap}
+.tocx-btn:hover,.tocx-btn[aria-expanded="true"]{border-color:var(--ink)}
+.tocx-panel{position:absolute;right:0;top:calc(100% + 9px);width:min(360px,calc(100vw - 32px));max-height:min(70vh,560px);overflow:auto;background:var(--card);border:1.5px solid var(--line-strong);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px;z-index:40}
+.tocx-panel a{display:flex;gap:8px;padding:7px 10px;border-radius:9px;color:var(--ink);text-decoration:none;font-size:14px;line-height:1.45}
+.tocx-panel a i{flex:none;width:1.7em;font-style:normal;font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px;padding-top:2px}
+.tocx-panel a:hover{background:var(--line)}
+.tocx-panel a.on{background:var(--ink);color:var(--paper)}
+.tocx-panel a.on i{color:var(--paper)}
+.tocx-steps a:focus-visible,.tocx-btn:focus-visible,.tocx-panel a:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+@media (max-width:1180px){.tocx-steps a span{display:none}.tocx-steps a{padding:3px 8px}}
+@media (max-width:640px){.tocx-on .tb-in > span{display:none}.tocx-steps{flex:0 1 auto;min-width:0}.tocx-steps a{padding:3px 6px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-good" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>JDK</span><span aria-hidden="true">/</span><span class="tb-here">JDK 8、17、21</span></div></nav>
+
+<main>
+
+<header class="hero">
+  <p class="kicker">JDK 8 · 17 · 21 · LTS · JEP · AMBER · LOOM · G1 / ZGC · 模块与强封装</p>
+  <h1>从 8 到 21，Java 改了什么、为什么改</h1>
+  <p class="lead">8、17、21 不是三个孤立的版本，而是一条线上的三个长期支持（LTS）站点：17 包含了 9 到 16 的全部改动，21 又包含了 18 到 20。这些改动可以归成四条主线：<b>写代码更省事（record、模式匹配）、并发更便宜（虚拟线程）、GC 停顿更短（G1、ZGC）、平台更好维护（模块和强封装，删掉旧东西）。</b>前三条是升级的好处，第四条是升级时踩坑的来源。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>为什么学</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>老办法</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>选谁</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>原理</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>跑起来</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>团队的老服务还跑在 JDK 8 + Spring Boot 2 上，新项目要上 Spring Boot 3，它最低要 JDK 17；新同事写的代码里出现了 <code>record</code>、<code>var</code>、<code>switch</code> 里的 <code>-&gt;</code>；面试也常问“8 到 17 有什么变化”。本页按你的要求<b>没有在本机运行任何代码</b>，版本和行为都按 JEP、OpenJDK 源码和发行商文档核对，代码示例标了“未在本机运行”。</span></p>
+</header>
+
+<!-- ① -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>为什么学：三个版本，隔着十年</h2>
+    <p class="lead">8 是 2014 年的，21 是 2023 年的。中间 Java 换了发布节奏，每半年出一个版本，每两三年挑一个做长期支持。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 220" role="img" aria-label="时间线：JDK 8 在 2014 年，JDK 9 在 2017 年，从 10 开始每半年一个版本；11、17、21、25 是长期支持版。17 包含 9 到 16 的改动，21 包含 18 到 20。">
+        <line x1="30" y1="120" x2="880" y2="120" class="e-axis"/>
+        <g class="t-monos">
+          <text x="40" y="146" text-anchor="middle">2014</text><text x="180" y="146" text-anchor="middle">2016</text><text x="369" y="146" text-anchor="middle">2018</text><text x="460" y="146" text-anchor="middle">2020</text><text x="600" y="146" text-anchor="middle">2022</text><text x="740" y="146" text-anchor="middle">2024</text>
+        </g>
+        <!-- 普通版本 -->
+        <g class="f-neu">
+          <circle cx="299" cy="120" r="4"/><circle cx="334" cy="120" r="4"/><circle cx="404" cy="120" r="4"/><circle cx="439" cy="120" r="4"/><circle cx="474" cy="120" r="4"/><circle cx="509" cy="120" r="4"/><circle cx="544" cy="120" r="4"/><circle cx="614" cy="120" r="4"/><circle cx="649" cy="120" r="4"/><circle cx="684" cy="120" r="4"/><circle cx="754" cy="120" r="4"/><circle cx="789" cy="120" r="4"/><circle cx="824" cy="120" r="4"/>
+        </g>
+        <g class="t-xs"><text x="299" y="108" text-anchor="middle">9</text><text x="404" y="108" text-anchor="middle">12</text><text x="474" y="108" text-anchor="middle">14</text><text x="544" y="108" text-anchor="middle">16</text><text x="649" y="108" text-anchor="middle">19</text><text x="754" y="108" text-anchor="middle">22</text><text x="824" y="108" text-anchor="middle">24</text></g>
+        <!-- LTS -->
+        <circle cx="54" cy="120" r="11" class="b-of"/><text x="54" y="124" text-anchor="middle" class="t-b">8</text>
+        <circle cx="369" cy="120" r="8" class="b-neu"/><text x="369" y="102" text-anchor="middle" class="t-m">11</text>
+        <circle cx="579" cy="120" r="11" class="b-of"/><text x="579" y="124" text-anchor="middle" class="t-b">17</text>
+        <circle cx="719" cy="120" r="11" class="b-of"/><text x="719" y="124" text-anchor="middle" class="t-b">21</text>
+        <circle cx="859" cy="120" r="8" class="b-neu"/><text x="859" y="102" text-anchor="middle" class="t-m">25</text>
+        <!-- 括号 -->
+        <path d="M70 72 L70 62 L563 62 L563 72" class="e-of"/>
+        <text x="316" y="52" text-anchor="middle" class="t-of">8 → 17：隔了 9 个版本、7 年半</text>
+        <path d="M595 72 L595 62 L703 62 L703 72" class="e-of"/>
+        <text x="649" y="52" text-anchor="middle" class="t-of">17 → 21：2 年</text>
+        <text x="170" y="178" text-anchor="middle" class="t-m">旧节奏：8 到 9 等了 3 年半</text>
+        <text x="600" y="178" text-anchor="middle" class="t-m">新节奏：从 10 起每年 3 月、9 月各一个版本</text>
+        <text x="600" y="198" text-anchor="middle" class="t-m">长期支持版：11、17、21、25（17 起每两年一个）</text>
+      </svg>
+    </div>
+    <figcaption>琥珀色是本页的三个版本。灰色大圆点 11、25 也是长期支持版：11 是很多公司的过渡站，25 是 2025 年 9 月的最新长期支持版。</figcaption>
+  </figure>
+  <div class="trio">
+    <div class="fact" data-role="pd"><h4>工作要用</h4><p>Spring Boot 3 和 4 最低都要 JDK 17（Boot 4.1.2 的 class 文件版本是 61，即 17）。不升级 JDK，框架就升不上去。</p></div>
+    <div class="fact" data-role="bk"><h4>看得懂新代码</h4><p><code>record</code>、<code>sealed</code>、<code>switch</code> 模式匹配、文本块、<code>var</code>、虚拟线程，在 8 上全都不存在。</p></div>
+    <div class="fact" data-role="rn"><h4>升级不出事故</h4><p>升级时 JVM 起不来、反射报错、类找不到，大多来自“平台治理”这条线。知道它为什么改，就知道去哪改。</p></div>
+  </div>
+</section>
+
+<!-- ② -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>老办法：留在 JDK 8，靠第三方库补</h2>
+    <p class="lead">很多团队就是这么过来的：语言缺什么，就引一个库补上。能做，但有几样补不上。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="JDK 8 加上 Lombok、Guava、Apache HttpClient、WebFlux、CMS 调参，能补上一部分新特性；但 Spring Boot 3 和 4、虚拟线程、分代 ZGC、sealed 和模式匹配补不上。">
+        <rect x="20" y="190" width="440" height="44" rx="10" class="b-neu"/>
+        <text x="240" y="217" text-anchor="middle" class="t-b">JDK 8（2014）</text>
+        <g>
+          <rect x="20" y="40" width="140" height="40" rx="8" class="b-card"/><text x="90" y="58" text-anchor="middle" class="t-s">Lombok @Data</text><text x="90" y="73" text-anchor="middle" class="t-xs">≈ record</text>
+          <rect x="170" y="40" width="140" height="40" rx="8" class="b-card"/><text x="240" y="58" text-anchor="middle" class="t-s">Guava ImmutableList</text><text x="240" y="73" text-anchor="middle" class="t-xs">≈ List.of</text>
+          <rect x="320" y="40" width="140" height="40" rx="8" class="b-card"/><text x="390" y="58" text-anchor="middle" class="t-s">Apache HttpClient</text><text x="390" y="73" text-anchor="middle" class="t-xs">≈ java.net.http</text>
+          <rect x="20" y="96" width="215" height="40" rx="8" class="b-card"/><text x="127" y="114" text-anchor="middle" class="t-s">WebFlux / 回调式异步</text><text x="127" y="129" text-anchor="middle" class="t-xs">≈ 虚拟线程，但代码要全改写</text>
+          <rect x="245" y="96" width="215" height="40" rx="8" class="b-card"/><text x="352" y="114" text-anchor="middle" class="t-s">CMS + 一堆调参</text><text x="352" y="129" text-anchor="middle" class="t-xs">≈ 低停顿 GC，碎片要自己扛</text>
+          <rect x="20" y="146" width="440" height="34" rx="8" class="b-card"/><text x="240" y="168" text-anchor="middle" class="t-s">一堆 if-else + instanceof + 强转 ≈ 模式匹配</text>
+        </g>
+        <text x="520" y="40" class="t-bad">补不上的</text>
+        <g class="t-s">
+          <text x="520" y="70">✕ Spring Boot 3 / 4：最低要 JDK 17</text>
+          <text x="520" y="98">✕ 虚拟线程：要改 JVM 和 JDK 的线程实现</text>
+          <text x="520" y="126">✕ 分代 ZGC：亚毫秒停顿的 GC</text>
+          <text x="520" y="154">✕ sealed + switch：编译器帮你查漏掉的分支</text>
+          <text x="520" y="182">✕ 压缩字符串、更好的 G1：白拿的内存和吞吐</text>
+          <text x="520" y="210">✕ 8 的更新只回移植安全和关键修复</text>
+        </g>
+      </svg>
+    </div>
+  </figure>
+  <div class="essence">
+    <div class="big">疼在哪</div>
+    <p>库能补的是 <b>API 和语法糖</b>；补不上的是要改<b>编译器、JVM、类库内部</b>的东西：编译器检查、线程实现、GC、字符串的内存布局。还有一样最实际：<b>框架生态已经往前走了</b>。</p>
+    <p>所以升级的精华：<b>拿到只有平台自己能做的改进，同时还清“平台治理”这条线欠下的账。</b></p>
+  </div>
+  <div class="note-box"><b>典型误用</b><span>以为升级就是换个 JDK 安装包、改一下 <code>JAVA_HOME</code>。8 到 17 中间有一整段“删旧东西、关后门”的改动（模块强封装、删 Java EE 模块、删 CMS 和老 GC 参数），不知道它们为什么删，就只能见一个错改一个（⑥ 第一圈）。</span></div>
+</section>
+
+<!-- ③ -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>选谁：长期支持版怎么挑</h2>
+    <p class="lead">生产只用长期支持版（LTS），中间版本只有半年的更新。LTS 不是语言规范里的概念，是各家发行商（Oracle、Eclipse Temurin、Amazon Corretto、阿里 Dragonwell 等）承诺给这个版本出几年补丁。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>版本</th><th>发布</th><th>Temurin 至少支持到</th><th>代表性的变化</th><th>框架</th></tr></thead>
+      <tbody>
+        <tr class="hl"><th>8</th><td class="num">2014-03</td><td class="num">2030-12</td><td>lambda、Stream、java.time、Optional、Metaspace</td><td>Spring Boot 2.x 的大本营</td></tr>
+        <tr><th>11</th><td class="num">2018-09</td><td class="num">2027-10</td><td>模块化后的第一个 LTS、HttpClient、删 Java EE 模块</td><td>多数公司当过渡站</td></tr>
+        <tr class="hl"><th>17</th><td class="num">2021-09</td><td class="num">2027-10</td><td>record、sealed、文本块、switch 表达式、默认强封装</td><td>Spring Boot 3 / 4 的最低要求</td></tr>
+        <tr class="hl"><th>21</th><td class="num">2023-09</td><td class="num">2029-12</td><td>虚拟线程、模式匹配 switch、record 模式、分代 ZGC</td><td>Boot 3.2 起可一键开虚拟线程</td></tr>
+        <tr><th>25</th><td class="num">2025-09</td><td class="num">2031-09</td><td>ScopedValue 转正、紧凑对象头等（下一圈）</td><td>看依赖是否已支持</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tip">支持年限来自 Adoptium 官网的 Temurin 支持表，其他发行商的年限各不相同；Oracle 自家 JDK 8 的商用免费更新早在 2019 年就停了，生产上多用上面这些 OpenJDK 发行版。</p>
+  <p class="pick-line">选择规则：<b>新项目直接 21</b>（依赖都支持的话可以考虑 25）；要用 Spring Boot 3 / 4 的至少 17；老项目卡在 8 的，<b>跳过 11 直接规划到 17 或 21</b>，因为 9 到 17 的坑反正都要过一遍。本页学 8 → 17 → 21 这一段改了什么、为什么。</p>
+</section>
+
+<!-- ④ -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>原理：一种发布方式，四条主线</h2>
+    <p class="lead">先看 Java 现在怎么出版本（这决定了 8、17、21 的关系），再看 8 到 21 的改动分成哪四条线、每样新东西是为了解决什么问题，最后看几处“为什么非这样设计不可”。</p>
+  </div>
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="other"><h4>JDK、JRE、JVM</h4><p>JVM 执行字节码；JRE = JVM + 类库；JDK = JRE + javac 等工具。9 起官方不再单独发 JRE，用 <code>jlink</code> 按需裁一个运行时。</p></div>
+      <div class="fact" data-role="other"><h4>JEP</h4><p>JDK Enhancement Proposal，每个新特性的提案和编号，比如 JEP 444 是虚拟线程。本页的“哪个版本”都按 JEP 写的目标版本。</p></div>
+      <div class="fact" data-role="other"><h4>预览特性</h4><p>先放进版本里让大家试，编译和运行都要加 <code>--enable-preview</code>，下个版本可能改、也可能删。转正之后才算数。</p></div>
+      <div class="fact" data-role="other"><h4>LTS</h4><p>发行商对某个版本的长期补丁承诺，不是语言特性。11、17、21 和 8 在语言上没有“特殊”，只是补丁出得久。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="m-train">
+    <h3><span class="sn">机制 1</span>发布方式：从“等大特性”到“半年一班车”<small>8、17、21 的关系由它决定</small></h3>
+    <div class="design">
+      <div class="way" data-role="bad">
+        <h4>以前：版本等最大的那个特性<small>到 JDK 9 为止</small></h4>
+        <svg class="sv" viewBox="0 0 420 200" role="img" aria-label="旧方式：JDK 9 要等模块系统做完才能发，其他早就做好的小特性跟着一起等，8 到 9 隔了三年半。">
+          <line x1="20" y1="120" x2="400" y2="120" class="e-axis"/>
+          <circle cx="40" cy="120" r="9" class="b-of"/><text x="40" y="146" text-anchor="middle" class="t-s">8</text><text x="40" y="162" text-anchor="middle" class="t-xs">2014.3</text>
+          <circle cx="380" cy="120" r="9" class="b-neu"/><text x="380" y="146" text-anchor="middle" class="t-s">9</text><text x="380" y="162" text-anchor="middle" class="t-xs">2017.9</text>
+          <rect x="230" y="34" width="150" height="40" rx="8" class="b-bad"/><text x="305" y="58" text-anchor="middle" class="t-s">模块系统（一再延期）</text>
+          <g class="f-card" stroke="var(--line-strong)" stroke-width="1.2"><rect x="90" y="86" width="40" height="20" rx="4"/><rect x="136" y="86" width="40" height="20" rx="4"/><rect x="182" y="86" width="40" height="20" rx="4"/><rect x="228" y="86" width="40" height="20" rx="4"/></g>
+          <text x="156" y="80" text-anchor="middle" class="t-xs">早就做好的小特性，只能干等</text>
+          <path d="M270 96 L360 112" class="e-badd" marker-end="url(#ah-bad)"/>
+          <text x="210" y="190" text-anchor="middle" class="t-bad">一个大特性拖住整个版本：三年半</text>
+        </svg>
+      </div>
+      <div class="way" data-role="done">
+        <h4>现在：每半年发一班车<small>从 JDK 10 起</small></h4>
+        <svg class="sv" viewBox="0 0 420 200" role="img" aria-label="新方式：每年 3 月和 9 月各发一个版本，做好的特性就上车，没做好的等下一班；新语法先以预览身份上车，改好再转正。">
+          <line x1="20" y1="120" x2="400" y2="120" class="e-axis"/>
+          <g class="b-neu"><circle cx="50" cy="120" r="7"/><circle cx="130" cy="120" r="7"/><circle cx="210" cy="120" r="7"/><circle cx="290" cy="120" r="7"/><circle cx="370" cy="120" r="7"/></g>
+          <g class="t-xs"><text x="50" y="146" text-anchor="middle">3 月</text><text x="130" y="146" text-anchor="middle">9 月</text><text x="210" y="146" text-anchor="middle">3 月</text><text x="290" y="146" text-anchor="middle">9 月</text><text x="370" y="146" text-anchor="middle">3 月</text></g>
+          <rect x="34" y="84" width="32" height="20" rx="4" class="b-good"/><rect x="114" y="84" width="32" height="20" rx="4" class="b-good"/><rect x="274" y="84" width="32" height="20" rx="4" class="b-good"/>
+          <rect x="114" y="54" width="32" height="20" rx="4" class="b-dash"/><text x="130" y="48" text-anchor="middle" class="t-xs">预览</text>
+          <rect x="194" y="54" width="32" height="20" rx="4" class="b-dash"/><text x="210" y="48" text-anchor="middle" class="t-xs">再预览</text>
+          <rect x="274" y="54" width="32" height="20" rx="4" class="b-good"/><text x="290" y="48" text-anchor="middle" class="t-good">转正</text>
+          <text x="210" y="178" text-anchor="middle" class="t-good">做好就上车，没做好等下一班</text>
+          <text x="210" y="196" text-anchor="middle" class="t-m">每两年挑一班做长期支持：17、21、25</text>
+        </svg>
+      </div>
+    </div>
+    <p class="verdict" data-role="of">决定这个设计的约束：<b>大特性的完成时间没法预测</b>。绑在一起发，小改进跟着等；拆成定期发车，每个特性单独上车，语言新语法还能先以“预览”身份收反馈。后果有两个：一是 17 和 21 只是其中两班车，<b>17 = 8 + 9～16 所有班车的内容</b>；二是不少特性在中间版本里已经出现过预览，到 LTS 才转正（record 14、15 预览，16 转正）。</p>
+  </div>
+
+  <div class="sub" id="m-lanes">
+    <h3><span class="sn">机制 2</span>8 到 21 的四条主线<small>点在哪一列，就是在哪个版本转正</small></h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 420" role="img" aria-label="五条泳道：语言（lambda、var、switch 表达式、文本块、record、sealed、模式匹配 switch）、类库 API（java.time、List.of、HttpClient、Stream.toList、SequencedCollection）、并发（CompletableFuture、虚拟线程在 19、20 预览、21 转正）、GC 和性能（Metaspace、G1 默认和压缩字符串、容器感知、默认 CDS、删 CMS、ZGC 转正、分代 ZGC）、平台治理（模块系统、删 Java EE 模块、删 Nashorn、默认强封装、强封装、默认 UTF-8、动态 agent 警告）。">
+          <rect x="128" y="40" width="44" height="370" rx="6" class="f-oft"/>
+          <rect x="296" y="40" width="44" height="370" rx="6" class="f-neut"/>
+          <rect x="632" y="40" width="44" height="370" rx="6" class="f-oft"/>
+          <rect x="856" y="40" width="40" height="370" rx="6" class="f-oft"/>
+          <g class="t-mono">
+            <text x="150" y="30" text-anchor="middle">8</text><text x="206" y="30" text-anchor="middle">9</text><text x="262" y="30" text-anchor="middle">10</text><text x="318" y="30" text-anchor="middle">11</text><text x="374" y="30" text-anchor="middle">12</text><text x="430" y="30" text-anchor="middle">13</text><text x="486" y="30" text-anchor="middle">14</text><text x="542" y="30" text-anchor="middle">15</text><text x="598" y="30" text-anchor="middle">16</text><text x="654" y="30" text-anchor="middle">17</text><text x="710" y="30" text-anchor="middle">18</text><text x="766" y="30" text-anchor="middle">19</text><text x="822" y="30" text-anchor="middle">20</text><text x="876" y="30" text-anchor="middle">21</text>
+          </g>
+          <!-- lanes -->
+          <g class="e-grid"><line x1="10" y1="120" x2="896" y2="120"/><line x1="10" y1="190" x2="896" y2="190"/><line x1="10" y1="260" x2="896" y2="260"/><line x1="10" y1="330" x2="896" y2="330"/></g>
+          <text x="10" y="80" class="t-pd">语言</text><text x="10" y="96" class="t-xs">Amber</text>
+          <text x="10" y="152" class="t-g2">类库 API</text>
+          <text x="10" y="222" class="t-bk">并发</text><text x="10" y="238" class="t-xs">Loom</text>
+          <text x="10" y="292" class="t-cg">GC · 性能</text>
+          <text x="10" y="362" class="t-rn">平台治理</text><text x="10" y="378" class="t-xs">模块 · 删旧</text>
+          <!-- 语言 y=86 -->
+          <line x1="150" y1="86" x2="876" y2="86" class="e-grid"/>
+          <g class="f-pd"><circle cx="150" cy="86" r="6"/><circle cx="262" cy="86" r="6"/><circle cx="486" cy="86" r="6"/><circle cx="542" cy="86" r="6"/><circle cx="598" cy="86" r="6"/><circle cx="654" cy="86" r="6"/><circle cx="876" cy="86" r="6"/></g>
+          <text x="142" y="72" class="t-s">lambda · Stream</text>
+          <text x="262" y="108" text-anchor="middle" class="t-s">var</text>
+          <text x="486" y="72" text-anchor="middle" class="t-s">switch 表达式</text>
+          <text x="542" y="108" text-anchor="middle" class="t-s">文本块</text>
+          <text x="598" y="72" text-anchor="middle" class="t-s">record</text>
+          <text x="654" y="108" text-anchor="middle" class="t-s">sealed</text>
+          <text x="890" y="72" text-anchor="end" class="t-s">模式匹配 switch</text>
+          <!-- API y=156 -->
+          <line x1="150" y1="156" x2="876" y2="156" class="e-grid"/>
+          <g class="f-g2"><circle cx="150" cy="156" r="6"/><circle cx="206" cy="156" r="6"/><circle cx="318" cy="156" r="6"/><circle cx="598" cy="156" r="6"/><circle cx="876" cy="156" r="6"/></g>
+          <text x="142" y="142" class="t-s">java.time · Optional</text>
+          <text x="206" y="178" text-anchor="middle" class="t-s">List.of</text>
+          <text x="318" y="142" class="t-s" text-anchor="start">HttpClient</text>
+          <text x="598" y="178" text-anchor="middle" class="t-s">Stream.toList</text>
+          <text x="890" y="142" text-anchor="end" class="t-s">SequencedCollection</text>
+          <!-- 并发 y=226 -->
+          <line x1="150" y1="226" x2="876" y2="226" class="e-grid"/>
+          <circle cx="150" cy="226" r="6" class="f-bk"/>
+          <circle cx="766" cy="226" r="6" class="b-dash"/><circle cx="822" cy="226" r="6" class="b-dash"/>
+          <circle cx="876" cy="226" r="7" class="f-bk"/>
+          <text x="142" y="212" class="t-s">CompletableFuture</text>
+          <text x="794" y="248" text-anchor="middle" class="t-xs">19、20 预览</text>
+          <text x="890" y="212" text-anchor="end" class="t-s">虚拟线程</text>
+          <!-- GC y=296 -->
+          <line x1="150" y1="296" x2="876" y2="296" class="e-grid"/>
+          <g class="f-cg"><circle cx="150" cy="296" r="6"/><circle cx="206" cy="296" r="6"/><circle cx="262" cy="296" r="6"/><circle cx="374" cy="296" r="6"/><circle cx="486" cy="296" r="6"/><circle cx="542" cy="296" r="6"/><circle cx="876" cy="296" r="6"/></g>
+          <text x="142" y="318" class="t-s">Metaspace</text>
+          <text x="206" y="282" text-anchor="middle" class="t-s">G1 默认 · 压缩字符串</text>
+          <text x="262" y="318" class="t-s" text-anchor="start">容器感知</text>
+          <text x="374" y="282" text-anchor="middle" class="t-s">默认 CDS</text>
+          <text x="486" y="318" text-anchor="middle" class="t-s">删 CMS</text>
+          <text x="542" y="282" text-anchor="middle" class="t-s">ZGC 转正</text>
+          <text x="890" y="282" text-anchor="end" class="t-s">分代 ZGC</text>
+          <!-- 治理 y=366 -->
+          <line x1="150" y1="366" x2="876" y2="366" class="e-grid"/>
+          <g class="f-rn"><circle cx="206" cy="366" r="6"/><circle cx="318" cy="366" r="6"/><circle cx="542" cy="366" r="6"/><circle cx="598" cy="366" r="6"/><circle cx="654" cy="366" r="6"/><circle cx="710" cy="366" r="6"/><circle cx="876" cy="366" r="6"/></g>
+          <text x="206" y="352" text-anchor="middle" class="t-s">模块系统</text>
+          <text x="318" y="388" text-anchor="middle" class="t-s">删 Java EE 模块</text>
+          <text x="542" y="352" text-anchor="middle" class="t-s">删 Nashorn</text>
+          <text x="598" y="388" text-anchor="middle" class="t-s">默认强封装</text>
+          <text x="654" y="352" text-anchor="middle" class="t-s">强封装</text>
+          <text x="710" y="388" text-anchor="middle" class="t-s">默认 UTF-8</text>
+          <text x="890" y="352" text-anchor="end" class="t-s">动态 agent 警告</text>
+        </svg>
+      </div>
+      <figcaption>琥珀色的三列是 8、17、21，灰色是 11。前三条泳道是“得到”，最后一条是“要还的账”：它让 JDK 内部能放心重构，代价是升级时依赖 JDK 内部的老代码会坏。容器感知最早在 10，后来回移植到了 8u191。</figcaption>
+    </figure>
+
+    <h3 style="margin-top:8px">每样新东西，为什么要加</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>特性</th><th>版本</th><th>以前怎么写 / 痛在哪</th><th>解决了什么</th></tr></thead>
+        <tbody>
+          <tr class="hl"><th colspan="4">语言（Project Amber：让常见写法更短、让编译器多帮你检查）</th></tr>
+          <tr><th>lambda、Stream</th><td class="num">8</td><td>传个行为要写匿名内部类；集合处理全靠手写循环</td><td>行为可以当参数传，集合操作能链式写，还能 <code>parallelStream</code></td></tr>
+          <tr><th><code>var</code></th><td class="num">10</td><td><code>Map&lt;String, List&lt;Order&gt;&gt; m = new HashMap&lt;&gt;()</code> 类型写两遍</td><td>局部变量类型推断。只限局部变量，字段和方法签名仍要写明，API 的可读性不受影响</td></tr>
+          <tr><th>有帮助的 NPE</th><td class="num">14</td><td><code>a.b().c().d()</code> 报 NPE，不知道哪个是 null</td><td>异常消息直接写出是哪个表达式为 null（JEP 358，15 起默认开）</td></tr>
+          <tr><th>switch 表达式</th><td class="num">14</td><td>忘写 <code>break</code> 就穿透到下一个 case；switch 不能返回值</td><td><code>case X -&gt;</code> 不穿透，整个 switch 可以当表达式用</td></tr>
+          <tr><th>文本块</th><td class="num">15</td><td>多行 SQL、JSON 要拼字符串、加 <code>\n</code> 和转义</td><td><code>"""</code> 包起来原样写</td></tr>
+          <tr><th>record</th><td class="num">16</td><td>数据类要手写或靠 Lombok 生成 equals、hashCode、toString</td><td>一行声明不可变的数据载体，语言层面的语义，后面的模式匹配能直接解构它</td></tr>
+          <tr><th><code>instanceof</code> 模式</th><td class="num">16</td><td><code>if (o instanceof A) { A a = (A) o; … }</code> 判断完还要强转</td><td><code>if (o instanceof A a)</code> 一步到位</td></tr>
+          <tr><th>sealed</th><td class="num">17</td><td>没法规定“这个接口只有这几种实现”</td><td>列出允许的子类，编译器知道一共就这几种，为穷尽检查打基础</td></tr>
+          <tr><th>record 模式、switch 模式</th><td class="num">21</td><td>按类型分支要写一串 <code>if-else instanceof</code>，漏一种没人提醒</td><td>switch 直接按类型和结构匹配；配合 sealed，漏掉一种就编译不过</td></tr>
+          <tr class="hl"><th colspan="4">类库 API</th></tr>
+          <tr><th>java.time</th><td class="num">8</td><td><code>Date</code> 可变、<code>SimpleDateFormat</code> 线程不安全、月份从 0 开始</td><td>不可变、线程安全，日期、时间、时区、时长分开建模</td></tr>
+          <tr><th><code>List.of</code>、<code>Map.of</code></th><td class="num">9</td><td><code>Collections.unmodifiableList(Arrays.asList(…))</code></td><td>一行建不可变集合（不允许 null 元素）</td></tr>
+          <tr><th>HttpClient</th><td class="num">11</td><td><code>HttpURLConnection</code> 难用、不支持 HTTP/2，只好引 Apache HttpClient</td><td>JDK 自带，支持 HTTP/2、同步和异步</td></tr>
+          <tr><th><code>Stream.toList()</code></th><td class="num">16</td><td><code>.collect(Collectors.toList())</code></td><td>更短，返回不可修改的 List</td></tr>
+          <tr><th>SequencedCollection</th><td class="num">21</td><td>取最后一个元素：List 要 <code>get(size()-1)</code>，Deque 有 <code>getLast</code>，LinkedHashSet 没办法</td><td>有顺序的集合统一有 <code>getFirst</code>、<code>getLast</code>、<code>reversed</code></td></tr>
+          <tr class="hl"><th colspan="4">并发（Project Loom）</th></tr>
+          <tr><th>CompletableFuture</th><td class="num">8</td><td><code>Future.get()</code> 只能阻塞等，没法组合</td><td>多个异步结果能串联、合并、处理异常</td></tr>
+          <tr><th>虚拟线程</th><td class="num">21</td><td>一个请求占一个平台线程，线程贵，并发上不去；改响应式又难写难调</td><td>线程变便宜，照样写阻塞代码也能扛高并发（原理见 <a href="../network/io-models.html">网络 IO 模型</a>）</td></tr>
+          <tr class="hl"><th colspan="4">GC 和性能（升级就白拿）</th></tr>
+          <tr><th>Metaspace</th><td class="num">8</td><td>永久代大小难估，动不动 <code>OutOfMemoryError: PermGen space</code></td><td>类元数据挪到本地内存，按需增长</td></tr>
+          <tr><th>G1 成为默认</th><td class="num">9</td><td>8 默认 Parallel GC，吞吐高但大堆停顿长</td><td>服务端更在乎停顿，G1 能按目标停顿时间分批回收</td></tr>
+          <tr><th>压缩字符串</th><td class="num">9</td><td><code>String</code> 内部是 <code>char[]</code>，每个字符 2 字节，而多数字符串只有拉丁字符</td><td>改成 <code>byte[]</code> 加编码标志，纯拉丁字符的字符串省一半内存</td></tr>
+          <tr><th>容器感知</th><td class="num">10</td><td>JVM 在 Docker 里按宿主机的内存和 CPU 算堆大小和线程数，容易被杀</td><td>读 cgroup 限制；回移植到 8u191，配 <code>MaxRAMPercentage</code></td></tr>
+          <tr><th>AppCDS、默认 CDS</th><td class="num">10、12</td><td>每次启动都重新解析、校验同样的类</td><td>把类数据存成归档共享，启动更快</td></tr>
+          <tr><th>删掉 CMS</th><td class="num">14</td><td>CMS 不整理内存，碎片多了退化成长时间 Full GC，维护成本高</td><td>G1、ZGC 已能替代，删掉省维护</td></tr>
+          <tr><th>ZGC 转正、分代 ZGC</th><td class="num">15、21</td><td>堆越大，停顿越长</td><td>停顿通常不到 1 毫秒，和堆大小基本无关；21 的分代版吞吐更好</td></tr>
+          <tr class="hl"><th colspan="4">平台治理（升级的坑大多在这）</th></tr>
+          <tr><th>模块系统</th><td class="num">9</td><td>JDK 是一整块 rt.jar，<code>sun.*</code> 内部类被到处直接用，JDK 想改内部都怕打坏别人</td><td>用模块划清“公开的”和“内部的”，还能用 <code>jlink</code> 裁出小运行时</td></tr>
+          <tr><th>删 Java EE、CORBA 模块</th><td class="num">11</td><td>JAXB、JAX-WS 等属于 Java EE，跟着 JDK 发版太慢</td><td>移出 JDK，改成普通 Maven 依赖，各自演进</td></tr>
+          <tr><th>删 Nashorn</th><td class="num">15</td><td>内置 JavaScript 引擎跟不上 JS 标准，维护成本高</td><td>需要的自己引独立的引擎</td></tr>
+          <tr><th>强封装</th><td class="num">16、17</td><td>框架靠反射随便改 JDK 内部字段，JDK 一改实现就崩</td><td>16 默认拒绝，17 去掉整体放开的开关，只能按包 <code>--add-opens</code></td></tr>
+          <tr><th>弃用 SecurityManager</th><td class="num">17</td><td>很少有人用，却拖累 JDK 每处权限检查的维护</td><td>标记要删，18 起默认不允许运行时设置</td></tr>
+          <tr><th>默认 UTF-8</th><td class="num">18</td><td>不写编码时用操作系统默认编码，同一个程序在中文 Windows 和 Linux 上结果不同</td><td>统一默认 UTF-8（21 里已生效）</td></tr>
+          <tr><th>动态加载 agent 警告</th><td class="num">21</td><td>运行中随时能往 JVM 里注入代码改行为</td><td>先打警告，为将来默认禁止做准备</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub" id="m-amber">
+    <h3><span class="sn">机制 3</span>为什么是 record + sealed + 模式匹配，而不是 Lombok<small>设计对比</small></h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 230" role="img" aria-label="sealed 接口 PayResult 只允许 Paid、Failed、Pending 三种 record；switch 覆盖了这三种就不需要 default。后来加了第四种 Refunded，所有没处理它的 switch 都会编译失败。">
+          <rect x="120" y="20" width="220" height="44" rx="10" class="b-pd"/>
+          <text x="230" y="40" text-anchor="middle" class="t-b">sealed interface PayResult</text>
+          <text x="230" y="56" text-anchor="middle" class="t-xs">permits Paid, Failed, Pending</text>
+          <rect x="20" y="110" width="120" height="40" rx="8" class="b-card"/><text x="80" y="135" text-anchor="middle" class="t-s">record Paid</text>
+          <rect x="170" y="110" width="120" height="40" rx="8" class="b-card"/><text x="230" y="135" text-anchor="middle" class="t-s">record Failed</text>
+          <rect x="320" y="110" width="120" height="40" rx="8" class="b-card"/><text x="380" y="135" text-anchor="middle" class="t-s">record Pending</text>
+          <rect x="170" y="180" width="140" height="40" rx="8" class="b-bad"/><text x="240" y="198" text-anchor="middle" class="t-s">record Refunded</text><text x="240" y="213" text-anchor="middle" class="t-xs">后来新加的</text>
+          <g class="e-mut"><line x1="230" y1="64" x2="80" y2="108"/><line x1="230" y1="64" x2="230" y2="108"/><line x1="230" y1="64" x2="380" y2="108"/></g>
+          <rect x="520" y="20" width="360" height="150" rx="12" class="f-code" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="536" y="44" class="t-mono">return switch (r) {</text>
+          <text x="552" y="66" class="t-mono">case Paid p    -&gt; …</text>
+          <text x="552" y="88" class="t-mono">case Failed f  -&gt; …</text>
+          <text x="552" y="110" class="t-mono">case Pending p -&gt; …</text>
+          <text x="536" y="132" class="t-mono">};   // 不需要 default</text>
+          <text x="536" y="156" class="t-good">编译器知道一共就这三种 ✓</text>
+          <path d="M310 200 C430 200 470 190 520 186" class="e-badd" marker-end="url(#ah-bad)"/>
+          <text x="530" y="200" class="t-bad">加了 Refunded：所有漏掉它的 switch</text>
+          <text x="530" y="218" class="t-bad">直接编译失败，而不是上线后走错分支</text>
+        </svg>
+      </div>
+    </figure>
+    <div class="two">
+      <ul class="pains">
+        <li>Lombok 的 <code>@Data</code> 是在编译时改语法树，生成的是普通类：编译器不知道它“只是数据”，没法拿它做解构，更没法做穷尽检查。它还要用 javac 的内部 API，所以每次升级 JDK 都要跟着升 Lombok（⑥ 第三圈）。</li>
+        <li>Visitor 模式也能保证“每种都处理到”，但要给每个类型加 <code>accept</code> 方法，新增一种操作要改所有类。</li>
+      </ul>
+      <ul class="pains">
+        <li class="ok">record 是语言层面的声明：字段就是全部状态、不可变，所以模式匹配能安全地把它拆开（<code>case Paid(var id, var cents)</code>）。</li>
+        <li class="ok">sealed 告诉编译器“就这几种”，switch 模式负责按类型分支。三样拼在一起，就是函数式语言里的代数数据类型：新增一种情况时，编译器把所有该改的地方列出来。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="sub" id="m-gov">
+    <h3><span class="sn">机制 4</span>为什么要强封装：让 JDK 能改自己的内部<small>设计对比</small></h3>
+    <div class="design">
+      <div class="way" data-role="bad">
+        <h4>JDK 8：类路径上一切可见</h4>
+        <svg class="sv" viewBox="0 0 420 210" role="img" aria-label="JDK 8：rt.jar 里的内部类和 java.lang 的私有字段，框架都能通过反射直接拿到；JDK 一改内部实现，这些框架就坏。">
+          <rect x="20" y="20" width="380" height="120" rx="12" class="b-neu"/>
+          <text x="210" y="42" text-anchor="middle" class="t-b">rt.jar（一整块）</text>
+          <rect x="40" y="56" width="150" height="34" rx="6" class="b-card"/><text x="115" y="78" text-anchor="middle" class="t-s">java.lang、java.util</text>
+          <rect x="230" y="56" width="150" height="34" rx="6" class="b-card"/><text x="305" y="78" text-anchor="middle" class="t-s">sun.misc、sun.nio …</text>
+          <rect x="230" y="96" width="150" height="34" rx="6" class="b-card"/><text x="305" y="118" text-anchor="middle" class="t-s">String 的私有字段</text>
+          <rect x="40" y="160" width="150" height="34" rx="6" class="b-card"/><text x="115" y="182" text-anchor="middle" class="t-s">老框架 / Lombok</text>
+          <path d="M190 172 C260 172 280 150 300 132" class="e-ink" marker-end="url(#ah-ink)"/>
+          <text x="250" y="200" class="t-bad">JDK 一改内部，它就坏</text>
+        </svg>
+      </div>
+      <div class="way" data-role="done">
+        <h4>JDK 17：只导出公开的包</h4>
+        <svg class="sv" viewBox="0 0 420 210" role="img" aria-label="JDK 17：java.base 模块只导出公开包，内部包对反射关闭；框架反射访问内部会抛 InaccessibleObjectException，除非启动时用 --add-opens 指定放开某个包。">
+          <rect x="20" y="20" width="380" height="120" rx="12" class="b-rn"/>
+          <text x="210" y="42" text-anchor="middle" class="t-b">模块 java.base</text>
+          <rect x="40" y="56" width="150" height="34" rx="6" class="b-good"/><text x="115" y="78" text-anchor="middle" class="t-s">exports java.lang …</text>
+          <rect x="230" y="56" width="150" height="74" rx="6" class="b-card"/><text x="305" y="80" text-anchor="middle" class="t-s">jdk.internal.*</text><text x="305" y="100" text-anchor="middle" class="t-s">私有字段</text><text x="305" y="120" text-anchor="middle" class="t-xs">（不对外开放）</text>
+          <rect x="40" y="160" width="150" height="34" rx="6" class="b-card"/><text x="115" y="182" text-anchor="middle" class="t-s">老框架 / Lombok</text>
+          <path d="M190 172 C240 172 250 150 262 136" class="e-badd"/>
+          <text x="200" y="160" class="t-bad">✕ InaccessibleObjectException</text>
+          <text x="214" y="200" class="t-m">除非启动时 --add-opens 放开那个包</text>
+        </svg>
+      </div>
+    </div>
+    <p class="verdict" data-role="of">决定这个设计的约束：<b>JDK 要持续重构内部（压缩字符串、虚拟线程都改了 <code>String</code>、<code>Thread</code> 的内部），而一大批库依赖着这些内部</b>。不封起来，每次重构都会打坏别人，JDK 就只能停在原地。9 先给警告，16 默认拒绝，17 去掉一键放开的开关，前后给了生态四年多时间迁移。坏掉的老库，修法是升级库本身，<code>--add-opens</code> 只是过渡。</p>
+  </div>
+
+  <div class="sub" id="m-syntax">
+    <h3><span class="sn">语法</span>21 的写法，最少要认得这些<small>每行注明是哪个版本来的</small></h3>
+    <div class="codebox">
+      <div class="code-bar"><b>PayResults.java</b><span>未在本机运行；按 JEP 395 / 409 / 440 / 441 / 444 的写法核对</span></div>
+<pre><code>sealed interface PayResult permits Paid, Failed, Pending {}            <span class="cm">// 17 sealed</span>
+record Paid(String orderId, long cents) implements PayResult {}         <span class="cm">// 16 record</span>
+record Failed(String orderId, String reason) implements PayResult {}
+record Pending(String orderId) implements PayResult {}
+
+static String describe(PayResult r) {
+    return switch (r) {                                                   <span class="cm">// 14 switch 表达式</span>
+        case Paid(var id, var cents) -&gt; id + " 已付 " + cents / 100.0;    <span class="cm">// 21 record 模式</span>
+        case Failed f when f.reason().isBlank() -&gt; f.orderId() + " 失败";  <span class="cm">// 21 带条件的 case</span>
+        case Failed f -&gt; f.orderId() + " 失败：" + f.reason();
+        case Pending p -&gt; p.orderId() + " 处理中";
+    };                                                                    <span class="cm">// 没有 default：漏一种就编译不过</span>
+}
+
+try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {          <span class="cm">// 21 虚拟线程，10 var</span>
+    exec.submit(() -&gt; query(orderId));
+}</code></pre>
+    </div>
+    <p class="tip">参数、GC 选择、各个特性的边角规则放到第⑥步。注意带 <code>when</code> 的 case 要写在同类型的普通 case 前面，否则会被它“盖住”而编译报错。</p>
+  </div>
+</section>
+
+<!-- ⑤ -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>跑起来：同一段代码，8 和 21 各写一遍，再升一次级</h2>
+    <p class="lead">一个小场景：拿到一批支付结果，按类型生成描述，再并发查 1000 个订单。左边是 JDK 8 的写法，右边是 21 的写法。代码<b>未在本机运行</b>，写法按 JEP 和 JLS 核对。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>JDK 8</b><span>Lombok + instanceof + 固定线程池</span></div>
+<pre><code>interface PayResult {}
+@Value class Paid implements PayResult {      <span class="cm">// Lombok 生成</span>
+    String orderId; long cents; }
+@Value class Failed implements PayResult {
+    String orderId; String reason; }
+@Value class Pending implements PayResult {
+    String orderId; }
+
+static String describe(PayResult r) {
+    if (r instanceof Paid) {
+        Paid p = (Paid) r;                      <span class="cm">// 判断完还要强转</span>
+        return p.getOrderId() + " 已付 " + p.getCents() / 100.0;
+    } else if (r instanceof Failed) {
+        Failed f = (Failed) r;
+        return f.getOrderId() + " 失败：" + f.getReason();
+    } else if (r instanceof Pending) {
+        return ((Pending) r).getOrderId() + " 处理中";
+    }
+    throw new IllegalStateException();          <span class="cm">// 漏了一种，运行时才知道</span>
+}
+
+<span class="cm">// 1000 个阻塞查询：池子 200，其余排队</span>
+ExecutorService pool = Executors.newFixedThreadPool(200);
+List&lt;Future&lt;Order&gt;&gt; fs = new ArrayList&lt;&gt;();
+for (String id : ids) fs.add(pool.submit(() -&gt; query(id)));
+for (Future&lt;Order&gt; f : fs) f.get();
+pool.shutdown();</code></pre>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>JDK 21</b><span>record + sealed + switch 模式 + 虚拟线程</span></div>
+<pre><code>sealed interface PayResult permits Paid, Failed, Pending {}
+record Paid(String orderId, long cents) implements PayResult {}
+record Failed(String orderId, String reason) implements PayResult {}
+record Pending(String orderId) implements PayResult {}
+
+static String describe(PayResult r) {
+    return switch (r) {
+        case Paid(var id, var cents) -&gt; id + " 已付 " + cents / 100.0;
+        case Failed(var id, var reason) -&gt; id + " 失败：" + reason;
+        case Pending(var id) -&gt; id + " 处理中";
+    };                                <span class="cm">// 漏了一种：编译不过</span>
+}
+
+
+
+
+
+<span class="cm">// 1000 个阻塞查询：每个一个虚拟线程，同时进行</span>
+try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
+    var fs = ids.stream()
+                .map(id -&gt; exec.submit(() -&gt; query(id)))
+                .toList();            <span class="cm">// 16 Stream.toList</span>
+    for (var f : fs) f.get();
+}                                     <span class="cm">// 19 起 ExecutorService 能用 try-with-resources，退出时等任务做完</span></code></pre>
+    </div>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>pom.xml</b><span>用 release，而不是 source / target</span></div>
+<pre><code>&lt;properties&gt;
+    &lt;maven.compiler.release&gt;21&lt;/maven.compiler.release&gt;   <span class="cm">&lt;!-- 用了 Spring Boot 父 POM 时写 &lt;java.version&gt;21&lt;/java.version&gt; --&gt;</span>
+&lt;/properties&gt;</code></pre>
+  </div>
+  <p class="tip"><code>release</code>（9 起）同时限定语法和可用的 JDK API；只写 <code>source</code>/<code>target</code> 时，高版本 javac 会放过只有新 JDK 才有的方法，程序拿到老 JDK 上才报 <code>NoSuchMethodError</code>。<code>ExecutorService</code> 实现 <code>AutoCloseable</code> 是 JDK 19 加的，21 里能直接用。</p>
+
+  <div class="sub">
+    <h3>老项目从 8 升到 17 / 21：五步</h3>
+    <ol class="callouts">
+      <li><b>1</b><span><b>先扫一遍。</b><code>jdeps --jdk-internals app.jar</code> 列出用到的 JDK 内部 API；<code>jdeprscan --release 17 app.jar</code> 列出用到的已弃用、已删除 API。两个工具 JDK 9 起自带。</span></li>
+      <li><b>2</b><span><b>先升依赖，再换 JDK。</b>Lombok、Spring、ASM / cglib、Mockito、字节码类 APM、Maven 编译插件都要升到支持目标 JDK 的版本，这一步解决大部分强封装问题。</span></li>
+      <li><b>3</b><span><b>换 JDK 编译。</b>改成 <code>release</code>；补上被移出 JDK 的依赖（JAXB 等）；内部类换成公开 API。</span></li>
+      <li><b>4</b><span><b>改启动参数。</b>删掉 CMS、<code>PrintGCDateStamps</code>、<code>PermSize</code> 等老参数；GC 日志改成 <code>-Xlog:gc*:file=gc.log:time,uptime</code>；容器里用 <code>-XX:MaxRAMPercentage</code> 代替写死的 <code>-Xmx</code>。</span></li>
+      <li><b>5</b><span><b>测、压、灰度。</b>跑全量测试，压测对比 GC 停顿和 RT（默认 GC 从 Parallel 变成了 G1），再灰度上线。</span></li>
+    </ol>
+  </div>
+  <div class="two">
+    <div class="done-box"><b>到这里已经能交差了。</b>能说清 8、17、21 的关系（同一条线上的三个 LTS 站点），能看懂新写法、知道每样为什么加，能按五步把一个老服务升上去。</div>
+    <div class="todo">
+      <b>已知还没处理的细节</b>
+      <ul>
+        <li>换上新 JDK 后 JVM 直接起不来 → <a href="#pit-flags">⑥ 坑 1</a></li>
+        <li>编译通过、一跑就报反射错误 → <a href="#pit-open">⑥ 坑 2</a></li>
+        <li>没报错，但输出悄悄变了 → <a href="#pit-charset">⑥ 坑 5</a></li>
+        <li>自己的项目到底会碰到哪些 → <a href="#lab">⑥ 升级检查器</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ⑥ -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>细节：升级时会在哪出事</h2>
+    <p class="lead">第一圈是升级时最常见的坑，按“起不来 → 编译不过 → 运行报错 → 悄悄变了”排，每条标了根源在 ④ 的哪一条；第二圈是团队规范；第三圈是几处更深的原因，最后是升级检查器。</p>
+  </div>
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-flags">
+        <b><em>坑 1</em>换上新 JDK，JVM 直接起不来<a class="root" href="#m-lanes">← ④ 机制 2 GC 线</a></b>
+        <dl>
+          <dt>现象</dt><dd><code>Unrecognized VM option 'PrintGCDateStamps'</code>，接着 <code>Error: Could not create the Java Virtual Machine.</code></dd>
+          <dt>根源</dt><dd>9 起 GC 日志统一成 <code>-Xlog</code>，<code>PrintGCDateStamps</code> 这类老参数被删；<code>UseCGroupMemoryLimitForHeap</code> 在 11 里已不认识；CMS 在 14 被删时只是警告并忽略，15 起 <code>-XX:+UseConcMarkSweepGC</code> 也成了不认识的参数（按 jdk11u、14u、15u 的 <code>arguments.cpp</code> 核对）。而 <code>MaxPermSize</code> 只打警告，不影响启动。</dd>
+          <dt>做法</dt><dd class="fix">升级前先把启动脚本里的 GC 参数清一遍：日志改 <code>-Xlog:gc*:file=gc.log:time,uptime</code>，CMS 删掉用默认 G1，容器用 <code>MaxRAMPercentage</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-open">
+        <b><em>坑 2</em>编译通过，一跑就报 InaccessibleObjectException<a class="root" href="#m-gov">← ④ 机制 4 强封装</a></b>
+        <dl>
+          <dt>现象</dt><dd><code>Unable to make field private final byte[] java.lang.String.value accessible: module java.base does not "opens java.lang" to unnamed module</code></dd>
+          <dt>根源</dt><dd>老版本的 Lombok、cglib、Mockito、序列化库或自己的代码，用反射改 JDK 内部字段。9～15 只打警告，16 默认拒绝，17 删掉了 <code>--illegal-access</code> 总开关。</dd>
+          <dt>做法</dt><dd class="fix">升级这些库到支持目标 JDK 的版本；实在等不及，按包加 <code>--add-opens java.base/java.lang=ALL-UNNAMED</code>，并记一笔技术债。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-jaxb">
+        <b><em>坑 3</em>ClassNotFoundException: javax.xml.bind.JAXBContext<a class="root" href="#m-lanes">← ④ 机制 2 治理线</a></b>
+        <dl>
+          <dt>现象</dt><dd>在 8 上好好的，换 11 以上编译不过，或者运行时找不到 JAXB、JAX-WS、<code>javax.annotation</code> 的类。</dd>
+          <dt>根源</dt><dd>JEP 320 在 11 把 Java EE 和 CORBA 模块移出了 JDK，它们本来就属于 Java EE。</dd>
+          <dt>做法</dt><dd class="fix">加对应的 Maven 依赖（如 <code>jakarta.xml.bind-api</code> 加一个实现）。要上 Spring Boot 3 的，直接用 jakarta 版本。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-jakarta">
+        <b><em>坑 4</em>升 Spring Boot 3，一大片 import 报红<a class="root env" href="#s3">历史原因：Java EE 改名</a></b>
+        <dl>
+          <dt>现象</dt><dd><code>javax.servlet</code>、<code>javax.persistence</code>、<code>javax.validation</code> 全都找不到。</dd>
+          <dt>根源</dt><dd>这不是 JDK 的改动：Java EE 移交 Eclipse 基金会后改名 Jakarta EE，从 Jakarta EE 9 起包名从 <code>javax.*</code> 改成 <code>jakarta.*</code>。Spring Boot 3 基于 Jakarta EE 9+，又要求 JDK 17，两件事常被混成一件。</dd>
+          <dt>做法</dt><dd class="fix">先升到 Boot 2.7 最新版、清掉弃用警告，再按官方迁移指南批量改包名（IDE 和 OpenRewrite 都有现成的迁移规则）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-charset">
+        <b><em>坑 5</em>没报错，但中文乱码、日期格式变了<a class="root" href="#m-lanes">← ④ 机制 2 治理线</a></b>
+        <dl>
+          <dt>现象</dt><dd>升到 21 后，中文 Windows 上读出来的文件乱码；或者升到 9 以上，某些语言的日期、数字格式化结果和以前不一样。</dd>
+          <dt>根源</dt><dd>18 起（JEP 400）不写编码时默认用 UTF-8，不再跟操作系统走，以前按 GBK 读写的代码行为就变了。9 起（JEP 252）默认的本地化数据换成了 CLDR。</dd>
+          <dt>做法</dt><dd class="fix">读写文件、转字节一律显式写 <code>StandardCharsets.UTF_8</code>；格式化写死 pattern 和 <code>Locale</code>。过渡期可用 <code>-Dfile.encoding=COMPAT</code>、<code>-Djava.locale.providers=COMPAT,CLDR</code>（后者在 21 里已标记要删）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-preview">
+        <b><em>坑 6</em>用了预览特性，下个版本代码就废了<a class="root" href="#m-train">← ④ 机制 1 预览</a></b>
+        <dl>
+          <dt>现象</dt><dd>21 上用 <code>STR."…"</code> 字符串模板写的代码，升到 23 编译不过。</dd>
+          <dt>根源</dt><dd>预览特性可以改、也可以删。字符串模板（JEP 430）在 21、22 是预览，23 里被整个撤掉。另外预览特性编出来的 class 只能在同一个 JDK 版本上跑。</dd>
+          <dt>做法</dt><dd class="fix">生产代码不用 <code>--enable-preview</code>。21 里的结构化并发、ScopedValue、未命名变量都是预览，等转正再用。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-agent">
+        <b><em>坑 7</em>21 上 Arthas 一 attach 就打警告<a class="root" href="#m-lanes">← ④ 机制 2 治理线</a></b>
+        <dl>
+          <dt>现象</dt><dd>日志里出现 “A Java agent has been loaded dynamically … dynamic loading of agents will be disallowed by default in a future release”。</dd>
+          <dt>根源</dt><dd>JEP 451：运行中动态注入的 agent 能改任何代码，JDK 要逐步收紧，21 先打警告。</dd>
+          <dt>做法</dt><dd class="fix">APM 改成启动参数 <code>-javaagent</code>；需要临时 attach 排查的服务，启动时加 <code>-XX:+EnableDynamicAgentLoading</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-vt">
+        <b><em>坑 8</em>开了虚拟线程，压力一大全卡住<a class="root" href="#m-lanes">← ④ 机制 2 并发线</a></b>
+        <dl>
+          <dt>现象</dt><dd>21 上打开 <code>spring.threads.virtual.enabled</code>，平时正常，高峰时请求全部不动。</dd>
+          <dt>根源</dt><dd>21 里虚拟线程在 <code>synchronized</code> 块里阻塞会钉住载体线程，载体线程默认和 CPU 核数一样多；24（JEP 491）才解决。下游连接池也会变成新瓶颈。</dd>
+          <dt>做法</dt><dd class="fix">用 JFR 事件 <code>jdk.VirtualThreadPinned</code> 找钉住点，换 <code>ReentrantLock</code>；对下游加并发上限。详见 <a href="../network/io-models.html#pit-pin">网络 IO 模型 · 坑 7</a>。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>生产只用 LTS，跟着季度补丁升小版本</b><p>OpenJDK 每年 1、4、7、10 月出安全更新；选一个发行版（Temurin、Corretto、Dragonwell 等），镜像里固定小版本号。</p><p class="guard">已知漏洞长期不修</p></div>
+      <div class="rl"><b>编译用 <code>release</code>，不用 <code>source</code> / <code>target</code></b><p>Maven 写 <code>maven.compiler.release</code>。</p><p class="guard">用了高版本才有的 API，到低版本 JDK 上才报 NoSuchMethodError</p></div>
+      <div class="rl"><b>record 用在 DTO、值对象，不用在 JPA 实体</b><p>record 是 final、字段不可变、没有无参构造器，JPA 的代理和懒加载用不了它。</p><p class="guard">实体映射在运行时报错</p></div>
+      <div class="rl"><b><code>var</code> 只在右边一眼能看出类型时用</b><p><code>var list = new ArrayList&lt;Order&gt;()</code> 可以；<code>var x = service.load()</code> 别用。</p><p class="guard">读代码要跳进方法才知道类型</p></div>
+      <div class="rl"><b>多分支的业务类型用 sealed + switch，不写 default</b><p>写了 default，编译器就不再提醒你漏掉了新类型。</p><p class="guard">新增一种状态，旧代码悄悄走进 default</p></div>
+      <div class="rl"><b>升级 JDK 时，先在启动参数上过一遍</b><p>GC 选择、GC 日志、堆大小、<code>--add-opens</code> 都写进同一个文件里审。</p><p class="guard">坑 1、坑 2 在生产上才暴露</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>更深一层</h3></div>
+    <div class="deep">
+      <div class="dp" data-role="pd">
+        <h4>为什么每升一次 JDK，Lombok 都要跟着升</h4>
+        <p>Lombok 不是普通的注解处理器：标准注解处理器只能生成新文件，不能改已有的类；Lombok 要在你的类里加 getter，只能拿到 javac 内部的语法树直接改。javac 的内部 API 不保证兼容，加上 16、17 的强封装，每个新 JDK 都可能让旧 Lombok 失效。record 是语言自己提供的，不存在这个问题。</p>
+      </div>
+      <div class="dp" data-role="cg">
+        <h4>默认 GC 换了，升级后要看什么</h4>
+        <ul>
+          <li>8 默认 Parallel（吞吐优先），9 起默认 G1（停顿优先）。同样的堆，升级后吞吐可能略降、停顿明显变短，压测要两样都看。</li>
+          <li>21 的 ZGC 要分代的话，得加 <code>-XX:+UseZGC -XX:+ZGenerational</code>；23 起分代成了默认，24 删了不分代的模式。</li>
+          <li>容器里 JVM 只拿到 1 个 CPU、内存小于约 1792 MB 时，会自动选 Serial GC。规格太小的 Pod 要显式指定 GC。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="rn">
+        <h4>为什么 17 和 21 都要“删东西”</h4>
+        <p>每一样留在 JDK 里的东西都有维护成本：CMS 拖累 GC 代码重构，SecurityManager 让每个敏感操作都要多一层权限检查，Nashorn 要追 JS 标准。Java 的承诺是“公开 API 尽量兼容”，所以删之前都会先弃用、打警告，给几个版本的缓冲。升级时看一眼 <code>jdeprscan</code> 的输出，就能提前知道下一次会坏什么。</p>
+      </div>
+      <div class="dp" data-role="bk">
+        <h4>17 到 21 其实改得不多，为什么值得升</h4>
+        <p>语言上主要是模式匹配补齐了（record 模式、switch 模式），API 上是 SequencedCollection；真正的分量在运行时：虚拟线程和分代 ZGC。如果服务是“大量阻塞 IO + 线程池不够用”，或者大堆、对停顿敏感，21 的收益最直接；如果都不是，17 → 21 的升级风险也很小（主要是坑 5、7、8，外加用了 SecurityManager 的会在 18 起报错）。</p>
+      </div>
+    </div>
+
+    <h3 id="lab" style="margin-top:12px">升级检查器<small style="font-family:var(--font-body);font-size:14px;color:var(--muted);margin-left:8px">先猜，再检查</small></h3>
+    <div class="lab" id="lab-box">
+      <div class="presets" id="lab-presets"></div>
+      <div class="guess" id="lab-guess"></div>
+      <div class="ctl-grid">
+        <div class="ctl"><span class="lbl">现在的 JDK</span><span class="seg-btns" id="c-from" role="group" aria-label="现在的 JDK"><button type="button" data-v="8">8</button><button type="button" data-v="11">11</button><button type="button" data-v="17">17</button></span></div>
+        <div class="ctl"><span class="lbl">要升到</span><span class="seg-btns" id="c-to" role="group" aria-label="要升到"><button type="button" data-v="17">17</button><button type="button" data-v="21">21</button></span></div>
+        <div class="ctl span"><span class="lbl">项目里有这些吗（可多选）</span><span class="toggles" id="c-items"></span></div>
+      </div>
+      <div class="run-row">
+        <button class="btn primary" type="button" id="lab-run">检查</button>
+        <span class="tip" id="lab-tip">选一个剧情先猜；也可以直接勾选自己项目的情况再点检查。</span>
+      </div>
+      <div class="tiles" id="lab-tiles"></div>
+      <div class="lab-res" id="lab-res" data-role="other">点“检查”看结果。</div>
+    </div>
+    <p class="tip">规则来自 ④ 的那张表和第一圈的坑：每一项记着“从哪个版本开始出问题、出什么问题”，只有当现在的版本早于它、要升到的版本不早于它时才算进来；启动参数和 Spring Boot 2.x 这类“一直带着的东西”不管从哪个版本升都算。规则在 node 里逐项测过（例如 17 → 21 不会报 JAXB，8 → 17 不会报默认 UTF-8）。它只是一份提醒清单，真实项目以 <code>jdeps</code>、<code>jdeprscan</code> 和测试为准。</p>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>JDK 25（LTS）：ScopedValue 转正、紧凑对象头、AOT 缓存，以及 24 解决的 synchronized 钉住</li>
+      <li>FFM API（22 转正）：不写 JNI 调本地库</li>
+      <li>Stream Gatherers（24 转正）：自定义中间操作</li>
+      <li>Project Valhalla：值类型，让对象像 int 一样不占对象头</li>
+      <li>G1 和 ZGC 调优：停顿从哪来、参数为什么有效</li>
+      <li>jlink + CDS / AOT：容器里的小镜像和快启动</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ↺ -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 PayResult</h2>
+    <p class="lead">三个练习各用一条 ⑥ 的内容。“做对了会看到”是按 JLS 和 JEP 推出来的，没有在本机跑过。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="pd">
+      <h4>练习 1 · 加一种状态</h4>
+      <p>给 21 版加 <code>record Refunded(String orderId, long cents)</code>，并加进 <code>permits</code>，不改 <code>describe</code>，编译。</p>
+      <p><b>做对了会看到：</b>编译失败，提示 switch 没有覆盖所有可能的输入。8 版加一个 <code>Refunded</code> 类则能编译通过，运行到它时才抛 <code>IllegalStateException</code>。</p>
+      <p class="uses">用到：④ 机制 3、第二圈“不写 default”</p>
+    </div>
+    <div class="exc" data-role="rn">
+      <h4>练习 2 · 扫自己的项目</h4>
+      <p>在公司项目上跑 <code>jdeps --jdk-internals</code> 和 <code>jdeprscan --release 21</code>，再把启动脚本里的 <code>-XX</code> 参数逐个对照坑 1。</p>
+      <p><b>做对了会看到：</b>一份“内部 API → 建议替代”的清单；常见的是 <code>sun.misc.Unsafe</code>（多半来自依赖）和 <code>sun.misc.BASE64Encoder</code>（换 <code>java.util.Base64</code>）。</p>
+      <p class="uses">用到：⑤ 五步、坑 1、坑 2</p>
+    </div>
+    <div class="exc" data-role="bk">
+      <h4>练习 3 · 先猜，再看线程数</h4>
+      <p>把 8 版的 1000 个查询（每个阻塞 1 秒）分别用固定 200 线程池和 21 的虚拟线程跑，先猜两者大约各要几秒。</p>
+      <p><b>做对了会看到：</b>线程池约 5 秒（1000 ÷ 200 批，每批 1 秒）；虚拟线程约 1 秒，前提是 <code>query</code> 背后的连接池也撑得住 1000 个并发，否则瓶颈挪到连接池。</p>
+      <p class="uses">用到：坑 8、<a href="../arch/three-highs-map.html#m-little">三高 · Little 定律</a></p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出 8、17、21 的关系和升级的精华。</summary><p>它们是半年一班车里的三个长期支持站点，17 包含 9～16、21 包含 18～20 的全部改动；升级拿到的是只有平台能做的改进（编译器检查、虚拟线程、GC、字符串布局），要还的是“平台治理”那条线的账（强封装、删模块、删旧参数）。</p><p class="from">← 开头 + ②</p></details>
+    <details><summary>2. 留在 JDK 8 靠第三方库补，痛在哪？</summary><p>库只能补 API 和语法糖，补不了要改编译器、JVM、类库内部的东西（穷尽检查、虚拟线程、新 GC、压缩字符串）；而且 Spring Boot 3 / 4 最低要 17，框架生态已经往前走了。</p><p class="from">← ②</p></details>
+    <details><summary>3. “编译通过、一跑就报 InaccessibleObjectException”，根源是 ④ 的哪一条？</summary><p>机制 4 强封装：为了让 JDK 能改自己的内部，9 起用模块划清公开和内部，16 默认拒绝反射访问内部，17 去掉了总开关。老库用反射改 JDK 私有字段，就撞上了。</p><p class="from">← ④ 机制 4 + 坑 2</p></details>
+    <details><summary>4. 预测：JDK 8 的服务，启动脚本里有 <code>-XX:+UseConcMarkSweepGC -XX:MaxPermSize=256m</code>，直接换 JDK 14 和 JDK 17 各会怎样？</summary><p>14：两个参数都只打“Ignoring option …”警告，JVM 照常启动，GC 悄悄变成默认的 G1。17：CMS 参数在 15 起已经不认识，JVM 报 Unrecognized VM option 起不来；MaxPermSize 仍只是警告。</p><p class="from">← 坑 1（按 HotSpot 源码里的过期表推出）</p></details>
+    <details><summary>5. 预测：<code>sealed interface Shape permits Circle, Square</code>，某处 switch 写了 <code>default -&gt; 0</code>。后来加了 <code>Triangle</code>，这个 switch 会怎样？</summary><p>照样编译通过，Triangle 走进 default 返回 0，悄悄算错。写了 default，编译器就认为你已经处理了“其他所有情况”，穷尽检查帮不上忙。这就是第二圈说“不写 default”的原因。</p><p class="from">← ④ 机制 3</p></details>
+    <details><summary>6. 预测：一个小工具在中文 Windows 上用 <code>new FileReader("a.txt")</code> 读 GBK 编码的文件，JDK 8 和 JDK 21 上结果一样吗？</summary><p>不一样。8 上默认编码跟系统走（GBK），能正常读；21 上默认是 UTF-8（18 起），读 GBK 文件会乱码。显式指定编码就两边一致。</p><p class="from">← ④ 表格“默认 UTF-8”+ 坑 5</p></details>
+    <details><summary>7. 预测：17 上用 <code>--enable-preview</code> 编译的 class，拿到 21 上运行会怎样？</summary><p>跑不起来。启用预览特性编出来的 class 文件带着版本标记，只能在编译它的那个 JDK 大版本上、并且同样加 <code>--enable-preview</code> 才能运行。</p><p class="from">← ④ 机制 1 预览 + 坑 6</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>档位：标准档的内容和体量；按你的要求<b>没有在本机运行任何代码或实验</b>，页面上没有“实测”数字，代码示例都标了“未在本机运行”。事实来源：各特性的 JEP（文中给了编号）；HotSpot <code>arguments.cpp</code>（jdk11u、jdk14u、jdk15u、jdk17u，核对 CMS、PrintGCDateStamps、UseCGroupMemoryLimitForHeap、MaxPermSize 的废弃和过期版本）；Adoptium 官网的 Temurin 支持年限表；Spring Boot 4.1.2 jar 的 class 文件版本（61，即 JDK 17）。</p>
+  <p>相关：<a href="../network/io-models.html">网络 IO 模型（虚拟线程）</a> · <a href="../arch/three-highs-map.html">三高知识地图</a> · <a href="../juc/aqs.html">AQS 源码（JDK 8 与 17 / 21 对照）</a> · <a href="../juc/threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../spring/spring-boot-startup.html">Spring Boot 启动流程</a></p>
+</footer>
+</main>
+<script>
+/*SIM-START*/
+// 升级检查器的规则。sev：0 起不来 1 编译不过 2 运行时报错 3 行为悄悄变了 4 警告或计划项
+var SEV = [
+  { name: 'JVM 起不来', role: 'bad' },
+  { name: '编译不过', role: 'bad' },
+  { name: '运行时报错', role: 'warn' },
+  { name: '行为悄悄变了', role: 'of' },
+  { name: '警告 / 计划项', role: 'other' }
+];
+// stages：按版本从早到晚；always：只要带着就算（启动参数、框架版本）
+var ITEMS = [
+  { id: 'gclog', label: '老 GC 日志参数（PrintGCDateStamps 等）', stages: [{ since: 9, sev: 0, msg: '9 起 GC 日志统一成 -Xlog，这些参数被删：Unrecognized VM option，JVM 直接退出' }], fix: '改成 -Xlog:gc*:file=gc.log:time,uptime' },
+  { id: 'cms', label: '-XX:+UseConcMarkSweepGC（CMS）', stages: [{ since: 14, sev: 4, msg: '14 删除 CMS，参数只打警告并被忽略，GC 悄悄变成 G1' }, { since: 15, sev: 0, msg: '15 起这个参数已不认识：Unrecognized VM option，JVM 起不来' }], fix: '删掉，用默认 G1；停顿要求高再试 ZGC' },
+  { id: 'cgroup', label: '-XX:+UseCGroupMemoryLimitForHeap', stages: [{ since: 11, sev: 0, msg: '8u131 的实验参数，11 里已删：JVM 起不来' }], fix: '删掉；10 起（8u191 起）默认读容器限制，用 -XX:MaxRAMPercentage' },
+  { id: 'perm', label: '-XX:MaxPermSize / PermSize', always: true, stages: [{ since: 8, sev: 4, msg: '永久代 8 就没了，只打一行 Ignoring option 警告' }], fix: '删掉；要限制就用 MaxMetaspaceSize' },
+  { id: 'internal', label: 'sun.misc.BASE64Encoder 等 JDK 内部类', stages: [{ since: 9, sev: 1, msg: '9 起这些内部类被删除或封装进模块，编译不过' }], fix: '换 java.util.Base64 等公开 API；先用 jdeps --jdk-internals 扫一遍' },
+  { id: 'jaxb', label: 'JAXB、JAX-WS、javax.annotation', stages: [{ since: 11, sev: 1, msg: '11 把 Java EE 模块移出 JDK（JEP 320）：编译不过，或运行时 ClassNotFoundException' }], fix: '加对应的 Maven 依赖，比如 jakarta.xml.bind-api 加一个实现' },
+  { id: 'reflect', label: '老 Lombok / cglib / Mockito，或反射改 JDK 私有字段', stages: [{ since: 9, sev: 4, msg: '9～15 只打 illegal reflective access 警告' }, { since: 16, sev: 2, msg: '16 默认强封装、17 去掉总开关：InaccessibleObjectException' }], fix: '升级这些库；过渡期按包 --add-opens' },
+  { id: 'nashorn', label: '用 ScriptEngine 跑 JavaScript（Nashorn）', stages: [{ since: 11, sev: 4, msg: '11 起 Nashorn 标记弃用，会打警告' }, { since: 15, sev: 2, msg: '15 删除 Nashorn：getEngineByName("nashorn") 返回 null，随后 NPE' }], fix: '引独立的 nashorn-core，或换 GraalJS' },
+  { id: 'secmgr', label: '调用 System.setSecurityManager', stages: [{ since: 17, sev: 4, msg: '17 起 SecurityManager 弃用，调用时打警告' }, { since: 18, sev: 2, msg: '18 起默认不允许：setSecurityManager 抛 UnsupportedOperationException' }], fix: '去掉；过渡期加 -Djava.security.manager=allow' },
+  { id: 'charset', label: '读写文件没写编码，跑在中文 Windows 上', stages: [{ since: 18, sev: 3, msg: '18 起默认编码统一为 UTF-8，以前按 GBK 读写的文件会乱码' }], fix: '显式写 StandardCharsets.UTF_8；过渡期 -Dfile.encoding=COMPAT' },
+  { id: 'locale', label: '依赖日期 / 数字格式化的固定输出', stages: [{ since: 9, sev: 3, msg: '9 起默认本地化数据换成 CLDR，部分语言的格式会变' }], fix: '写死 pattern 和 Locale；过渡期 -Djava.locale.providers=COMPAT,CLDR' },
+  { id: 'agent', label: 'Arthas 临时 attach / APM 动态加载 agent', stages: [{ since: 21, sev: 4, msg: '21 起动态加载 agent 会打警告，将来默认禁止（JEP 451）' }], fix: 'APM 用 -javaagent；要临时 attach 的加 -XX:+EnableDynamicAgentLoading' },
+  { id: 'vt', label: '打算开虚拟线程，代码里有 synchronized 包着 IO', stages: [{ since: 21, sev: 3, msg: '21 里在 synchronized 中阻塞会钉住载体线程，高峰时可能整体卡住（24 才解决）' }], fix: '换 ReentrantLock，用 JFR 的 jdk.VirtualThreadPinned 找钉住点' },
+  { id: 'boot2', label: 'Spring Boot 2.x', always: true, stages: [{ since: 8, sev: 4, msg: 'Boot 2.x 开源支持已结束；要上 Boot 3 / 4（最低 JDK 17），得把 javax.* 改成 jakarta.*' }], fix: '先升到 2.7 最新版清掉弃用，再按官方迁移指南升 3' }
+];
+function check(from, to, picked) {
+  var out = [];
+  ITEMS.forEach(function (it) {
+    if (picked.indexOf(it.id) < 0) return;
+    var hit = null;
+    it.stages.forEach(function (st) {
+      var applies = to >= st.since && (it.always || from < st.since);
+      if (applies) hit = st;               // 取最晚生效的那一档
+    });
+    if (hit) out.push({ id: it.id, label: it.label, since: hit.since, sev: hit.sev, msg: hit.msg, fix: it.fix });
+  });
+  out.sort(function (a, b) { return a.sev - b.sev || a.since - b.since; });
+  var counts = [0, 0, 0, 0, 0];
+  out.forEach(function (o) { counts[o.sev]++; });
+  return { issues: out, counts: counts };
+}
+// 不重新编译、直接拿老 jar 换 JDK 跑时，最先碰到的问题（编译类问题这时不出现）
+function firstAtRun(res) {
+  for (var s = 0; s < 5; s++) { if (s === 1) continue; if (res.counts[s]) return s; }
+  return -1;
+}
+/*SIM-END*/
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { from: 8, to: 17, picked: [] };
+  var PRESETS = [
+    { name: '典型老服务', sub: '8 → 17，老启动脚本', set: { from: 8, to: 17, picked: ['gclog', 'cms', 'perm', 'jaxb', 'reflect', 'boot2'] },
+      q: '不重新编译，直接拿老 jar 和老启动脚本在 JDK 17 上跑，最先碰到的是哪种问题？',
+      opts: ['JVM 起不来', '启动后运行时报错', '只有警告，能正常跑'],
+      answer: function (r) { var f = firstAtRun(r); return f === 0 ? 0 : (f === 2 ? 1 : 2); } },
+    { name: '已经在 17', sub: '17 → 21', set: { from: 17, to: 21, picked: ['charset', 'agent', 'vt', 'secmgr'] },
+      q: '从 17 升到 21，这几样里会不会有东西直接报错？',
+      opts: ['不会，只有警告和行为变化', '会，JVM 起不来', '会，运行时报错'],
+      answer: function (r) { return r.counts[0] ? 1 : (r.counts[2] ? 2 : 0); } },
+    { name: 'Windows 小工具', sub: '8 → 21，重新编译', set: { from: 8, to: 21, picked: ['internal', 'charset', 'locale'] },
+      q: '在 JDK 21 上重新编译这个小工具，会怎样？',
+      opts: ['编译不过', '能编译能跑，但输出可能变了', '完全没变化'],
+      answer: function (r) { return r.counts[1] ? 0 : ((r.counts[2] || r.counts[3]) ? 1 : 2); } }
+  ];
+  var cur = -1, guess = -1, ran = false;
+
+  var box = $('c-items');
+  ITEMS.forEach(function (it) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'tg'; b.dataset.k = it.id; b.textContent = it.label;
+    b.addEventListener('click', function () {
+      var i = state.picked.indexOf(it.id);
+      if (i < 0) state.picked.push(it.id); else state.picked.splice(i, 1);
+      changed();
+    });
+    box.appendChild(b);
+  });
+  function sync() {
+    [].forEach.call($('c-from').querySelectorAll('button'), function (b) { b.setAttribute('aria-pressed', String(+b.dataset.v === state.from)); });
+    [].forEach.call($('c-to').querySelectorAll('button'), function (b) { b.setAttribute('aria-pressed', String(+b.dataset.v === state.to)); });
+    [].forEach.call(box.querySelectorAll('.tg'), function (b) { b.setAttribute('aria-pressed', String(state.picked.indexOf(b.dataset.k) >= 0)); });
+  }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function renderPresets() {
+    var p = $('lab-presets'); p.innerHTML = '';
+    PRESETS.forEach(function (pr, i) {
+      var b = document.createElement('button'); b.type = 'button';
+      b.setAttribute('aria-pressed', String(i === cur));
+      b.innerHTML = '<b>' + pr.name + '</b><span>' + pr.sub + '</span>';
+      b.addEventListener('click', function () { pick(i); });
+      p.appendChild(b);
+    });
+  }
+  function renderGuess(r) {
+    var g = $('lab-guess');
+    if (cur < 0) { g.hidden = true; return; }
+    g.hidden = false;
+    var p = PRESETS[cur], ans = ran ? p.answer(r) : -1;
+    var h = '<p><b>先猜：</b>' + p.q + '</p><div class="opts">';
+    p.opts.forEach(function (o, i) {
+      var cls = ran ? (i === ans ? 'right' : (i === guess ? 'wrong' : '')) : '';
+      h += '<button type="button" data-i="' + i + '" class="' + cls + '" aria-pressed="' + (i === guess) + '">' + o + '</button>';
+    });
+    h += '</div>';
+    if (ran && guess >= 0) {
+      var top = r.issues[0];
+      h += '<div class="res" data-role="' + (guess === ans ? 'done' : 'bad') + '">' + (guess === ans ? '猜对了。' : '没猜中，答案是“' + p.opts[ans] + '”。') +
+        (top ? ' 最严重的一条：' + esc(top.label) + ' —— ' + esc(top.msg) + '。' : '') + '</div>';
+    }
+    g.innerHTML = h;
+    [].forEach.call(g.querySelectorAll('.opts button'), function (b) {
+      b.addEventListener('click', function () { guess = +b.dataset.i; ran = false; renderGuess(r); $('lab-tip').textContent = '已选。点“检查”看结果。'; });
+    });
+  }
+  function render() {
+    var r = check(state.from, state.to, state.picked);
+    var t = '';
+    for (var s = 0; s < 5; s++) t += '<div class="tile" data-role="' + (r.counts[s] ? SEV[s].role : 'other') + '"><small>' + SEV[s].name + '</small><b>' + r.counts[s] + '</b><span>项</span></div>';
+    $('lab-tiles').innerHTML = t;
+    var res = $('lab-res');
+    if (state.to <= state.from) {
+      res.setAttribute('data-role', 'other'); res.innerHTML = '要升到的版本得比现在的高。';
+    } else if (!state.picked.length) {
+      res.setAttribute('data-role', 'done'); res.innerHTML = '<b>' + state.from + ' → ' + state.to + '：</b>没勾任何一项。还是建议先跑 <code>jdeps --jdk-internals</code> 和 <code>jdeprscan</code>，看看依赖里藏着什么。';
+    } else if (!r.issues.length) {
+      res.setAttribute('data-role', 'done'); res.innerHTML = '<b>' + state.from + ' → ' + state.to + '：</b>勾选的几项在这一段升级里都不会出问题（它们的变化发生在更早或更晚的版本）。';
+    } else {
+      var worst = r.issues[0].sev;
+      res.setAttribute('data-role', SEV[worst].role === 'other' ? 'of' : SEV[worst].role);
+      var h = '<b>' + state.from + ' → ' + state.to + '：' + r.issues.length + ' 项要处理，最严重的是“' + SEV[worst].name + '”。</b><ul>';
+      r.issues.forEach(function (o) {
+        h += '<li><b>[' + SEV[o.sev].name + ' · ' + o.since + ' 起]</b> ' + esc(o.label) + '：' + esc(o.msg) + '。<br><span style="color:var(--good)">做法：</span>' + esc(o.fix) + '</li>';
+      });
+      res.innerHTML = h + '</ul>';
+    }
+    return r;
+  }
+  function pick(i) {
+    cur = i; guess = -1; ran = false;
+    var s = PRESETS[i].set; state.from = s.from; state.to = s.to; state.picked = s.picked.slice();
+    sync(); renderPresets(); var r = check(state.from, state.to, state.picked); renderGuess(r);
+    $('lab-tiles').innerHTML = ''; $('lab-res').setAttribute('data-role', 'other'); $('lab-res').innerHTML = '先猜，再点“检查”。';
+    $('lab-tip').textContent = '先在上面选一个答案，再点“检查”。';
+  }
+  function changed() { cur = -1; ran = false; renderPresets(); renderGuess(null); sync(); render(); }
+  [].forEach.call($('c-from').querySelectorAll('button'), function (b) { b.addEventListener('click', function () { state.from = +b.dataset.v; changed(); }); });
+  [].forEach.call($('c-to').querySelectorAll('button'), function (b) { b.addEventListener('click', function () { state.to = +b.dataset.v; changed(); }); });
+  $('lab-run').addEventListener('click', function () {
+    if (cur >= 0 && guess < 0) { $('lab-tip').textContent = '先在上面选一个答案。'; return; }
+    ran = true; var r = render(); renderGuess(r);
+    $('lab-tip').textContent = '可以继续勾选、换版本，结果会跟着变。';
+  });
+  state.picked = ['gclog', 'jaxb', 'reflect', 'boot2'];
+  renderPresets(); sync(); render(); $('lab-guess').hidden = true;
+})();
+</script>
+
+<script id="tocx-js">
+(function () {
+  var bar = document.querySelector('nav.topbar .tb-in');
+  if (!bar || bar.querySelector('.tocx-steps, .tocx-dd')) return;
+  var route = document.querySelector('main nav.route');
+  var items = [], btn = null, panel = null;
+
+  function margin(t) {
+    try { if (getComputedStyle(t).scrollMarginTop === '0px') t.style.scrollMarginTop = '64px'; } catch (e) {}
+  }
+  if (route) {
+    var nav = document.createElement('nav');
+    nav.className = 'tocx-steps';
+    nav.setAttribute('aria-label', '六步跳转');
+    [].forEach.call(route.querySelectorAll('a[href^="#"]'), function (r) {
+      var id = r.getAttribute('href').slice(1), t = document.getElementById(id);
+      if (!t) return;
+      var b = r.querySelector('b'), num = b ? b.textContent.trim() : '';
+      var label = r.textContent.replace(num, '').trim();
+      var a = document.createElement('a');
+      a.href = '#' + id; a.title = (num + ' ' + label).trim();
+      a.innerHTML = '<b></b><span></span>';
+      a.firstChild.textContent = num; a.lastChild.textContent = label;
+      nav.appendChild(a); items.push({ a: a, t: t }); margin(t);
+    });
+    if (!items.length) return;
+    bar.appendChild(nav);
+    document.documentElement.classList.add('tocx-on');
+  } else {
+    var hs = document.querySelectorAll('main h2');
+    if (hs.length < 3) return;
+    var dd = document.createElement('div');
+    dd.className = 'tocx-dd';
+    dd.innerHTML = '<button type="button" class="tocx-btn" aria-expanded="false" aria-controls="tocx-panel">目录 ▾</button><div class="tocx-panel" id="tocx-panel" hidden></div>';
+    btn = dd.firstChild; panel = dd.lastChild;
+    var used = {};
+    [].forEach.call(hs, function (h, i) {
+      var t = h.closest('section[id]');
+      if (!t || used[t.id]) t = h;
+      if (!t.id) t.id = 'tocx-' + (i + 1);
+      used[t.id] = 1;
+      var c = h.cloneNode(true);
+      [].forEach.call(c.querySelectorAll('small, .sn'), function (x) { x.parentNode.removeChild(x); });
+      var a = document.createElement('a');
+      a.href = '#' + t.id;
+      a.innerHTML = '<i></i><span></span>';
+      a.firstChild.textContent = (i < 9 ? '0' : '') + (i + 1);
+      a.lastChild.textContent = c.textContent.replace(/\s+/g, ' ').trim();
+      panel.appendChild(a); items.push({ a: a, t: t }); margin(t);
+    });
+    bar.appendChild(dd);
+    function open(v) {
+      panel.hidden = !v; btn.setAttribute('aria-expanded', String(v));
+      if (v && cur >= 0) { var a = items[cur].a; panel.scrollTop = a.offsetTop - panel.clientHeight / 2; }
+    }
+    btn.addEventListener('click', function (e) { e.stopPropagation(); open(panel.hidden); });
+    panel.addEventListener('click', function (e) { if (e.target.closest('a')) open(false); });
+    document.addEventListener('click', function (e) { if (!panel.hidden && !dd.contains(e.target)) open(false); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !panel.hidden) { open(false); btn.focus(); } });
+  }
+
+  var cur = -1, ticking = false, top = bar.parentNode;
+  function spy() {
+    ticking = false;
+    var y = top.getBoundingClientRect().bottom + 24, k = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].t.getBoundingClientRect().top <= y) k = i; else break;
+    }
+    var de = document.documentElement;
+    if (k >= 0 && window.innerHeight + window.pageYOffset >= de.scrollHeight - 4) k = items.length - 1;
+    if (k === cur) return;
+    if (cur >= 0) { items[cur].a.classList.remove('on'); items[cur].a.removeAttribute('aria-current'); }
+    cur = k;
+    if (k < 0) return;
+    var a = items[k].a;
+    a.classList.add('on'); a.setAttribute('aria-current', 'true');
+    if (route) {
+      var n = a.parentNode, nr = n.getBoundingClientRect(), ar = a.getBoundingClientRect();
+      if (ar.left < nr.left) n.scrollLeft -= nr.left - ar.left + 8;
+      else if (ar.right > nr.right) n.scrollLeft += ar.right - nr.right + 8;
+    }
+  }
+  window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(spy); } }, { passive: true });
+  window.addEventListener('resize', spy);
+  spy();
+})();
+</script>
+</body>
+</html>
