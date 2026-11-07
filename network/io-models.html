@@ -1,0 +1,1231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>网络 IO 模型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a basic-theory topic (① 要解决的问题 ② 朴素做法 ③ 几种思路 ④ 关键洞察 ⑤ 手推一遍 ⑥ 边界和变体 ↺). Colors: thread-per-connection BIO grey (neutral), NIO / Reactor teal (bk), kernel / epoll purple (cg), virtual threads blue (pd), Tomcat worker threads and business code brown (g2), highlights amber (of), blocked red, right green. Interactive: one stepper walking a keep-alive connection through Tomcat's NIO connector (⑤). Numbers come from IoServer/IoClient run on JDK 17 and 21 on a 2-vCPU ARM VM. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --rn:#A8327A; --rn-tint:#F7E1EE;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --rn:#F08BC6; --rn-tint:#3D1A30;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --rn:#F08BC6; --rn-tint:#3D1A30;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="rn"]{--rc:var(--rn);--rt:var(--rn-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:660px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-rn{font-size:12px;font-weight:700;fill:var(--rn)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.halo{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+.halo-c{paint-order:stroke;stroke:var(--code-bg);stroke-width:4px;stroke-linejoin:round}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-rn{fill:var(--rn-tint);stroke:var(--rn);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.b-dash{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:5 4}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)} .f-rn{fill:var(--rn)}
+.f-card{fill:var(--card)} .f-code{fill:var(--code-bg)} .f-oft{fill:var(--of-tint)} .f-pdt{fill:var(--pd-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-g2t{fill:var(--g2-tint)} .f-rnt{fill:var(--rn-tint)} .f-neut{fill:var(--neutral-tint)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-life{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:2 5}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-rn{stroke:var(--rn);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-rnd{stroke:var(--rn);stroke-width:2;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev b{color:var(--bad)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+.hl{background:var(--of-tint)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+pre.console .r{color:#FF9B98}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td, .t tr.hl th{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.design.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:20px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way svg{display:block;width:100%;height:auto}
+.way pre{padding:10px 12px;background:var(--code-bg);border-radius:10px;font-size:12px}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:start}
+.pains li::before{content:"✕";color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.pains code{overflow-wrap:anywhere}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b{color:var(--rc)}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+.mech-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.mech-h .sn{font-size:20px}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:5.4em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--muted)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:640px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl.span{grid-column:1 / -1}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:10px;border-radius:3px;display:inline-block;background:var(--rc);border:1.5px solid var(--rc)}
+.lg i.t{background:var(--rt)}
+.lg i.mk{width:3px;height:14px;border-radius:1px;border:0}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+.lab-res ul{margin:6px 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:3px}
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.dp svg{display:block;width:100%;height:auto}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metaphor{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ex,.design.three{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+  .ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .facts,.presets,.ctl-grid{grid-template-columns:1fr}
+  .metaphor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+}
+.models{display:flex;flex-direction:column;gap:6px}
+.st-svg{display:block;width:100%;min-width:640px;height:auto}
+#tc g.ph{transition:opacity .25s}
+#tc .dim{opacity:.22}
+#tc .hot{opacity:1}
+#tc .arw{display:none}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-cg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-cg" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>网络</span><span aria-hidden="true">/</span><span class="tb-here">网络 IO 模型</span></div></nav>
+
+<main>
+
+<header class="hero">
+  <p class="kicker">BIO · NIO · SELECTOR · EPOLL · REACTOR · NETTY · TOMCAT NIO CONNECTOR · 虚拟线程</p>
+  <h1>一万个连接，要几个线程</h1>
+  <p class="lead">一个连接的大部分时间都在等：等用户点下一下，等下一个请求，等数据库回话。<b>IO 模型决定的是“等”这件事由谁来做：BIO 让线程守着连接等；NIO 把等交给内核的 epoll，线程只处理已经有数据的连接；虚拟线程让你照样写阻塞代码，由 JVM 在底下换成 epoll。</b>所以连接数可以是线程数的几十倍。代价是事件循环里绝不能阻塞，业务里的阻塞调用最后还是得有线程去等。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>要解决的问题</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>朴素做法</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>几种思路</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>关键洞察</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>手推一遍</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>边界和变体</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>接着 <a href="../arch/three-highs-map.html">三高知识地图</a> 往下挖：那页算的是“同时在忙的线程 = QPS × RT”，这页回答线程为什么会被“等”占住、Tomcat 为什么能开 8192 个连接却只有 200 个线程、Netty 和虚拟线程各解决了什么。select / poll / epoll 本身怎么工作，<a href="../redis/redis-threading-io.html">Redis 线程模型那页</a>已经讲过，这里一句带过。标<span class="tag-real">实测</span>的数字来自 ⑤ 的程序，在 2 核 ARM 云主机上用 JDK 17 跑（虚拟线程那组用 JDK 21）。</span></p>
+</header>
+
+<!-- ① -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>要解决的问题：连接很多，但大多在发呆</h2>
+    <p class="lead">浏览器的 keep-alive、App 的长连接、网关到后端的连接池、调下游的 HTTP 连接，都会让一台服务器同时挂着成千上万个连接。它们绝大部分时间没有数据。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 220" role="img" aria-label="一万个连接里，某一瞬间真正在收发数据的只有几个，其余都在等。">
+        <g class="f-neut" stroke="var(--line-strong)" stroke-width="1">
+          <circle cx="30" cy="30" r="6"/><circle cx="50" cy="30" r="6"/><circle cx="70" cy="30" r="6"/><circle cx="90" cy="30" r="6"/><circle cx="110" cy="30" r="6"/><circle cx="130" cy="30" r="6"/><circle cx="150" cy="30" r="6"/><circle cx="170" cy="30" r="6"/><circle cx="190" cy="30" r="6"/><circle cx="210" cy="30" r="6"/><circle cx="230" cy="30" r="6"/><circle cx="250" cy="30" r="6"/><circle cx="270" cy="30" r="6"/><circle cx="290" cy="30" r="6"/><circle cx="310" cy="30" r="6"/><circle cx="330" cy="30" r="6"/><circle cx="350" cy="30" r="6"/><circle cx="370" cy="30" r="6"/><circle cx="390" cy="30" r="6"/><circle cx="410" cy="30" r="6"/>
+          <circle cx="30" cy="50" r="6"/><circle cx="50" cy="50" r="6"/><circle cx="70" cy="50" r="6"/><circle cx="90" cy="50" r="6"/><circle cx="110" cy="50" r="6"/><circle cx="130" cy="50" r="6"/><circle cx="150" cy="50" r="6"/><circle cx="170" cy="50" r="6"/><circle cx="190" cy="50" r="6"/><circle cx="210" cy="50" r="6"/><circle cx="230" cy="50" r="6"/><circle cx="250" cy="50" r="6"/><circle cx="270" cy="50" r="6"/><circle cx="290" cy="50" r="6"/><circle cx="310" cy="50" r="6"/><circle cx="330" cy="50" r="6"/><circle cx="350" cy="50" r="6"/><circle cx="370" cy="50" r="6"/><circle cx="390" cy="50" r="6"/><circle cx="410" cy="50" r="6"/>
+          <circle cx="30" cy="70" r="6"/><circle cx="50" cy="70" r="6"/><circle cx="70" cy="70" r="6"/><circle cx="90" cy="70" r="6"/><circle cx="110" cy="70" r="6"/><circle cx="130" cy="70" r="6"/><circle cx="150" cy="70" r="6"/><circle cx="170" cy="70" r="6"/><circle cx="190" cy="70" r="6"/><circle cx="210" cy="70" r="6"/><circle cx="230" cy="70" r="6"/><circle cx="250" cy="70" r="6"/><circle cx="270" cy="70" r="6"/><circle cx="290" cy="70" r="6"/><circle cx="310" cy="70" r="6"/><circle cx="330" cy="70" r="6"/><circle cx="350" cy="70" r="6"/><circle cx="370" cy="70" r="6"/><circle cx="390" cy="70" r="6"/><circle cx="410" cy="70" r="6"/>
+          <circle cx="30" cy="90" r="6"/><circle cx="50" cy="90" r="6"/><circle cx="70" cy="90" r="6"/><circle cx="90" cy="90" r="6"/><circle cx="110" cy="90" r="6"/><circle cx="130" cy="90" r="6"/><circle cx="150" cy="90" r="6"/><circle cx="170" cy="90" r="6"/><circle cx="190" cy="90" r="6"/><circle cx="210" cy="90" r="6"/><circle cx="230" cy="90" r="6"/><circle cx="250" cy="90" r="6"/><circle cx="270" cy="90" r="6"/><circle cx="290" cy="90" r="6"/><circle cx="310" cy="90" r="6"/><circle cx="330" cy="90" r="6"/><circle cx="350" cy="90" r="6"/><circle cx="370" cy="90" r="6"/><circle cx="390" cy="90" r="6"/><circle cx="410" cy="90" r="6"/>
+          <circle cx="30" cy="110" r="6"/><circle cx="50" cy="110" r="6"/><circle cx="70" cy="110" r="6"/><circle cx="90" cy="110" r="6"/><circle cx="110" cy="110" r="6"/><circle cx="130" cy="110" r="6"/><circle cx="150" cy="110" r="6"/><circle cx="170" cy="110" r="6"/><circle cx="190" cy="110" r="6"/><circle cx="210" cy="110" r="6"/><circle cx="230" cy="110" r="6"/><circle cx="250" cy="110" r="6"/><circle cx="270" cy="110" r="6"/><circle cx="290" cy="110" r="6"/><circle cx="310" cy="110" r="6"/><circle cx="330" cy="110" r="6"/><circle cx="350" cy="110" r="6"/><circle cx="370" cy="110" r="6"/><circle cx="390" cy="110" r="6"/><circle cx="410" cy="110" r="6"/>
+          <circle cx="30" cy="130" r="6"/><circle cx="50" cy="130" r="6"/><circle cx="70" cy="130" r="6"/><circle cx="90" cy="130" r="6"/><circle cx="110" cy="130" r="6"/><circle cx="130" cy="130" r="6"/><circle cx="150" cy="130" r="6"/><circle cx="170" cy="130" r="6"/><circle cx="190" cy="130" r="6"/><circle cx="210" cy="130" r="6"/><circle cx="230" cy="130" r="6"/><circle cx="250" cy="130" r="6"/><circle cx="270" cy="130" r="6"/><circle cx="290" cy="130" r="6"/><circle cx="310" cy="130" r="6"/><circle cx="330" cy="130" r="6"/><circle cx="350" cy="130" r="6"/><circle cx="370" cy="130" r="6"/><circle cx="390" cy="130" r="6"/><circle cx="410" cy="130" r="6"/>
+          <circle cx="30" cy="150" r="6"/><circle cx="50" cy="150" r="6"/><circle cx="70" cy="150" r="6"/><circle cx="90" cy="150" r="6"/><circle cx="110" cy="150" r="6"/><circle cx="130" cy="150" r="6"/><circle cx="150" cy="150" r="6"/><circle cx="170" cy="150" r="6"/><circle cx="190" cy="150" r="6"/><circle cx="210" cy="150" r="6"/><circle cx="230" cy="150" r="6"/><circle cx="250" cy="150" r="6"/><circle cx="270" cy="150" r="6"/><circle cx="290" cy="150" r="6"/><circle cx="310" cy="150" r="6"/><circle cx="330" cy="150" r="6"/><circle cx="350" cy="150" r="6"/><circle cx="370" cy="150" r="6"/><circle cx="390" cy="150" r="6"/><circle cx="410" cy="150" r="6"/>
+          <circle cx="30" cy="170" r="6"/><circle cx="50" cy="170" r="6"/><circle cx="70" cy="170" r="6"/><circle cx="90" cy="170" r="6"/><circle cx="110" cy="170" r="6"/><circle cx="130" cy="170" r="6"/><circle cx="150" cy="170" r="6"/><circle cx="170" cy="170" r="6"/><circle cx="190" cy="170" r="6"/><circle cx="210" cy="170" r="6"/><circle cx="230" cy="170" r="6"/><circle cx="250" cy="170" r="6"/><circle cx="270" cy="170" r="6"/><circle cx="290" cy="170" r="6"/><circle cx="310" cy="170" r="6"/><circle cx="330" cy="170" r="6"/><circle cx="350" cy="170" r="6"/><circle cx="370" cy="170" r="6"/><circle cx="390" cy="170" r="6"/><circle cx="410" cy="170" r="6"/>
+        </g>
+        <circle cx="130" cy="50" r="6" class="f-bk"/><circle cx="310" cy="130" r="6" class="f-bk"/><circle cx="70" cy="150" r="6" class="f-bk"/>
+        <text x="20" y="204" class="t-m">160 个点，每个代表约 60 个连接；亮的 3 个：这一瞬间有数据的</text>
+        <text x="470" y="44" class="t-h">一台服务器，10000 个连接</text>
+        <text x="470" y="74" class="t-s">这一毫秒真正在收发数据的：几十个</text>
+        <text x="470" y="98" class="t-s">其余都在等：用户还没点、推送还没来、</text>
+        <text x="470" y="118" class="t-s">keep-alive 等下一个请求</text>
+        <text x="470" y="156" class="t-of">要解决的：让“等”变便宜，</text>
+        <text x="470" y="178" class="t-of">资源只花在有数据的连接上</text>
+      </svg>
+    </div>
+    <figcaption>这就是经典的 C10K 问题（一台机器扛一万个并发连接）。今天的网关、推送、IM 服务要扛的是几十万。</figcaption>
+  </figure>
+</section>
+
+<!-- ② -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>朴素做法：一个连接配一个线程（BIO）</h2>
+    <p class="lead">最好写的服务端：<code>accept()</code> 一个连接，就开一个线程，线程里 <code>readLine()</code> 读请求、写响应。没数据的时候，线程就停在 <code>readLine()</code> 里睡着。</p>
+  </div>
+  <div class="two">
+    <div class="codebox">
+      <div class="code-bar"><b>BIO：一连接一线程</b><span>⑤ 的 IoServer bio 模式</span></div>
+<pre><code>ServerSocket ss = new ServerSocket(port);
+while (true) {
+    Socket s = ss.accept();          <span class="cm">// 来一个连接</span>
+    new Thread(() -&gt; serve(s)).start();   <span class="cm">// 开一个线程守着它</span>
+}
+<span class="cm">// serve：while ((line = in.readLine()) != null) { 回 pong }</span>
+<span class="cm">//        没数据时，线程就停在 readLine() 里</span></code></pre>
+    </div>
+    <div class="facts" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="fact" data-role="bad"><h4>10007 个线程</h4><p>挂 1 万个连接，JVM 线程数就是 1 万出头。<span class="tag-real">实测</span></p></div>
+      <div class="fact" data-role="bad"><h4>RSS 1.0～1.3 GB</h4><p>两次实测分别是 984 MB 和 1347 MB，NIO 版只要 58 MB。<span class="tag-real">实测</span></p></div>
+      <div class="fact" data-role="bad"><h4>开连接慢 4 倍</h4><p>打开 1 万个连接 2.6 秒，NIO 版 0.7 秒，多出的时间花在建线程上。<span class="tag-real">实测</span></p></div>
+      <div class="fact" data-role="bad"><h4>换成线程池也不行</h4><p>池子 200 个线程，第 201 个连接就要排队，哪怕前 200 个连接全在发呆。</p></div>
+    </div>
+  </div>
+  <div class="essence">
+    <div class="big">疼在哪</div>
+    <p>线程被<b>空闲的连接</b>占着。线程是贵东西（栈、内核调度、切换），连接本身却很便宜（一个文件描述符加几 KB 缓冲）。</p>
+    <p>缺的那块：<b>让一个线程能同时“等”很多连接，谁有数据就处理谁。</b>这就是 IO 多路复用。</p>
+  </div>
+  <div class="note-box"><b>典型误用</b><span>Tomcat 线程不够就把 <code>server.tomcat.threads.max</code> 开到几千。Tomcat 的 NIO 连接器里，空闲的 keep-alive 连接本来就不占工作线程（⑤ 手推），线程不够通常是请求在“等下游”，开大线程只是把压力推给数据库和下游。</span></div>
+</section>
+
+<!-- ③ -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>几种思路：谁来等</h2>
+    <p class="lead">Java 后端会碰到的写法有五种。区别只有一个：连接没数据时，是线程在等，还是内核在等。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>写法</th><th>谁在等</th><th>业务代码怎么写</th><th>典型代表</th><th>代价</th></tr></thead>
+      <tbody>
+        <tr><th>BIO + 每连接一线程</th><td>平台线程</td><td>阻塞、顺序写</td><td>早期 Tomcat 的 BIO 连接器（8.5 起已删除）</td><td>连接多了线程爆炸</td></tr>
+        <tr><th>NIO 多路复用（Reactor）</th><td>内核 epoll，一个线程盯一大批</td><td>事件回调，不许阻塞</td><td>Netty、Tomcat 的 NIO 连接器、Redis</td><td>代码难写；事件循环里一阻塞，所有连接一起等</td></tr>
+        <tr><th>NIO 收连接 + 线程池跑业务</th><td>连接空闲时内核等；请求处理时工作线程等</td><td>阻塞、顺序写</td><td><b>Tomcat + Spring MVC 默认就是这种</b></td><td>在途请求数仍受线程数限制</td></tr>
+        <tr><th>响应式（全程非阻塞）</th><td>内核</td><td>Mono / Flux 链式写</td><td>Spring WebFlux、Spring Cloud Gateway</td><td>数据库、SDK 都得换非阻塞版（R2DBC 等），调试难</td></tr>
+        <tr><th>虚拟线程</th><td>JVM 把阻塞的 socket 交给 epoll，虚拟线程挂起</td><td>阻塞、顺序写</td><td>JDK 21 + Spring Boot 3.2 起的 <code>spring.threads.virtual.enabled</code></td><td>下游仍要限流；JDK 21 有钉住（pinning）问题</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="pick-line">选择规则：普通业务服务用 <b>Tomcat + Spring MVC</b>（NIO 收连接、线程池跑业务），线程不够先查是不是在等下游；网关、推送、IM 这种连接多、业务轻的用 <b>Netty / WebFlux</b>；想要阻塞写法又要高并发，看 <b>虚拟线程</b>。本页先讲透多路复用，再看这三种各自怎么用它。</p>
+</section>
+
+<!-- ④ -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>关键洞察：一次读分两段，线程只该花在第二段</h2>
+  </div>
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="other"><h4>socket 就是一个 fd</h4><p>每个 TCP 连接在内核里有一个接收缓冲区，在进程里是一个文件描述符（fd）。网卡收到的数据先进内核缓冲区，<code>read()</code> 再把它拷到你的程序里。</p></div>
+      <div class="fact" data-role="other"><h4>TCP 是字节流</h4><p>TCP 只保证字节按顺序到，不保证“一次 read 正好一个请求”。怎么切出一条条消息是应用层的事（⑥ 坑 6）。</p></div>
+      <div class="fact" data-role="other"><h4>select / poll / epoll</h4><p>都能让一个线程同时等很多 fd；epoll 事先登记一次，之后只把有数据的 fd 交回来。细节见 <a href="../redis/redis-threading-io.html">Redis 线程模型</a>。</p></div>
+      <div class="fact" data-role="other"><h4>平台线程 vs 虚拟线程</h4><p>平台线程一对一绑一个操作系统线程；虚拟线程是 JVM 调度的轻量线程，阻塞时把自己从载体线程上卸下来。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="m-phase">
+    <h3><span class="sn">洞察 1</span>一次 read 有两段，五种 IO 模型的区别全在“谁在哪段被卡住”</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 290" role="img" aria-label="五种 IO 模型：阻塞 IO 两段都卡线程；非阻塞 IO 第一段反复轮询；IO 多路复用第一段由一个线程等很多连接；信号驱动第一段不卡；异步 IO 两段都不卡，内核拷完再通知。">
+          <text x="10" y="24" class="t-m">模型</text>
+          <text x="410" y="24" text-anchor="middle" class="t-b">第 1 段：等数据到内核</text>
+          <text x="745" y="24" text-anchor="middle" class="t-b">第 2 段：拷到用户空间</text>
+          <line x1="605" y1="34" x2="605" y2="268" class="e-dash"/>
+          <!-- 1 阻塞 -->
+          <text x="10" y="62" class="t-b">阻塞 IO</text><text x="10" y="78" class="t-xs">BIO 的 read()</text>
+          <rect x="220" y="46" width="380" height="34" rx="6" class="b-bad"/><text x="410" y="68" text-anchor="middle" class="t-s">线程睡着等，什么也干不了</text>
+          <rect x="610" y="46" width="270" height="34" rx="6" class="b-bad"/><text x="745" y="68" text-anchor="middle" class="t-s">线程等内核拷完</text>
+          <!-- 2 非阻塞 -->
+          <text x="10" y="112" class="t-b">非阻塞 IO</text><text x="10" y="128" class="t-xs">O_NONBLOCK 后反复 read</text>
+          <rect x="220" y="96" width="40" height="34" rx="6" class="b-of"/><rect x="284" y="96" width="40" height="34" rx="6" class="b-of"/><rect x="348" y="96" width="40" height="34" rx="6" class="b-of"/><rect x="412" y="96" width="40" height="34" rx="6" class="b-of"/><rect x="476" y="96" width="40" height="34" rx="6" class="b-of"/><rect x="540" y="96" width="40" height="34" rx="6" class="b-of"/>
+          <text x="410" y="146" text-anchor="middle" class="t-m">一遍遍问“好了没”，没好就返回 EAGAIN，白耗 CPU</text>
+          <rect x="610" y="96" width="270" height="34" rx="6" class="b-bad"/><text x="745" y="118" text-anchor="middle" class="t-s">线程等内核拷完</text>
+          <!-- 3 多路复用 -->
+          <text x="10" y="178" class="t-b">IO 多路复用</text><text x="10" y="194" class="t-xs">Java NIO Selector / epoll</text>
+          <rect x="220" y="162" width="380" height="34" rx="6" class="b-cg"/><text x="410" y="184" text-anchor="middle" class="t-s">一个线程在 epoll_wait 上同时等一万个连接</text>
+          <rect x="610" y="162" width="270" height="34" rx="6" class="b-bad"/><text x="745" y="184" text-anchor="middle" class="t-s">对就绪的那个 read，等拷完</text>
+          <!-- 4 信号驱动 -->
+          <text x="10" y="226" class="t-b">信号驱动 IO</text><text x="10" y="242" class="t-xs">SIGIO，很少用</text>
+          <rect x="220" y="210" width="380" height="34" rx="6" class="b-good"/><text x="410" y="232" text-anchor="middle" class="t-s">线程去干别的，数据到了内核发信号</text>
+          <rect x="610" y="210" width="270" height="34" rx="6" class="b-bad"/><text x="745" y="232" text-anchor="middle" class="t-s">线程等内核拷完</text>
+          <!-- 5 异步 -->
+          <text x="10" y="270" class="t-b">异步 IO</text><text x="10" y="286" class="t-xs">io_uring · Windows IOCP</text>
+          <rect x="220" y="254" width="660" height="30" rx="6" class="b-good"/><text x="550" y="274" text-anchor="middle" class="t-s">线程提交请求就走，内核等数据、拷完，再通知“已经放进你的缓冲区了”</text>
+        </svg>
+      </div>
+      <figcaption>红色 = 线程被卡住，琥珀 = 线程在空转，紫色 = 一个线程替很多连接等，绿色 = 线程是自由的。第 2 段是内存拷贝，通常只有微秒级；真正贵的是第 1 段，它可能是几秒、几分钟。</figcaption>
+    </figure>
+    <ul class="pains">
+      <li class="ok">多路复用并不比阻塞 IO “更快”，单个连接的延迟差不多。它省的是线程：第 1 段的等待从“一个连接一个线程”变成“一万个连接一个线程”。</li>
+      <li class="ok">Java NIO 就是这一行（Linux 上 Selector 的实现是 epoll）。Java 的 AIO（NIO.2 的 <code>AsynchronousSocketChannel</code>）在 Linux 上是用 epoll 加线程池模拟出来的，不是真正的第 5 行，所以 Netty、Tomcat 默认都不用它。</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="m-cost">
+    <h3><span class="sn">洞察 2</span>连接便宜，线程贵：所以要把两者拆开</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th></th><th>一个空闲连接</th><th>一个平台线程</th><th>一个虚拟线程</th></tr></thead>
+        <tbody>
+          <tr><th>内存</th><td>内核 socket 结构 + 收发缓冲（按需分配，空闲时很小）</td><td>栈预留 2 MB 地址空间（本机 aarch64 的 <code>ThreadStackSize</code> = 2040 KB），实际用到的部分常驻；实测 1 万个线程多出约 0.7～1 GB</td><td>栈帧存在堆上，用多少占多少</td></tr>
+          <tr><th>创建</th><td>accept 一次</td><td>系统调用 + 内核建任务，实测 1 万个慢 1.9 秒</td><td>普通对象分配</td></tr>
+          <tr><th>调度</th><td>不需要</td><td>内核调度，线程越多上下文切换越多</td><td>JVM 在少量载体线程上切换</td></tr>
+          <tr><th>上限</th><td><code>ulimit -n</code>（本机 1048576）</td><td><code>ulimit -u</code>、内存、<code>vm.max_map_count</code></td><td>堆大小</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">实测里虚拟线程版 RSS 417 MB，其中 317 MB 是堆：每个连接一个 <code>BufferedReader</code>（加上它底下的字节缓冲约 24 KB），BIO 版也有同样的一份；NIO 版所有连接共用一个 64 字节的缓冲区，堆只用了 7 MB。省内存靠的不只是“少开线程”，还有“不给空闲连接分配缓冲”。Netty 的池化 <code>ByteBuf</code> 做的就是后一件事。</p>
+  </div>
+
+  <div class="sub" id="m-reactor">
+    <h3><span class="sn">洞察 3</span>Reactor：少数线程管连接，另一批线程跑业务<small>Tomcat 和 Netty 都是这个形状</small></h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 300" role="img" aria-label="Tomcat NIO 连接器：内核完成握手放进全连接队列；1 个 Acceptor 线程 accept，计数不超过 maxConnections 8192；1 个 Poller 线程用 Selector 盯所有连接；哪个连接有数据，就派给最多 200 个工作线程中的一个跑业务；响应写完，keep-alive 连接交回 Poller。">
+          <rect x="10" y="110" width="100" height="80" rx="12" class="b-neu"/>
+          <text x="60" y="144" text-anchor="middle" class="t-b">客户端</text><text x="60" y="162" text-anchor="middle" class="t-xs">很多连接</text>
+          <rect x="140" y="30" width="160" height="250" rx="14" class="b-cg"/>
+          <text x="220" y="54" text-anchor="middle" class="t-b">内核</text>
+          <rect x="152" y="70" width="136" height="60" rx="8" class="b-card"/>
+          <text x="220" y="94" text-anchor="middle" class="t-s">全连接队列</text><text x="220" y="114" text-anchor="middle" class="t-monos">acceptCount=100</text>
+          <rect x="152" y="160" width="136" height="100" rx="8" class="b-card"/>
+          <text x="220" y="186" text-anchor="middle" class="t-s">epoll</text><text x="220" y="206" text-anchor="middle" class="t-xs">盯着所有已接入的连接</text><text x="220" y="226" text-anchor="middle" class="t-monos">≤ maxConnections</text><text x="220" y="242" text-anchor="middle" class="t-monos">8192</text>
+          <rect x="340" y="56" width="170" height="78" rx="12" class="b-bk"/>
+          <text x="425" y="82" text-anchor="middle" class="t-b">Acceptor 线程 × 1</text><text x="425" y="102" text-anchor="middle" class="t-xs">accept()，计数 +1</text><text x="425" y="120" text-anchor="middle" class="t-xs">设非阻塞，交给 Poller</text>
+          <rect x="340" y="170" width="170" height="90" rx="12" class="b-bk"/>
+          <text x="425" y="196" text-anchor="middle" class="t-b">Poller 线程 × 1</text><text x="425" y="216" text-anchor="middle" class="t-xs">Selector.select()</text><text x="425" y="234" text-anchor="middle" class="t-xs">谁有数据了？</text>
+          <rect x="560" y="30" width="330" height="250" rx="14" class="b-g2"/>
+          <text x="725" y="56" text-anchor="middle" class="t-b">工作线程池 http-nio-8080-exec-*</text>
+          <text x="725" y="76" text-anchor="middle" class="t-monos">server.tomcat.threads.max=200</text>
+          <g class="f-card" stroke="var(--g2)" stroke-width="1">
+            <rect x="575" y="92" width="26" height="24" rx="4"/><rect x="605" y="92" width="26" height="24" rx="4"/><rect x="635" y="92" width="26" height="24" rx="4"/><rect x="665" y="92" width="26" height="24" rx="4"/><rect x="695" y="92" width="26" height="24" rx="4"/><rect x="725" y="92" width="26" height="24" rx="4"/><rect x="755" y="92" width="26" height="24" rx="4"/><rect x="785" y="92" width="26" height="24" rx="4"/><rect x="815" y="92" width="26" height="24" rx="4"/><rect x="845" y="92" width="26" height="24" rx="4"/>
+          </g>
+          <g class="f-g2" stroke="var(--g2)" stroke-width="1" opacity=".7">
+            <rect x="575" y="92" width="26" height="24" rx="4"/><rect x="605" y="92" width="26" height="24" rx="4"/><rect x="635" y="92" width="26" height="24" rx="4"/>
+          </g>
+          <text x="725" y="146" text-anchor="middle" class="t-s">解析 HTTP → DispatcherServlet</text>
+          <text x="725" y="166" text-anchor="middle" class="t-s">→ 你的 Controller → JDBC / HTTP 调用</text>
+          <text x="725" y="190" text-anchor="middle" class="t-bad">这里是阻塞的：等数据库时线程被占着</text>
+          <text x="725" y="230" text-anchor="middle" class="t-xs">写完响应：连接交回 Poller，线程回池子</text>
+          <text x="725" y="248" text-anchor="middle" class="t-xs">空闲的 keep-alive 连接不占工作线程</text>
+          <line x1="110" y1="140" x2="148" y2="110" class="e-mut" marker-end="url(#ah-mut)"/>
+          <line x1="288" y1="100" x2="336" y2="96" class="e-bk" marker-end="url(#ah-bk)"/><text x="312" y="88" text-anchor="middle" class="t-xs">accept</text>
+          <line x1="425" y1="134" x2="425" y2="166" class="e-bk" marker-end="url(#ah-bk)"/><text x="432" y="154" class="t-xs">注册</text>
+          <line x1="336" y1="214" x2="292" y2="214" class="e-cg" marker-end="url(#ah-cg)"/><text x="314" y="206" text-anchor="middle" class="t-xs">select</text>
+          <line x1="510" y1="200" x2="556" y2="170" class="e-g2" marker-end="url(#ah-g2)"/><text x="534" y="176" text-anchor="middle" class="t-xs">派活</text>
+          <line x1="556" y1="238" x2="514" y2="238" class="e-g2" marker-end="url(#ah-g2)"/><text x="534" y="256" text-anchor="middle" class="t-xs">交回</text>
+        </svg>
+      </div>
+      <figcaption>这叫 Reactor 模式：Acceptor 和 Poller 是“反应堆”，只管事件；工作线程跑业务。Netty 是同一个形状：bossGroup 对应 Acceptor，workerGroup 里每个 EventLoop 是“一个线程 + 一个 Selector”，对应 Poller，只是 Netty 默认让 EventLoop 自己把读写和解码也做了。</figcaption>
+    </figure>
+    <div class="two">
+      <ul class="pains">
+        <li class="ok">所以 Tomcat 能 <code>maxConnections=8192</code>、<code>threads.max=200</code>：连接受连接计数管，在途请求受工作线程管，两件事被拆开了。</li>
+        <li class="ok">接上三高那页的账：Little 定律里的“线程”，指的就是这 200 个工作线程；“RT”里最大的一块，是线程在 JDBC、HTTP 调用上阻塞等待的时间。</li>
+      </ul>
+      <ul class="pains">
+        <li>Tomcat 只把“等下一个请求”这段交给了 epoll；请求一旦开始处理，等数据库、等下游仍然占着工作线程。要把这段也省掉，只有两条路：全程非阻塞（WebFlux + R2DBC），或者虚拟线程。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="sub" id="m-loop">
+    <h3><span class="sn">洞察 4</span>为什么事件循环里绝不能阻塞<small>设计对比</small></h3>
+    <p class="lead" style="margin-top:0">逼出这个规矩的约束：<b>一个事件循环线程要服务成千上万个连接</b>。它在某个连接上睡 200 ms，其余所有连接这 200 ms 里都没人管。虚拟线程反过来：一个连接一个（虚拟）线程，某个线程睡着，JVM 把它从载体线程上卸下来，载体线程去跑别的。</p>
+    <div class="design">
+      <div class="way" data-role="bad">
+        <h4>NIO 事件循环里 sleep 200 ms<small>实测</small></h4>
+        <svg class="sv" viewBox="0 0 420 200" role="img" aria-label="NIO：连接 0 的 slow 请求在事件循环里睡 200 毫秒，5 毫秒时就到的 100 个 ping 要等到 200 毫秒后才处理，中位数 196 毫秒。">
+          <text x="10" y="58" class="t-s">事件循环</text>
+          <rect x="70" y="40" width="340" height="30" rx="6" class="b-card"/>
+          <rect x="72" y="43" width="272" height="24" rx="4" class="b-bad"/><text x="208" y="60" text-anchor="middle" class="t-s">处理 slow：sleep 200 ms</text>
+          <rect x="345" y="43" width="16" height="24" rx="3" class="b-good"/>
+          <line x1="77" y1="92" x2="77" y2="76" class="e-of" marker-end="url(#ah-of)"/>
+          <text x="80" y="106" class="t-of">5 ms：100 个 ping 已经到了</text>
+          <path d="M200 120 L345 120 L345 74" class="e-ofd" marker-end="url(#ah-of)"/>
+          <text x="200" y="138" class="t-m">一直等到 slow 处理完</text>
+          <line x1="70" y1="160" x2="410" y2="160" class="e-axis"/>
+          <text x="70" y="174" class="t-monos">0</text><text x="206" y="174" class="t-monos">100</text><text x="342" y="174" class="t-monos">200 ms</text>
+          <text x="10" y="196" class="t-bad">其他 100 个 ping：中位数 196 ms</text>
+        </svg>
+      </div>
+      <div class="way" data-role="pd">
+        <h4>虚拟线程里 sleep 200 ms<small>实测，JDK 21</small></h4>
+        <svg class="sv" viewBox="0 0 420 200" role="img" aria-label="虚拟线程：slow 的虚拟线程挂起，不占载体线程；两个载体线程马上处理 100 个 ping，中位数 8 毫秒。">
+          <text x="10" y="52" class="t-s">载体 1</text>
+          <rect x="70" y="36" width="340" height="26" rx="6" class="b-card"/>
+          <text x="10" y="86" class="t-s">载体 2</text>
+          <rect x="70" y="70" width="340" height="26" rx="6" class="b-card"/>
+          <rect x="72" y="39" width="4" height="20" class="b-bad"/>
+          <rect x="79" y="39" width="12" height="20" rx="3" class="b-good"/><rect x="79" y="73" width="12" height="20" rx="3" class="b-good"/>
+          <rect x="342" y="39" width="4" height="20" class="b-bad"/>
+          <rect x="74" y="112" width="270" height="22" rx="5" class="b-dash"/>
+          <text x="209" y="128" text-anchor="middle" class="t-m">slow 的虚拟线程挂起，不占载体</text>
+          <text x="95" y="30" class="t-good">100 个 ping 马上处理</text>
+          <line x1="70" y1="160" x2="410" y2="160" class="e-axis"/>
+          <text x="70" y="174" class="t-monos">0</text><text x="206" y="174" class="t-monos">100</text><text x="342" y="174" class="t-monos">200 ms</text>
+          <text x="10" y="196" class="t-pd">其他 100 个 ping：中位数 8 ms</text>
+        </svg>
+      </div>
+    </div>
+    <p class="verdict" data-role="of">决定胜负的约束：<b>谁来承担阻塞</b>。事件循环把“等”交给了内核，自己就不能再等；业务代码里的 JDBC、大多数 SDK 都是阻塞的，所以 Tomcat 保留了一个阻塞的工作线程池，Netty 要求把阻塞活交给单独的业务线程池。虚拟线程让阻塞写法变便宜，但 Little 定律还在：等下游的请求数照样是 QPS × RT，压力会转移到连接池和下游上。</p>
+    <p class="mismatch">比喻对不上的地方：常把事件循环比作“一个服务员照看很多桌”。真实的 Netty 是每个 CPU 核一个事件循环（默认 2 × 核数个），每个连接固定属于其中一个；一个事件循环卡住，只影响它名下的那一批连接，但这一批通常也有几千个。</p>
+  </div>
+
+  <div class="sub">
+    <h3><span class="sn">语法</span>Selector 最少要认识这几行</h3>
+    <div class="two">
+      <div class="codebox">
+        <div class="code-bar"><b>NIO 事件循环骨架</b></div>
+<pre><code>Selector sel = Selector.open();
+server.configureBlocking(false);
+server.register(sel, SelectionKey.OP_ACCEPT);
+while (true) {
+    sel.select();                       <span class="cm">// 睡到有事</span>
+    for (SelectionKey k : sel.selectedKeys()) {
+        if (k.isAcceptable()) { <span class="cm">/* accept，注册 OP_READ */</span> }
+        if (k.isReadable())   { <span class="cm">/* read 到 ByteBuffer，处理 */</span> }
+    }
+    sel.selectedKeys().clear();         <span class="cm">// 不清就会重复处理</span>
+}</code></pre>
+      </div>
+      <div class="codebox">
+        <div class="code-bar"><b>application.properties</b><span>Tomcat 连接器，参数细节放到 ⑥</span></div>
+<pre><code><span class="cm"># 同时接入的连接上限（默认 8192）</span>
+server.tomcat.max-connections=8192
+<span class="cm"># 内核全连接队列长度（默认 100）</span>
+server.tomcat.accept-count=100
+<span class="cm"># 同时处理请求的工作线程（默认 200）</span>
+server.tomcat.threads.max=200
+<span class="cm"># 空闲 keep-alive 连接最多留多久（不设 = connectionTimeout，内嵌 Tomcat 是 60 秒）</span>
+server.tomcat.keep-alive-timeout=60s
+<span class="cm"># JDK 21 + Boot 3.2 起：工作线程换成虚拟线程</span>
+spring.threads.virtual.enabled=true</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ⑤ -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>手推一遍：一个 keep-alive 连接穿过 Tomcat</h2>
+    <p class="lead">先跟着一个连接走一遍 ④ 那张图，看每一步占了谁；再用一个 100 行的程序，把三种写法各压 1 万个连接。</p>
+  </div>
+  <div class="stage" id="stage" tabindex="0" aria-label="分步演示：一个 keep-alive 连接穿过 Tomcat NIO 连接器，左右方向键翻页">
+    <div class="st-top">
+      <div class="ctrl">
+        <button class="btn" type="button" id="st-prev">← 上一步</button>
+        <button class="btn primary" type="button" id="st-next">下一步 →</button>
+        <button class="btn" type="button" id="st-auto">自动播放</button>
+        <button class="btn" type="button" id="st-reset">从头来</button>
+      </div>
+      <span class="st-pos" id="st-pos"></span>
+    </div>
+    <div class="svg-scroll">
+      <svg class="sv st-svg" id="tc" viewBox="0 0 900 240" role="img" aria-label="Tomcat NIO 连接器里的六个参与者：客户端、内核、Acceptor、Poller、工作线程、数据库；每一步高亮当前参与者并画出这一步的箭头。">
+        <g class="ph" id="n-client"><rect x="10" y="30" width="110" height="90" rx="12" class="b-neu"/><text x="65" y="66" text-anchor="middle" class="t-b">浏览器</text><text x="65" y="86" text-anchor="middle" class="t-xs">一个 keep-alive</text><text x="65" y="102" text-anchor="middle" class="t-xs">连接</text></g>
+        <g class="ph" id="n-kernel"><rect x="150" y="30" width="150" height="90" rx="12" class="b-cg"/><text x="225" y="62" text-anchor="middle" class="t-b">内核</text><text x="225" y="82" text-anchor="middle" class="t-xs">全连接队列</text><text x="225" y="100" text-anchor="middle" class="t-xs">epoll</text></g>
+        <g class="ph" id="n-acc"><rect x="330" y="30" width="120" height="90" rx="12" class="b-bk"/><text x="390" y="66" text-anchor="middle" class="t-b">Acceptor</text><text x="390" y="86" text-anchor="middle" class="t-xs">1 个线程</text></g>
+        <g class="ph" id="n-poll"><rect x="480" y="30" width="120" height="90" rx="12" class="b-bk"/><text x="540" y="66" text-anchor="middle" class="t-b">Poller</text><text x="540" y="86" text-anchor="middle" class="t-xs">1 个线程</text><text x="540" y="102" text-anchor="middle" class="t-xs">Selector</text></g>
+        <g class="ph" id="n-exec"><rect x="630" y="30" width="130" height="90" rx="12" class="b-g2"/><text x="695" y="66" text-anchor="middle" class="t-b">exec-1</text><text x="695" y="86" text-anchor="middle" class="t-xs">200 个工作线程</text><text x="695" y="102" text-anchor="middle" class="t-xs">中的一个</text></g>
+        <g class="ph" id="n-db"><rect x="790" y="30" width="100" height="90" rx="12" class="b-neu"/><text x="840" y="66" text-anchor="middle" class="t-b">MySQL</text></g>
+        <g class="arw" id="a1"><line x1="70" y1="160" x2="220" y2="160" class="e-ink" marker-end="url(#ah-ink)"/><text x="145" y="150" text-anchor="middle" class="t-s halo-c">三次握手（内核完成）</text></g>
+        <g class="arw" id="a2"><line x1="230" y1="160" x2="385" y2="160" class="e-bk" marker-end="url(#ah-bk)"/><text x="308" y="150" text-anchor="middle" class="t-s halo-c">accept()</text><line x1="395" y1="205" x2="535" y2="205" class="e-bk" marker-end="url(#ah-bk)"/><text x="465" y="195" text-anchor="middle" class="t-s halo-c">注册到 Selector</text></g>
+        <g class="arw" id="a3"><line x1="535" y1="160" x2="230" y2="160" class="e-ofd" marker-end="url(#ah-of)"/><text x="383" y="150" text-anchor="middle" class="t-s halo-c">select()：没数据就睡，不占工作线程</text></g>
+        <g class="arw" id="a4"><line x1="70" y1="160" x2="220" y2="160" class="e-ink" marker-end="url(#ah-ink)"/><text x="145" y="150" text-anchor="middle" class="t-s halo-c">请求字节到了</text><line x1="545" y1="205" x2="690" y2="205" class="e-g2" marker-end="url(#ah-g2)"/><text x="618" y="195" text-anchor="middle" class="t-s halo-c">可读：派活</text></g>
+        <g class="arw" id="a5"><line x1="700" y1="160" x2="835" y2="160" class="e-g2" marker-end="url(#ah-g2)"/><text x="768" y="150" text-anchor="middle" class="t-s halo-c">JDBC：阻塞等</text></g>
+        <g class="arw" id="a6"><line x1="690" y1="160" x2="70" y2="160" class="e-g2" marker-end="url(#ah-g2)"/><text x="380" y="150" text-anchor="middle" class="t-s halo-c">写回响应</text><line x1="690" y1="205" x2="545" y2="205" class="e-bk" marker-end="url(#ah-bk)"/><text x="618" y="195" text-anchor="middle" class="t-s halo-c">keep-alive：交回</text></g>
+        <g class="arw" id="a7"><line x1="535" y1="160" x2="70" y2="160" class="e-ofd" marker-end="url(#ah-of)"/><text x="303" y="150" text-anchor="middle" class="t-s halo-c">60 秒没有新请求：关闭连接</text></g>
+      </svg>
+    </div>
+    <div class="cap-txt" id="st-cap" aria-live="polite"></div>
+    <div class="ledger">
+      <div class="lg-c" data-role="cg"><small>内核全连接队列</small><b id="lg-q">0</b><span>上限 acceptCount 100</span></div>
+      <div class="lg-c" data-role="bk"><small>连接计数</small><b id="lg-c">0</b><span>上限 maxConnections 8192</span></div>
+      <div class="lg-c" data-role="bk"><small>挂在 Poller 上</small><b id="lg-p">0</b><span>不占工作线程</span></div>
+      <div class="lg-c" data-role="g2"><small>工作线程在用</small><b id="lg-w">0</b><span>上限 threads.max 200</span></div>
+    </div>
+  </div>
+  <p class="tip">按 Tomcat 10.1.55 源码核对：<code>NioEndpoint</code> 一个 Acceptor、一个 Poller；<code>acceptCount</code> 是 <code>bind()</code> 的 backlog；<code>maxConnections</code> 默认 8192；HTTP/1.1 的 <code>connectionTimeout</code> 默认 60000 ms，<code>keepAliveTimeout</code> 不设就用它；<code>maxKeepAliveRequests</code> 默认 100。Tomcat 自带的 server.xml 把 connectionTimeout 写成 20000，Spring Boot 内嵌时不读那个文件。</p>
+
+  <div class="sub">
+    <h3>压 1 万个连接：三种写法各要多少资源</h3>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">1</span><b>IoServer.java</b><span>bio / nio / vt 三种模式；收到 ping 回 pong，收到 slow 先睡 200 ms</span></div>
+<pre><code>import java.io.*;
+import java.lang.management.ManagementFactory;
+import java.net.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.Iterator;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/** 一个回声服务，三种写法：bio（一连接一线程）、nio（一个线程 + Selector）、vt（虚拟线程，JDK 21）。
+ *  收到 "ping" 回 "pong"；收到 "slow" 先睡 200 ms 再回（模拟一次阻塞调用）。 */
+public class IoServer {
+    static final AtomicInteger conns = new AtomicInteger();
+
+    public static void main(String[] a) throws Exception {
+        String mode = a[0]; int port = Integer.parseInt(a[1]);
+        startStats(mode);
+        if (mode.equals("nio")) nio(port); else blocking(mode, port);
+    }
+
+    // ---- bio / vt：阻塞写法，每个连接一个线程 ----
+    static void blocking(String mode, int port) throws Exception {
+        ExecutorService vt = null;
+        if (mode.equals("vt"))  // 反射调用，好让 --release 8 也能编译；只有 JDK 21+ 能跑这个模式
+            vt = (ExecutorService) java.util.concurrent.Executors.class.getMethod("newVirtualThreadPerTaskExecutor").invoke(null);
+        ServerSocket ss = new ServerSocket(port, 4096);
+        while (true) {
+            final Socket s = ss.accept();
+            conns.incrementAndGet();
+            Runnable r = () -&gt; serve(s);
+            if (vt != null) vt.execute(r); else new Thread(r).start();
+        }
+    }
+    static void serve(Socket s) {
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.US_ASCII));
+             OutputStream out = s.getOutputStream()) {
+            String line;
+            while ((line = in.readLine()) != null) {          // 没数据时，线程就停在这里等
+                if (line.equals("slow")) Thread.sleep(200);
+                out.write("pong\n".getBytes(StandardCharsets.US_ASCII));
+            }
+        } catch (Exception ignored) { }
+        conns.decrementAndGet();
+    }
+
+    // ---- nio：一个线程用 Selector 管所有连接 ----
+    static void nio(int port) throws Exception {
+        Selector sel = Selector.open();
+        ServerSocketChannel ss = ServerSocketChannel.open();
+        ss.bind(new InetSocketAddress(port), 4096);
+        ss.configureBlocking(false);
+        ss.register(sel, SelectionKey.OP_ACCEPT);
+        ByteBuffer buf = ByteBuffer.allocate(64);
+        ByteBuffer pong = ByteBuffer.wrap("pong\n".getBytes(StandardCharsets.US_ASCII));
+        while (true) {
+            sel.select();                                      // 睡到有连接“有事”为止
+            Iterator&lt;SelectionKey&gt; it = sel.selectedKeys().iterator();
+            while (it.hasNext()) {
+                SelectionKey k = it.next(); it.remove();
+                if (k.isAcceptable()) {
+                    SocketChannel c = ss.accept();
+                    c.configureBlocking(false);
+                    c.register(sel, SelectionKey.OP_READ);
+                    conns.incrementAndGet();
+                } else if (k.isReadable()) {
+                    SocketChannel c = (SocketChannel) k.channel();
+                    buf.clear();
+                    int n = c.read(buf);
+                    if (n &lt; 0) { k.cancel(); c.close(); conns.decrementAndGet(); continue; }
+                    // 演示用：假设一行在一次 read 里读完（真实代码要处理半包，见 ⑥）
+                    String msg = new String(buf.array(), 0, n, StandardCharsets.US_ASCII);
+                    for (String line : msg.split("\n")) {
+                        if (line.equals("slow")) Thread.sleep(200);   // 在事件循环里阻塞：所有连接一起等
+                        pong.rewind(); c.write(pong);
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- 每 2 秒打印：连接数、线程数、RSS ----
+    static void startStats(String mode) {
+        Thread t = new Thread(() -&gt; {
+            while (true) {
+                try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
+                System.gc();
+                long heap = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) &gt;&gt; 20;
+                System.out.printf("[%s] 连接 %d  JVM 线程 %d  RSS %d MB  其中堆已用 %d MB%n", mode, conns.get(),
+                        ManagementFactory.getThreadMXBean().getThreadCount(), rssMb(), heap);
+            }
+        });
+        t.setDaemon(true); t.start();
+    }
+    static long rssMb() {
+        try {
+            for (String l : Files.readAllLines(Paths.get("/proc/self/status")))
+                if (l.startsWith("VmRSS:")) return Long.parseLong(l.replaceAll("\\D", "")) / 1024;
+        } catch (IOException ignored) { }
+        return -1;
+    }
+}</code></pre>
+    </div>
+    <details><summary>IoClient.java：一个线程开 1 万个连接，再测“有人发 slow 时别人等多久”</summary>
+<pre><code>import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+
+/** 用一个线程打开 N 个连接，各发一次 ping；然后测：有人发 slow 时，其他 100 个连接的 ping 要等多久。 */
+public class IoClient {
+    public static void main(String[] a) throws Exception {
+        int n = Integer.parseInt(a[0]), port = Integer.parseInt(a[1]);
+        Selector sel = Selector.open();
+        SocketChannel[] cs = new SocketChannel[n];
+        long t0 = System.nanoTime();
+        for (int i = 0; i &lt; n; i++) {
+            cs[i] = SocketChannel.open(new InetSocketAddress("127.0.0.1", port));
+            cs[i].configureBlocking(false);
+            cs[i].register(sel, SelectionKey.OP_READ, i);
+        }
+        long tConn = System.nanoTime();
+        for (SocketChannel c : cs) send(c, "ping\n");
+        waitPongs(sel, n, null);
+        long tPong = System.nanoTime();
+        System.out.printf("打开 %d 个连接 %d ms，%d 个 ping 全部回来又用了 %d ms%n",
+                n, (tConn - t0) / 1_000_000, n, (tPong - tConn) / 1_000_000);
+
+        Thread.sleep(5000);                      // 全部空闲，让服务端打印线程数和内存
+
+        // 连接 0 发一个要处理 200 ms 的请求，紧接着 100 个别的连接各发 ping
+        long[] start = new long[n]; long[] lat = new long[n];
+        send(cs[0], "slow\n");
+        Thread.sleep(5);
+        for (int i = 1; i &lt;= 100; i++) { start[i] = System.nanoTime(); send(cs[i], "ping\n"); }
+        waitPongs(sel, 101, (i, now) -&gt; lat[i] = (now - start[i]) / 1_000_000);
+        long[] l = Arrays.copyOfRange(lat, 1, 101); Arrays.sort(l);
+        System.out.printf("有人发 slow 时，其他 100 个 ping：中位数 %d ms，最慢 %d ms%n", l[50], l[99]);
+        for (SocketChannel c : cs) c.close();
+    }
+    interface OnPong { void at(int i, long now); }
+    static void send(SocketChannel c, String s) throws Exception {
+        ByteBuffer b = ByteBuffer.wrap(s.getBytes(StandardCharsets.US_ASCII));
+        while (b.hasRemaining()) c.write(b);
+    }
+    static void waitPongs(Selector sel, int expect, OnPong cb) throws Exception {
+        ByteBuffer buf = ByteBuffer.allocate(64); int got = 0;
+        while (got &lt; expect) {
+            sel.select();
+            Iterator&lt;SelectionKey&gt; it = sel.selectedKeys().iterator();
+            while (it.hasNext()) {
+                SelectionKey k = it.next(); it.remove();
+                buf.clear(); int r = ((SocketChannel) k.channel()).read(buf);
+                for (int j = 0; j &lt; r; j++) if (buf.get(j) == '\n') {
+                    got++; if (cb != null) cb.at((Integer) k.attachment(), System.nanoTime());
+                }
+            }
+        }
+    }
+}</code></pre>
+    </details>
+    <div class="codebox">
+      <div class="code-bar"><span class="n">2</span><b>运行</b><span>每种模式一个服务端进程，客户端用 JDK 17；vt 模式要 JDK 21</span></div>
+<pre class="console"><b>$ javac -encoding UTF-8 --release 8 IoServer.java IoClient.java</b>
+<b>$ java -Xmx512m IoServer bio 19111 &amp;   java IoClient 10000 19111</b>
+<span class="w">打开 10000 个连接 2617 ms，10000 个 ping 全部回来又用了 1538 ms</span>
+有人发 slow 时，其他 100 个 ping：中位数 4 ms，最慢 6 ms
+<span class="r">[bio] 连接 10000  JVM 线程 10007  RSS 1347 MB  其中堆已用 294 MB</span>
+<b>$ java -Xmx512m IoServer nio 19112 &amp;   java IoClient 10000 19112</b>
+<span class="w">打开 10000 个连接 679 ms，10000 个 ping 全部回来又用了 414 ms</span>
+<span class="r">有人发 slow 时，其他 100 个 ping：中位数 196 ms，最慢 201 ms</span>
+[nio] 连接 10000  JVM 线程 7  RSS 58 MB  其中堆已用 7 MB
+<b>$ java21 -Xmx512m IoServer vt 19113 &amp;   java IoClient 10000 19113</b>
+<span class="w">打开 10000 个连接 944 ms，10000 个 ping 全部回来又用了 913 ms</span>
+有人发 slow 时，其他 100 个 ping：中位数 8 ms，最慢 13 ms
+[vt] 连接 10000  JVM 线程 13  RSS 417 MB  其中堆已用 317 MB</pre>
+    </div>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 200" role="img" aria-label="实测：BIO 10007 个线程、RSS 1347 MB、有人阻塞时别人 4 毫秒；NIO 7 个线程、58 MB、别人要等 196 毫秒；虚拟线程 13 个平台线程、417 MB、别人 8 毫秒。">
+          <text x="10" y="24" class="t-m">写法</text><text x="160" y="24" class="t-m">JVM 平台线程</text><text x="450" y="24" class="t-m">RSS（含堆）</text><text x="740" y="24" class="t-m">有人阻塞 200 ms 时，别人等</text>
+          <text x="10" y="62" class="t-b">BIO</text><text x="10" y="78" class="t-xs">一连接一线程</text>
+          <rect x="160" y="50" width="240" height="24" rx="5" class="b-bad"/><text x="168" y="67" class="t-s halo">10007</text>
+          <rect x="450" y="50" width="240" height="24" rx="5" class="b-bad"/><text x="458" y="67" class="t-s halo">1347 MB（另一次 984）</text>
+          <text x="740" y="67" class="t-good">4 ms</text>
+          <text x="10" y="112" class="t-b">NIO</text><text x="10" y="128" class="t-xs">1 个线程 + Selector</text>
+          <rect x="160" y="100" width="3" height="24" class="b-bk"/><text x="170" y="117" class="t-s">7</text>
+          <rect x="450" y="100" width="10" height="24" rx="3" class="b-bk"/><text x="468" y="117" class="t-s">58 MB</text>
+          <text x="740" y="117" class="t-bad">196 ms</text>
+          <text x="10" y="162" class="t-b">虚拟线程</text><text x="10" y="178" class="t-xs">JDK 21</text>
+          <rect x="160" y="150" width="3" height="24" class="b-pd"/><text x="170" y="167" class="t-s">13</text>
+          <rect x="450" y="150" width="74" height="24" rx="4" class="b-pd"/><text x="532" y="167" class="t-s">417 MB（堆 317）</text>
+          <text x="740" y="167" class="t-good">8 ms</text>
+        </svg>
+      </div>
+      <figcaption><span class="tag-real">实测</span> 2 核 ARM 云主机，JDK 17.0.20.1（bio、nio）和 21.0.12.1（vt），服务端 <code>-Xmx512m</code>，客户端和服务端在同一台机器上，走 127.0.0.1。bio 和 vt 的堆主要是每个连接一个 <code>BufferedReader</code>；RSS 两次跑会差几百 MB（第一次 bio 984 MB、vt 448 MB），看数量级就行。</figcaption>
+    </figure>
+    <div class="two">
+      <div class="done-box"><b>到这里已经能交差了。</b>能说清：Tomcat 是“NIO 收连接、线程池跑业务”，空闲连接不占工作线程，占线程的是“请求处理中的等待”；事件循环里不能阻塞；虚拟线程让阻塞写法也能挂住大量连接。</div>
+      <div class="todo">
+        <b>已知还没处理的细节</b>
+        <ul>
+          <li>演示代码假设一次 read 正好一行，真实代码要处理半包粘包 → <a href="#pit-frame">⑥ 坑 6</a></li>
+          <li>调下游时，客户端这边的连接池够不够 → <a href="#pit-pool">⑥ 坑 2</a></li>
+          <li>连接复用时，对端先把连接关了怎么办 → <a href="#pit-reset">⑥ 坑 3</a></li>
+          <li>NIO 版怎么把 slow 挪出事件循环 → <a href="#loop">↺ 练习 1</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ⑥ -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>边界和变体：连接这一层会在哪出事</h2>
+    <p class="lead">第一圈的坑每条标了根源在 ④ 的哪一条；第二圈是团队里该怎么配；第三圈是零拷贝、Netty 的 epoll 传输、io_uring 和版本差异。</p>
+  </div>
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-block">
+        <b><em>坑 1</em>在事件循环里调阻塞代码<a class="root" href="#m-loop">← ④ 洞察 4</a></b>
+        <dl>
+          <dt>现象</dt><dd>Netty 服务或 WebFlux 接口偶尔全体变慢，CPU 却不高；某一个慢请求过后，同一批连接的请求一起超时。<span class="seen">⑤ 实测 196 ms</span></dd>
+          <dt>根源</dt><dd>在 handler 或 Reactor 链里调了 JDBC、同步 HTTP、<code>Thread.sleep</code>、加了锁的同步代码，事件循环线程被卡住，它名下的几千个连接都没人管。</dd>
+          <dt>做法</dt><dd class="fix">Netty：阻塞的 handler 放进单独的 <code>EventExecutorGroup</code>，或交给有界业务线程池。WebFlux：<code>Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())</code>，更好的是换非阻塞驱动。测试里用 BlockHound 抓阻塞调用。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-pool">
+        <b><em>坑 2</em>调下游的 HTTP 连接池默认很小<a class="root" href="#m-reactor">← ④ 洞察 3</a></b>
+        <dl>
+          <dt>现象</dt><dd>下游自己的 RT 很正常，调用方的 RT 却很高；线程 dump 里大量线程停在从连接池拿连接的地方。</dd>
+          <dt>根源</dt><dd>按 Little 定律，需要的连接数 = 调用 QPS × 下游 RT。Apache HttpClient 5 的池子默认每个目标地址 5 条、总共 25 条；4.x 是 2 条、20 条（源码核对）。Spring Boot 3.5 的 <code>RestClient</code> / <code>RestTemplate</code> 自动配置在 classpath 上有 HttpClient 5 时优先用它，而且不改池子大小。</dd>
+          <dt>做法</dt><dd class="fix">每个目标的连接数按“QPS × RT × 1.5”配（Boot 里用 <code>HttpComponentsClientHttpRequestFactoryBuilder.withConnectionManagerCustomizer</code>）；设“从池里拿连接”的超时；客户端全局复用一个，不要每次请求 new。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-reset">
+        <b><em>坑 3</em>低峰后的第一个请求报 Connection reset<a class="root" href="#s5">← ⑤ keep-alive 关闭</a></b>
+        <dl>
+          <dt>现象</dt><dd>夜里或低峰过后，第一批请求报 <code>NoHttpResponseException</code>、<code>Connection reset</code>，重试一次就好。</dd>
+          <dt>根源</dt><dd>连接在客户端池子里空闲着，服务端已经按自己的空闲超时把它关了（内嵌 Tomcat 默认 60 秒、Nginx <code>keepalive_timeout</code> 默认 75 秒、云负载均衡常常更短），客户端还拿它发请求。</dd>
+          <dt>做法</dt><dd class="fix">客户端的空闲回收时间短于服务端的空闲超时，让客户端先关；复用前校验空闲太久的连接（HttpClient 4.x 默认空闲 2 秒以上就先校验）；幂等请求自动重试一次。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-tw">
+        <b><em>坑 4</em>短连接打出一堆 TIME_WAIT，端口用完<a class="root env" href="url-to-page.html">← TCP 四次挥手</a></b>
+        <dl>
+          <dt>现象</dt><dd>调用方报 <code>Cannot assign requested address</code>；<code>ss -s</code> 里 timewait 有好几万。</dd>
+          <dt>根源</dt><dd>主动关闭的一方要在 TIME_WAIT 里待 60 秒（Linux 固定）。本机临时端口范围 32768～60999，共 28232 个；对同一个目标 IP 和端口，每秒新建超过约 470 个短连接（28232 ÷ 60），端口就会被占满。</dd>
+          <dt>做法</dt><dd class="fix">复用连接：连接池、keep-alive，别每个请求 new 一个客户端。<code>tcp_tw_recycle</code> 在 NAT 环境下会出错，Linux 4.12 已经把它删了，别去找它。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-backlog">
+        <b><em>坑 5</em>全连接队列溢出，客户端连接超时<a class="root" href="#m-reactor">← ④ 洞察 3</a></b>
+        <dl>
+          <dt>现象</dt><dd>突发流量时，部分客户端连都连不上，报连接超时；服务端日志里什么也没有。</dd>
+          <dt>根源</dt><dd>连接计数到了 <code>maxConnections</code> 或 Acceptor 来不及取，握手完成的连接堆在内核队列里。队列长度取 <code>acceptCount</code> 和 <code>net.core.somaxconn</code>（本机 4096）中小的那个，满了内核就丢掉后来的握手包。</dd>
+          <dt>做法</dt><dd class="fix">看 <code>ss -lnt</code>：监听端口的 Recv-Q 是当前排队数，Send-Q 是上限；<code>nstat -az TcpExtListenOverflows</code> 看溢出次数。根本办法是加机器或在入口限流，队列开大只是让客户端多等一会儿。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-frame">
+        <b><em>坑 6</em>半包、粘包：一次 read 不等于一条消息<a class="root" href="#m-phase">← ④ 先知道：TCP 是字节流</a></b>
+        <dl>
+          <dt>现象</dt><dd>自定义 TCP 协议在本机测试好好的，上线后偶尔解析出错，消息被截断或两条粘在一起。</dd>
+          <dt>根源</dt><dd>TCP 只保证字节有序，一次 <code>read</code> 可能读到半条，也可能读到两条半。⑤ 的演示代码假设一次 read 正好一行，只在本机小包下成立。</dd>
+          <dt>做法</dt><dd class="fix">协议里必须有分帧：长度字段或分隔符。每个连接一个累积缓冲区，攒够一帧再处理。Netty 现成的 <code>LengthFieldBasedFrameDecoder</code>、<code>LineBasedFrameDecoder</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-pin">
+        <b><em>坑 7</em>开了虚拟线程，系统反而卡死<a class="root" href="#m-loop">← ④ 洞察 4</a></b>
+        <dl>
+          <dt>现象</dt><dd>JDK 21 上打开 <code>spring.threads.virtual.enabled</code>，压力一大，所有请求都不动了。</dd>
+          <dt>根源</dt><dd>JDK 21 里，虚拟线程在 <code>synchronized</code> 块里阻塞会钉住（pin）载体线程，卸不下来；载体线程默认和 CPU 核数一样多，几个一钉满，所有虚拟线程都跑不了。老版本的驱动、连接池内部常用 <code>synchronized</code>。</dd>
+          <dt>做法</dt><dd class="fix">JDK 24（JEP 491）起 <code>synchronized</code> 不再钉住。留在 JDK 21 就用 JFR 的 <code>jdk.VirtualThreadPinned</code> 事件找出来，换成 <code>ReentrantLock</code>；虚拟线程不要池化，对下游用信号量限制并发。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-direct">
+        <b><em>坑 8</em>堆正常，RSS 一直涨<a class="root env" href="#m-cost">实现原因：堆外缓冲</a></b>
+        <dl>
+          <dt>现象</dt><dd>Netty 服务跑几天后被 OOM Killer 杀掉，堆内存监控却一直很平稳。</dd>
+          <dt>根源</dt><dd>Netty 为了少拷贝，默认用直接内存（堆外）和引用计数的 <code>ByteBuf</code>。哪里漏了 <code>release()</code>，堆外内存就一直不还，堆监控看不到。</dd>
+          <dt>做法</dt><dd class="fix">设 <code>-XX:MaxDirectMemorySize</code> 给堆外封顶；测试环境开 <code>-Dio.netty.leakDetection.level=advanced</code> 找泄漏；监控里加上直接内存的用量。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>HTTP / RPC 客户端全局一个，池子按 QPS × RT 配</b><p>连接超时、读超时、从池里拿连接的超时，三个都设。</p><p class="guard">连接池排队（坑 2）、线程被下游借走</p></div>
+      <div class="rl"><b>客户端先关空闲连接</b><p>客户端空闲回收时间 &lt; 服务端 keep-alive 超时 &lt; 负载均衡空闲超时。</p><p class="guard">复用到已关闭的连接（坑 3）</p></div>
+      <div class="rl"><b>事件循环里只做非阻塞的事</b><p>Netty handler、WebFlux 链里不调 JDBC、同步 HTTP、sleep；阻塞活交给有界的业务线程池。</p><p class="guard">一个慢请求拖住几千个连接（坑 1）</p></div>
+      <div class="rl"><b>自定义协议一定要分帧</b><p>长度字段优先，分隔符要考虑转义。</p><p class="guard">半包粘包（坑 6）</p></div>
+      <div class="rl"><b>上线前查系统参数</b><p><code>ulimit -n</code>、<code>net.core.somaxconn</code>、<code>net.ipv4.ip_local_port_range</code>；监控 <code>ss -s</code> 的 estab 和 timewait。</p><p class="guard">文件句柄耗尽、队列溢出（坑 5）、端口耗尽（坑 4）</p></div>
+      <div class="rl"><b>用虚拟线程时，并发上限挪到资源上</b><p>线程不再限并发，就给下游加信号量或舱壁；ThreadLocal 别缓存大对象，每个虚拟线程各有一份。</p><p class="guard">下游和连接池被压垮、内存膨胀（坑 7）</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>优化和深处</h3></div>
+    <div class="deep">
+      <div class="dp" data-role="cg">
+        <h4>零拷贝：第 2 段也能省</h4>
+        <p>发文件时，普通写法要把数据从页缓存拷到用户空间、再拷回 socket 缓冲区。<code>sendfile</code> 让内核直接把页缓存交给网卡，用户空间那两次拷贝都没了。Kafka 发消息、Nginx 发静态文件、Netty 的 <code>FileRegion</code> 都靠它。开了 TLS 就要先在用户空间加密，零拷贝基本失效。实测和细节见 <a href="../kafka/kafka-storage-zerocopy.html">Kafka 存储与零拷贝</a>。</p>
+      </div>
+      <div class="dp" data-role="bk">
+        <h4>Netty 为什么还要自带 epoll 传输</h4>
+        <ul>
+          <li>JDK 的 Selector 是水平触发，每次 select 都要分配就绪集合；Netty 的 <code>EpollEventLoopGroup</code> 直接用 JNI 调 epoll，默认边缘触发，垃圾更少，还能用 <code>SO_REUSEPORT</code> 等 Linux 专有选项。</li>
+          <li>历史包袱：早年 JDK 在 Linux 上有 epoll 空轮询的 bug，<code>select()</code> 没事件也立刻返回，CPU 打满。Netty 的应对是数提前返回的次数，超过阈值（<code>io.netty.selectorAutoRebuildThreshold</code>，默认 512）就重建 Selector，这段代码一直留到今天。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="pd">
+        <h4>io_uring：Linux 上真正的异步 IO</h4>
+        <p>Linux 5.1（2019 年）加入。应用和内核共用两个环形队列：应用把“读这个 socket 到这块缓冲区”放进提交队列，内核做完把结果放进完成队列，两段都不占线程，批量提交时系统调用也少了。Netty 有 io_uring 传输；JDK 自己的 NIO 还没有用它。</p>
+      </div>
+      <div class="dp" data-role="g2">
+        <h4>WebFlux 不是“更快”，是“更省线程”</h4>
+        <p>请求少、下游快时，WebFlux 和 Spring MVC 的 RT 差不多，代码还更难写。它赢的场景是连接多、等待长：网关、聚合多个下游的接口、推送。前提是整条链都是非阻塞的，一个阻塞的驱动就把它拉回坑 1。有了虚拟线程以后，普通业务服务大多没必要为了并发换 WebFlux。</p>
+      </div>
+    </div>
+    <h3 style="margin-top:12px">版本差异</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>点</th><th>JDK 8 / Spring Boot 2</th><th>JDK 17 / Spring Boot 3</th><th>JDK 21</th></tr></thead>
+        <tbody>
+          <tr><th>NIO Selector</th><td>Linux 上就是 epoll</td><td>同左</td><td>同左；虚拟线程的阻塞 socket 也由 JDK 内部的 poller 用 epoll 等</td></tr>
+          <tr><th>Socket / ServerSocket</th><td>老的 <code>PlainSocketImpl</code>（C 代码）</td><td>JDK 13 起（JEP 353）换成基于 NIO 的 <code>NioSocketImpl</code>，为虚拟线程铺路</td><td>阻塞的 socket 读写在虚拟线程上会挂起而不是占住线程</td></tr>
+          <tr><th>虚拟线程</th><td>无</td><td>无</td><td>JEP 444 正式版；Boot 3.2 起 <code>spring.threads.virtual.enabled</code>；<code>synchronized</code> 钉住问题到 JDK 24（JEP 491）才解决</td></tr>
+          <tr><th>Tomcat</th><td>Boot 2 用 Tomcat 9，默认 NIO 连接器（BIO 连接器 8.5 起已删除）</td><td>Boot 3 用 Tomcat 10.1，连接器默认值同左（10.1.55 源码核对）</td><td>开虚拟线程后工作线程池换成“每个请求一个虚拟线程”，Acceptor 和 Poller 不变</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>Netty 源码：EventLoop 的循环、ChannelPipeline、ByteBuf 池化</li>
+      <li>Reactor 和背压：WebFlux 怎么防止快的生产者压垮慢的消费者</li>
+      <li>HTTP/2 和 gRPC：一条连接上的多路复用和流控</li>
+      <li>虚拟线程源码：Continuation 怎么挂起和恢复</li>
+      <li>TCP 参数调优：缓冲区大小、keepalive 探测、拥塞控制</li>
+      <li>io_uring 在 Java 里的现状和 Netty 的 io_uring 传输</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ↺ -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 IoServer</h2>
+    <p class="lead">预期结果是按 ④ 和代码推出来的，<b>没有在本机跑过</b>，你跑出来的数字应该落在附近。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="bk">
+      <h4>练习 1 · 把 slow 挪出事件循环</h4>
+      <p>nio 模式里，收到 slow 就交给一个 <code>Executors.newFixedThreadPool(4)</code>；业务线程睡完后把“要回 pong 的连接”放进一个并发队列，再 <code>sel.wakeup()</code>，由事件循环线程统一写。</p>
+      <p><b>预期：</b>其他 100 个 ping 的中位数从 196 ms 回到个位数毫秒，和 vt 模式差不多；JVM 线程多 4 个。直接在业务线程里 <code>c.write</code> 也能跑，但会和事件循环同时写同一个连接。</p>
+      <p class="uses">用到：坑 1、④ 洞察 3</p>
+    </div>
+    <div class="exc" data-role="bad">
+      <h4>练习 2 · 先猜，再拆包发</h4>
+      <p>改 IoClient：把连接 1 的 <code>"ping\n"</code> 拆成 <code>"pi"</code> 和 <code>"ng\n"</code> 两次发，中间睡 10 ms。先猜 nio 服务端会回几个 pong。</p>
+      <p><b>预期：</b>两个。第一次 read 到 <code>"pi"</code>，被当成一行回了 pong；第二次 read 到 <code>"ng"</code> 又回一个。bio 和 vt 模式用 <code>readLine()</code>，会攒到换行符，只回一个。修法：每个连接挂一个 <code>StringBuilder</code>（<code>key.attach</code>），攒到换行再处理。</p>
+      <p class="uses">用到：坑 6</p>
+    </div>
+    <div class="exc" data-role="g2">
+      <h4>练习 3 · 用短连接压一次</h4>
+      <p>写个客户端：每个 ping 都新开连接、收到 pong 就关，循环 2 万次。跑的时候另开一个终端看 <code>ss -tan state time-wait | wc -l</code>。</p>
+      <p><b>预期：</b>TIME_WAIT 堆到上万个，并且出现在客户端这一侧（主动关闭的一方），60 秒后才慢慢消失；跑得够快、次数够多时会报 <code>Cannot assign requested address</code>。</p>
+      <p class="uses">用到：坑 4</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出这页的精华。</summary><p>IO 模型决定“等数据”由谁来等：BIO 让线程等，多路复用让内核替一个线程等一万个连接，虚拟线程让 JVM 把阻塞写法换成多路复用；所以连接和线程可以拆开，但事件循环里不能阻塞，业务里的阻塞等待仍然要有人承担。</p><p class="from">← 开头 + ④</p></details>
+    <details><summary>2. 一连接一线程的 BIO，痛在哪？</summary><p>线程被空闲的连接占着。实测 1 万个连接要 10007 个线程、1 GB 以上内存，建连接还慢；换成线程池又会让第 201 个连接排队，哪怕前 200 个都在发呆。</p><p class="from">← ②</p></details>
+    <details><summary>3. nio 模式里一个 slow 让别人都等了 196 ms，根源是 ④ 的哪一条？</summary><p>洞察 4：一个事件循环线程服务所有连接，它在 slow 上睡着，其他连接的就绪事件没人处理。虚拟线程版不受影响，因为睡着的是那个连接自己的虚拟线程。</p><p class="from">← ④ 洞察 4 + ⑤ 实测</p></details>
+    <details><summary>4. 预测：默认参数的 Spring Boot，5000 个浏览器挂着 keep-alive 空闲，另有 50 个请求正在等数据库。工作线程用了几个？连接计数是多少？</summary><p>工作线程 50 个：空闲的 keep-alive 连接挂在 Poller 上，不占工作线程。连接计数 5050，还没到 8192。</p><p class="from">← ④ 洞察 3 + ⑤ 手推</p></details>
+    <details><summary>5. 预测：9000 个客户端同时连默认 Tomcat，会怎样？</summary><p>前 8192 个被 accept；之后 Acceptor 暂停，握手完成的连接堆在内核全连接队列里，最多 min(100, somaxconn) 个；再后面的握手包被丢，客户端重传，最后连接超时。有连接关掉、计数降下来，Acceptor 才继续取。</p><p class="from">← ④ 洞察 3 + 坑 5</p></details>
+    <details><summary>6. 预测：服务每秒调下游 200 次，下游 RT 100 ms，用 HttpClient 5 默认连接池，会怎样？</summary><p>需要 200 × 0.1 = 20 条连接，默认每个目标只有 5 条。这条路的吞吐上限是 5 ÷ 0.1 = 50 次每秒，其余请求排队等连接，调用方 RT 越来越长，看起来像“下游慢了”。</p><p class="from">← 坑 2 + 三高页洞察 1</p></details>
+    <details><summary>7. 预测：打开虚拟线程，HikariCP 还是 10 个连接，每秒 200 个请求，每个占连接 100 ms。线程还是瓶颈吗？瓶颈在哪？</summary><p>线程不再是瓶颈：每个请求一个虚拟线程，想开多少开多少。但需要 200 × 0.1 = 20 个数据库连接，只有 10 个，一半请求的虚拟线程排在 Hikari 上等，RT 变长，堆里积压的虚拟线程越来越多。瓶颈从 Tomcat 线程挪到了连接池。</p><p class="from">← ④ 洞察 4 + 坑 7</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>档位：标准档。本机实测：⑤ 的 IoServer / IoClient，2 核 ARM 云主机，bio 和 nio 用 JDK 17.0.20.1，vt 用 JDK 21.0.12.1（虚拟线程只有 21 能跑），同一份 <code>--release 8</code> 编译的 class，每种模式跑了两次。查过的源码和文档：Tomcat 10.1.55（<code>NioEndpoint</code>、<code>AbstractEndpoint</code>、<code>SocketProperties</code>、<code>http11.Constants</code>）、Apache HttpClient 4.5.14 和 5.4.4（连接池默认值）、Spring Boot 3.5.16（<code>ClientHttpRequestFactoryBuilder.detect</code>、<code>HttpComponentsHttpClientBuilder</code>）、Netty 4.1.128（<code>selectorAutoRebuildThreshold</code> 默认 512、epoll 传输默认边缘触发、默认 2 × 核数个事件循环）、JEP 353 / 444 / 491。本机参数：<code>ulimit -n</code> 1048576、<code>somaxconn</code> 4096、临时端口 32768～60999、<code>ThreadStackSize</code> 2040 KB。↺ 的练习预期没有在本机跑过。</p>
+  <p>相关：<a href="../arch/three-highs-map.html">三高知识地图</a> · <a href="../redis/redis-threading-io.html">Redis 线程模型与 IO 多路复用</a> · <a href="url-to-page.html">从 URL 到页面</a> · <a href="../kafka/kafka-storage-zerocopy.html">Kafka 存储与零拷贝</a> · <a href="../juc/threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../database/db-pool-tx-perf.html">连接池与事务性能</a></p>
+</footer>
+</main>
+<script>
+/*SIM-START*/
+// 分步演示的数据：每一步高亮谁、画哪支箭头、四个计数器（内核队列、连接计数、挂在 Poller 上、工作线程在用）
+var NODES = ['n-client', 'n-kernel', 'n-acc', 'n-poll', 'n-exec', 'n-db'];
+var STEPS = [
+  { hot: ['n-acc', 'n-poll'], arw: null, led: [0, 0, 0, 0],
+    cap: '<b>Tomcat 启动好了。</b>Acceptor 线程停在 <code>accept()</code> 上等新连接，Poller 线程停在 <code>select()</code> 上等“哪个连接有数据”。工作线程池是空的，按需创建，最多 200 个。' },
+  { hot: ['n-client', 'n-kernel'], arw: 'a1', led: [1, 0, 0, 0],
+    cap: '<b>浏览器连上来。</b>三次握手由内核完成，Java 代码完全不知道。握手完的连接先放进全连接队列，队列长度是 <code>acceptCount</code>（100）和 <code>somaxconn</code> 里小的那个。', wl: '队列满了，内核会丢掉后来的握手包，客户端只看到连接超时（⑥ 坑 5）。' },
+  { hot: ['n-kernel', 'n-acc', 'n-poll'], arw: 'a2', led: [0, 1, 1, 0],
+    cap: '<b>Acceptor 取走连接。</b><code>accept()</code> 返回一个 socket，连接计数 +1，设成非阻塞，交给 Poller 注册到 Selector 上。', wl: '计数到了 <code>maxConnections</code>（8192），Acceptor 就停下不取，新连接留在内核队列里。' },
+  { hot: ['n-poll', 'n-kernel'], arw: 'a3', led: [0, 1, 1, 0],
+    cap: '<b>请求还没来。</b>连接挂在 Poller 的 Selector 上，Poller 在 epoll 里睡着。这段时间<b>不占任何工作线程</b>，一万个这样的连接也只靠这 1 个 Poller 线程。', wl: '这就是洞察 1 里的“第 1 段”，交给了内核去等。' },
+  { hot: ['n-client', 'n-kernel', 'n-poll', 'n-exec'], arw: 'a4', led: [0, 1, 0, 1],
+    cap: '<b>请求字节到了。</b>内核把这个连接标成可读，<code>select()</code> 返回；Poller 把它包成一个任务丢给工作线程池，exec-1 接手，Poller 马上回去盯别的连接。' },
+  { hot: ['n-exec', 'n-db'], arw: 'a5', led: [0, 1, 0, 1],
+    cap: '<b>exec-1 跑你的代码。</b>读请求、解析 HTTP、进 DispatcherServlet 和 Controller，调 MySQL。等数据库返回时，exec-1 阻塞在 JDBC 的 socket 读上，<b>线程被占着</b>。', wl: '三高那页的 Little 定律算的就是这一步：在忙的工作线程 = QPS × 每个请求处理的时间（含等待）。' },
+  { hot: ['n-exec', 'n-client', 'n-poll'], arw: 'a6', led: [0, 1, 1, 0],
+    cap: '<b>写回响应。</b>HTTP/1.1 默认 keep-alive，连接不关，重新交给 Poller；exec-1 回到池子，可以去处理任何别的连接的请求。', wl: '同一个连接的下一个请求，可能由另一个工作线程处理。' },
+  { hot: ['n-poll', 'n-client'], arw: 'a7', led: [0, 0, 0, 0],
+    cap: '<b>等下一个请求。</b>连接在 Poller 上最多空闲 <code>keepAliveTimeout</code>（不设就等于 connectionTimeout，内嵌 Tomcat 默认 60 秒）；一个连接最多服务 <code>maxKeepAliveRequests</code>（100）个请求。超时了 Poller 就关掉它，计数 −1。', wl: '客户端池子里的空闲连接如果比这更久，就会复用到已关闭的连接（⑥ 坑 3）。' }
+];
+/*SIM-END*/
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var i = 0, timer = null;
+  function show() {
+    var s = STEPS[i];
+    NODES.forEach(function (n) { var el = $(n); el.setAttribute('class', 'ph ' + (s.hot.indexOf(n) >= 0 ? 'hot' : 'dim')); });
+    for (var k = 1; k <= 7; k++) $('a' + k).style.display = (s.arw === 'a' + k) ? 'inline' : 'none';
+    $('st-cap').innerHTML = s.cap + (s.wl ? '<span class="wl">' + s.wl + '</span>' : '');
+    $('lg-q').textContent = s.led[0]; $('lg-c').textContent = s.led[1];
+    $('lg-p').textContent = s.led[2]; $('lg-w').textContent = s.led[3];
+    $('st-pos').innerHTML = '第 <b>' + (i + 1) + '</b> / ' + STEPS.length + ' 步';
+    $('st-prev').disabled = i === 0; $('st-next').disabled = i === STEPS.length - 1;
+  }
+  function go(d) { i = Math.max(0, Math.min(STEPS.length - 1, i + d)); show(); }
+  function stop() { if (timer) { clearInterval(timer); timer = null; $('st-auto').textContent = '自动播放'; } }
+  $('st-prev').addEventListener('click', function () { stop(); go(-1); });
+  $('st-next').addEventListener('click', function () { stop(); go(1); });
+  $('st-reset').addEventListener('click', function () { stop(); i = 0; show(); });
+  $('st-auto').addEventListener('click', function () {
+    if (timer) { stop(); return; }
+    if (i === STEPS.length - 1) i = 0;
+    $('st-auto').textContent = '暂停'; show();
+    timer = setInterval(function () { if (i >= STEPS.length - 1) { stop(); return; } go(1); }, 2600);
+  });
+  $('stage').addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight') { stop(); go(1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { stop(); go(-1); e.preventDefault(); }
+  });
+  show();
+})();
+</script>
+
+</body>
+</html>
