@@ -75,6 +75,7 @@
 | 01 | [SynchronousQueue 与 LinkedTransferQueue](https://archeu.github.io/study-notes/juc/synchronous-transfer-queue.html) | 双重队列和双重栈、一次 CAS 完成交接、xfer 的四种模式、先自旋再 park、slack 与自链接、线程池里的后果、JDK 11 / 21 实测，分步演示和沙盘 |
 | 02 | [ThreadPoolExecutor.execute 源码](https://archeu.github.io/study-notes/juc/threadpool-execute.html) | execute 的三个 if、ctl 的位、Worker 和 getTask、放进队列后的复查和线程退出前的检查、几件只能靠源码解释的怪事、各版本差异，线程调度实验台 |
 | 03 | [AQS 源码](https://archeu.github.io/study-notes/juc/aqs.html) | state 加等待队列、独占和共享、Condition 的两条队、公平与非公平、JDK 8 和 17 / 21 两代源码对照、日常开发里哪些框架和 JDK 类用到了它，三个 JDK 实测和实验台 |
+| 04 | [Java 内存模型](https://archeu.github.io/study-notes/juc/java-memory-model.html) | 写了不等于别人看到：重排序从哪来、happens-before 规则和推导、为什么只保证没有数据竞争的程序、volatile / synchronized / final 各保证什么、内存屏障和 VarHandle，可见性和重排序实测（JDK 17，ARM），双重检查锁分步推演 |
 
 ## 网络
 
@@ -94,3 +95,9 @@
 | # | 页面 | 内容 |
 |---|------|------|
 | 01 | [JDK 8、17、21、25](https://archeu.github.io/study-notes/jdk/jdk-8-17-21.html) | 四个 LTS 是怎么连起来的：5、6、7 留下的地基（内存模型、锁优化、invokedynamic、Fork/Join）、半年一班车和预览特性、四条主线（语言、并发、GC、平台治理）、50 个新特性各是什么、为什么加、怎么用（带示例）、record + sealed + 模式匹配、强封装、ScopedValue 的设计取舍、8 / 21 / 25 写法对照与升级五步、十二个升级坑、25 之后的 27 和 29，升级检查器 |
+
+## JVM
+
+| # | 页面 | 内容 |
+|---|------|------|
+| 01 | [JVM 内存结构](https://archeu.github.io/study-notes/jvm/jvm-memory-structure.html) | 一个 Java 进程的内存分成哪几块：线程私有的栈、共享的堆、堆外的元空间和直接内存，栈和堆怎么配合、对象头和对象大小、为什么分代，六种 OOM 怎么认、容器被杀的原因，实测撑爆四块内存（JDK 17），分代实验台 |

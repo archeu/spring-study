@@ -1,0 +1,1381 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>JVM 内存结构</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a mechanism topic (① 为什么需要 ② 没有它会怎样 ③ 相邻方案 ④ 原理 ⑤ 亲眼看到 ⑥ 细节 ↺). Colors: thread-private areas (stack, PC) blue (pd), heap young generation teal (bk), old generation brown (g2), metaspace and class data purple (cg), off-heap native memory magenta (rn), highlights amber (of), OOM red, right green, other grey. Interactive: one guess-first generational heap lab in ⑥ driven by a pure lifetime model fuzzed in node. Numbers in ⑤ come from MemDemo.java run on JDK 17 on a 2-vCPU ARM VM. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --rn:#A8327A; --rn-tint:#F7E1EE;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --rn:#F08BC6; --rn-tint:#3D1A30;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --rn:#F08BC6; --rn-tint:#3D1A30;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="rn"]{--rc:var(--rn);--rt:var(--rn-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:660px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-rn{font-size:12px;font-weight:700;fill:var(--rn)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.halo{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+.halo-c{paint-order:stroke;stroke:var(--code-bg);stroke-width:4px;stroke-linejoin:round}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-rn{fill:var(--rn-tint);stroke:var(--rn);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.b-dash{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:5 4}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)} .f-rn{fill:var(--rn)}
+.f-card{fill:var(--card)} .f-code{fill:var(--code-bg)} .f-oft{fill:var(--of-tint)} .f-pdt{fill:var(--pd-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-g2t{fill:var(--g2-tint)} .f-rnt{fill:var(--rn-tint)} .f-neut{fill:var(--neutral-tint)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-life{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:2 5}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-rn{stroke:var(--rn);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-rnd{stroke:var(--rn);stroke-width:2;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev b{color:var(--bad)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+.hl{background:var(--of-tint)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+pre.console .r{color:#FF9B98}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td, .t tr.hl th{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.design.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:20px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way svg{display:block;width:100%;height:auto}
+.way pre{padding:10px 12px;background:var(--code-bg);border-radius:10px;font-size:12px}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{position:relative;padding-left:28px}
+.pains li::before{content:"✕";position:absolute;left:0;top:0;width:22px;color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.pains code{overflow-wrap:anywhere}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b{color:var(--rc)}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+.mech-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.mech-h .sn{font-size:20px}
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl.span{grid-column:1 / -1}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:10px;border-radius:3px;display:inline-block;background:var(--rc);border:1.5px solid var(--rc)}
+.lg i.t{background:var(--rt)}
+.lg i.mk{width:3px;height:14px;border-radius:1px;border:0}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+.lab-res ul{margin:6px 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:3px}
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.dp svg{display:block;width:100%;height:auto}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metaphor{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ex,.design.three{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+  .ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .facts,.presets,.ctl-grid{grid-template-columns:1fr}
+  .metaphor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+}
+
+/* ---------- knowledge map ---------- */
+.map{display:flex;flex-direction:column;gap:10px}
+.lay{display:grid;grid-template-columns:9.5em minmax(0,1fr);gap:12px;align-items:stretch}
+.lay-h{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 12px;border-radius:12px;background:var(--ink);color:var(--paper)}
+.lay-h b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1.15}
+.lay-h span{font-size:12px;opacity:.75}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;border-radius:12px;background:var(--card);border:1.5px solid var(--line);align-content:center;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:13.5px;line-height:1.3;padding:4px 10px;border-radius:999px;background:var(--rt);border:1.5px solid var(--rc);color:var(--ink);text-decoration:none}
+.chip.ops{border-style:dashed;background:var(--card)}
+a.chip::after{content:"↗";font-size:11px;color:var(--rc)}
+a.chip:hover{box-shadow:inset 0 0 0 1px var(--rc)}
+.life{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.stg{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:14px;background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rn);min-width:0;position:relative}
+.stg h4{font-size:17px;color:var(--rn)}
+.stg h4 i{font-style:normal;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-right:4px}
+.stg ul{margin:0;padding-left:1.05em;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+.stg code{overflow-wrap:anywhere}
+.fam{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fm{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fm h4{color:var(--rc);font-size:20px}
+.fm h4 small{font-family:var(--font-body);font-size:12.5px;color:var(--muted);margin-left:6px}
+.fm p{font-size:14px}
+.fm .pay{font-size:13px;color:var(--muted)}
+.fm .pay b{color:var(--bad);font-weight:600}
+.nines{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.nn{border-radius:12px;padding:8px 12px;background:var(--cg-tint);border:1.5px solid var(--cg);display:flex;flex-direction:column;min-width:0}
+.nn b{font-family:var(--font-mono);font-size:17px;font-variant-numeric:tabular-nums}
+.nn span{font-size:13px;color:var(--muted)}
+.check{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.cl{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.cl h4{color:var(--rc);font-size:20px}
+.cl ol{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:8px}
+.cl li{font-size:14.5px}
+.cl li code{overflow-wrap:anywhere}
+.cl li .g{display:block;font-size:13px;color:var(--muted)}
+.cl li .g::before{content:"防：";color:var(--good);font-weight:700}
+
+/* ---------- thread bar (lab) ---------- */
+.tb-wrap{display:flex;flex-direction:column;gap:6px}
+.tb-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;font-size:13px;color:var(--muted)}
+.tb-head b{color:var(--ink);font-family:var(--font-mono)}
+.tbar{position:relative;height:38px;border-radius:10px;background:var(--code-bg);border:1.5px solid var(--line);overflow:hidden}
+.tseg{position:absolute;top:4px;bottom:4px;border-radius:5px;background:var(--rt);border:1.5px solid var(--rc);font-size:11.5px;line-height:26px;padding:0 5px;white-space:nowrap;overflow:hidden;color:var(--ink)}
+.tseg.over{background:repeating-linear-gradient(135deg,var(--bad-tint) 0 6px,var(--card) 6px 12px);border-color:var(--bad)}
+.tcap{position:absolute;top:0;bottom:0;width:0;border-left:3px solid var(--ink)}
+.tcap span{position:absolute;top:-1px;left:4px;font-size:11px;font-family:var(--font-mono);background:var(--ink);color:var(--paper);padding:0 4px;border-radius:4px;white-space:nowrap}
+.toggles{display:flex;flex-wrap:wrap;gap:8px}
+.tg{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:13.5px;cursor:pointer}
+.tg[aria-pressed="true"]{border-color:var(--g2);background:var(--g2-tint);box-shadow:inset 0 0 0 1px var(--g2);font-weight:600}
+.tg[aria-pressed="true"]::before{content:"✓ ";color:var(--g2)}
+
+@media (max-width:980px){
+  .fam{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .life{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:860px){
+  .check{grid-template-columns:1fr}
+  .lay{grid-template-columns:1fr;gap:4px}
+  .lay-h{flex-direction:row;align-items:baseline;gap:10px}
+}
+@media (max-width:520px){
+  .fam,.nines{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .life{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fam{grid-template-columns:1fr}
+}
+
+/* feature list (④ 机制 2) */
+.feat-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.feat-tools .tip{flex:1 1 260px}
+.lane-h{margin-top:10px;padding:7px 12px;border-radius:10px;background:var(--rt);border-left:5px solid var(--rc);font-weight:700;font-size:15px}
+.feats{display:flex;flex-direction:column;gap:6px}
+details.ft{padding:0;border-radius:12px;border-left:4px solid var(--rc)}
+details.ft > summary{display:grid;grid-template-columns:minmax(8em,14em) 5.5em minmax(0,1fr);gap:4px 12px;align-items:baseline;padding:9px 14px;margin:0;list-style:none;font-weight:400;font-size:14.5px}
+details.ft > summary::-webkit-details-marker{display:none}
+details.ft[open] > summary{margin:0;border-bottom:1px solid var(--line)}
+details.ft .nm{font-weight:700;min-width:0}
+details.ft .nm::before{content:"▸";display:inline-block;width:1.1em;color:var(--rc);transition:transform .15s}
+details.ft[open] .nm::before{transform:rotate(90deg)}
+details.ft .vr{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);white-space:nowrap}
+details.ft .sv{min-width:0;color:var(--ink)}
+details.ft code{overflow-wrap:anywhere}
+.ft-body{padding:10px 14px 12px;display:flex;flex-direction:column;gap:8px}
+.ft-body dl{margin:0;display:grid;grid-template-columns:4.2em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.ft-body dt{color:var(--muted);font-size:13px;padding-top:1px}
+.ft-body dd{margin:0;min-width:0}
+.ft-body pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;font-size:12px;padding:10px 12px}
+.ft-body pre code{overflow-wrap:normal}
+@media (max-width:640px){details.ft > summary{grid-template-columns:minmax(0,1fr) auto}details.ft .sv{grid-column:1 / -1;color:var(--muted);font-size:13.5px}}
+
+.acct{display:flex;flex-direction:column;gap:6px}
+.olist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media (max-width:860px){.olist{grid-template-columns:1fr}}
+</style>
+<style id="tocx-css">
+/* tocx：顶栏里的跳转导航，由 learn skill 的 add_toc.py 注入（wrap.py 会自动调用）。
+   有六步路线条（main nav.route）的页面：把路线条复制进顶栏，滚动时高亮当前一步；窄屏只留序号。
+   没有路线条的老页面：顶栏右侧加“目录 ▾”，下拉列出各个 h2，滚动时高亮当前一节。
+   只用各页都有的颜色变量：--paper --card --ink --muted --line --line-strong。 */
+.tocx-steps{margin-left:auto;flex:none;display:flex;align-items:center;gap:3px;overflow-x:auto;scrollbar-width:none;max-width:100%}
+.tocx-steps::-webkit-scrollbar{display:none}
+.tocx-steps a{flex:none;display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;border:1.5px solid transparent;color:var(--muted);text-decoration:none;font-size:13px;line-height:1.4;white-space:nowrap}
+.tocx-steps a b{font-weight:700;color:var(--ink)}
+.tocx-steps a:hover{border-color:var(--line-strong);color:var(--ink)}
+.tocx-steps a.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.tocx-steps a.on b{color:var(--paper)}
+.tocx-dd{margin-left:auto;flex:none;position:relative}
+.tocx-btn{font:inherit;font-size:13.5px;line-height:1.4;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);cursor:pointer;white-space:nowrap}
+.tocx-btn:hover,.tocx-btn[aria-expanded="true"]{border-color:var(--ink)}
+.tocx-panel{position:absolute;right:0;top:calc(100% + 9px);width:min(360px,calc(100vw - 32px));max-height:min(70vh,560px);overflow:auto;background:var(--card);border:1.5px solid var(--line-strong);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px;z-index:40}
+.tocx-panel a{display:flex;gap:8px;padding:7px 10px;border-radius:9px;color:var(--ink);text-decoration:none;font-size:14px;line-height:1.45}
+.tocx-panel a i{flex:none;width:1.7em;font-style:normal;font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px;padding-top:2px}
+.tocx-panel a:hover{background:var(--line)}
+.tocx-panel a.on{background:var(--ink);color:var(--paper)}
+.tocx-panel a.on i{color:var(--paper)}
+.tocx-steps a:focus-visible,.tocx-btn:focus-visible,.tocx-panel a:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+@media (max-width:1180px){.tocx-steps a span{display:none}.tocx-steps a{padding:3px 8px}}
+@media (max-width:640px){.tocx-on .tb-in > span{display:none}.tocx-steps{flex:0 1 auto;min-width:0}.tocx-steps a{padding:3px 6px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-good" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>JVM</span><span aria-hidden="true">/</span><span class="tb-here">JVM 内存结构</span></div></nav>
+
+<main>
+
+<header class="hero">
+  <p class="kicker">程序计数器 · 虚拟机栈 · 堆 · 新生代 / 老年代 · 元空间 · 代码缓存 · 直接内存 · 对象头</p>
+  <h1>一个 Java 进程的内存，分成了哪几块</h1>
+  <p class="lead">JVM 按“谁在用、活多久”给内存分了区：<b>每个线程自己的栈，所有线程共享的堆，存类信息的元空间，还有 JVM 自己用、但不归 -Xmx 管的代码缓存和直接内存。</b>堆又按对象年龄分成新生代和老年代，因为绝大多数对象刚创建不久就没用了。分清这几块，才知道 OOM 报的是哪块满了、-Xmx 管的是哪块、为什么容器内存总比 -Xmx 大一截。</p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>为什么需要</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>没有它会怎样</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>相邻方案</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>原理</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>亲眼看到</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>细节</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>线上服务跑在 2 GB 内存的容器里，<code>-Xmx1536m</code>，隔几天就被容器杀掉重启，日志里却没有任何 OutOfMemoryError；另一个服务时不时报 <code>OutOfMemoryError: Metaspace</code>。面试也常问“说说 JVM 内存结构”。注意它和“Java 内存模型”是两回事，后者讲多线程下的可见性，见 <a href="../juc/java-memory-model.html">Java 内存模型</a>。标<span class="tag-real">实测</span>的数字来自 ⑤ 的程序，在 2 核 ARM 云主机上用 JDK 17 跑。</span></p>
+</header>
+
+<!-- ① -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>为什么需要：-Xmx 只管了一部分</h2>
+    <p class="lead">一个 Java 进程实际占的内存，是好几块加起来的。只盯着堆，就看不懂容器为什么会把它杀掉。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 210" role="img" aria-label="示例：2 GB 的容器里，堆 1536 MB，再加元空间、代码缓存、线程栈、直接内存、GC 和 JIT 自己的内存，总数超过 2048 MB，被容器杀掉。">
+        <text x="20" y="28" class="t-h">一个 Java 进程的内存账（示例数字，按常见服务估算）</text>
+        <rect x="20" y="60" width="550" height="44" rx="6" class="b-bk"/><text x="295" y="87" text-anchor="middle" class="t-b">堆 -Xmx 1536 MB</text>
+        <rect x="570" y="60" width="54" height="44" class="b-cg"/>
+        <rect x="624" y="60" width="21" height="44" class="b-cg"/>
+        <rect x="645" y="60" width="72" height="44" class="b-pd"/>
+        <rect x="717" y="60" width="92" height="44" class="b-rn"/>
+        <rect x="809" y="60" width="43" height="44" class="b-neu"/>
+        <line x1="753" y1="44" x2="753" y2="122" class="e-bad"/>
+        <text x="753" y="38" text-anchor="middle" class="t-bad">容器上限 2048 MB</text>
+        <text x="860" y="87" class="t-bad">✕</text>
+        <g class="t-xs">
+          <text x="597" y="124" text-anchor="middle">元空间</text><text x="597" y="138" text-anchor="middle">~150</text>
+          <text x="634" y="156" text-anchor="middle">代码缓存 ~60</text>
+          <text x="681" y="124" text-anchor="middle">线程栈</text><text x="681" y="138" text-anchor="middle">~200</text>
+          <text x="763" y="174" text-anchor="middle">直接内存 ~256</text>
+          <text x="830" y="124" text-anchor="middle">GC/JIT</text><text x="830" y="138" text-anchor="middle">~120</text>
+        </g>
+        <line x1="634" y1="106" x2="634" y2="146" class="e-mut"/>
+        <line x1="763" y1="106" x2="763" y2="164" class="e-mut"/>
+        <text x="20" y="200" class="t-s">合计约 2.3 GB &gt; 2 GB：容器直接把进程杀掉（OOMKilled），JVM 来不及抛 OutOfMemoryError，也就没有日志。</text>
+      </svg>
+    </div>
+    <figcaption>除了堆，其余几块都在堆外，-Xmx 一个字节也管不到。数字是估算的示例；自己服务的真实账，用 ⑥ 第二圈说的 NMT 查。</figcaption>
+  </figure>
+  <div class="trio">
+    <div class="fact" data-role="bad"><h4>排查 OOM</h4><p>报错里写的是 <code>Java heap space</code>、<code>Metaspace</code> 还是 <code>direct buffer memory</code>，对应的是完全不同的区域和原因。</p></div>
+    <div class="fact" data-role="bk"><h4>配参数</h4><p><code>-Xmx</code>、<code>-Xss</code>、<code>MaxMetaspaceSize</code>、<code>MaxDirectMemorySize</code> 各管一块，容器里要给堆外留够空间。</p></div>
+    <div class="fact" data-role="pd"><h4>看懂 GC</h4><p>新生代、老年代、Survivor 是 GC 日志和调优的基本词汇，先知道对象在里面怎么搬家。</p></div>
+  </div>
+</section>
+
+<!-- ② -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>没有它会怎样：程序员自己管内存</h2>
+    <p class="lead">C 语言里，局部变量放在栈上，函数返回就没了；<code>malloc</code> 出来的放在堆上，要自己 <code>free</code>。只要有一处忘了或多做了一次，就出事。</p>
+  </div>
+  <div class="misj">
+    <div class="mj"><b><i>1</i>忘了 free：内存泄漏</b><dl><dt>表现</dt><dd>进程内存只涨不跌，跑几天被系统杀掉。</dd></dl></div>
+    <div class="mj"><b><i>2</i>free 早了：野指针</b><dl><dt>表现</dt><dd>别处还拿着这块内存的地址，读到的是别人的数据，或者直接崩溃，而且很难复现。</dd></dl></div>
+  </div>
+  <div class="essence">
+    <div class="big">JVM 的做法</div>
+    <p>对象只管 <code>new</code>，没人引用了由 GC 回收。为此 JVM 必须知道<b>哪些内存是线程自己的、随方法调用自动回收（栈）</b>，<b>哪些是共享的、要靠 GC 判断死活（堆）</b>，以及<b>类的信息放在哪（元空间）</b>。</p>
+    <p>再进一步：既然大多数对象很快就死，就把堆按年龄分开，GC 主要扫“年轻”的那块，这就是分代。</p>
+  </div>
+  <div class="note-box"><b>典型误解</b><span>“Java 有 GC，所以不会内存泄漏。”GC 只回收没人引用的对象；被一个静态 Map、一个没清理的 ThreadLocal、一个没卸载的类加载器一直引用着的对象，GC 永远不会动，照样能把堆或元空间撑爆（⑥ 坑 2）。</span></div>
+</section>
+
+<!-- ③ -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>相邻方案：别的语言怎么分</h2>
+    <p class="lead">“栈放调用现场、堆放对象”几乎所有语言都一样，区别在于堆归谁管、对象放栈上还是堆上由谁决定。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>语言</th><th>栈</th><th>堆</th><th>谁决定放哪</th><th>代价</th></tr></thead>
+      <tbody>
+        <tr><th>C / C++</th><td>局部变量，函数返回自动回收</td><td>程序员 <code>malloc</code> / <code>new</code>，自己释放</td><td>程序员写在代码里</td><td>泄漏、野指针，全靠人</td></tr>
+        <tr><th>Go</th><td>每个 goroutine 一个可增长的栈</td><td>GC 管理，不分代</td><td>编译器做逃逸分析，不逃逸的对象放栈上</td><td>GC 要扫整个堆</td></tr>
+        <tr class="hl"><th>Java（HotSpot）</th><td>每个线程一个固定大小的栈（<code>-Xss</code>）</td><td>GC 管理，按年龄分代</td><td>语言上对象一律在堆；运行时 JIT 发现不逃逸的，可以拆成局部变量（⑥ 第三圈）</td><td>要配好几块的大小</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="pick-line">本页讲 HotSpot（OpenJDK、Oracle JDK 用的虚拟机）的内存结构：JVM 规范规定了有哪几块，HotSpot 决定了每块具体怎么实现、在各版本里怎么变。</p>
+</section>
+
+<!-- ④ -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>原理：五块区域，一个对象的一生</h2>
+    <p class="lead">先看全景：哪几块是线程自己的、哪几块是共享的、哪几块在堆外。再看栈和堆怎么配合、一个对象在堆里长什么样，最后看堆为什么要分代。</p>
+  </div>
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="other"><h4>虚拟内存和 RSS</h4><p>JVM 启动时会先“预留”一大段地址（比如元空间、代码缓存），真正用到才占物理内存。看进程实际占多少，看 RSS 或容器的内存用量。</p></div>
+      <div class="fact" data-role="other"><h4>引用和对象</h4><p><code>Order o = new Order()</code>：<code>new</code> 出来的对象在堆里，变量 <code>o</code> 里只存一个指向它的引用（地址）。</p></div>
+      <div class="fact" data-role="other"><h4>GC 做什么</h4><p>从“根”（各线程栈里的引用、静态变量等）出发，顺着引用找到所有还能用到的对象，其余的就是垃圾，可以回收。</p></div>
+      <div class="fact" data-role="other"><h4>JVM 规范和 HotSpot</h4><p>JVM 规范只规定“要有哪几块、各放什么”；具体怎么实现（比如方法区放哪），是 HotSpot 这样的虚拟机决定的，各版本还会变。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="m-map">
+    <h3><span class="sn">机制 1</span>全景：线程私有、共享的堆、堆外</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 410" role="img" aria-label="JVM 内存全景：左边是每个线程私有的程序计数器、虚拟机栈和本地方法栈；中间是所有线程共享的堆，分新生代（Eden、两个 Survivor）和老年代，字符串常量池和静态变量从 7 起也在堆里；右边是堆外的本地内存：元空间、压缩类空间、代码缓存、直接内存，以及 GC 和 JIT 自己用的内存。">
+          <!-- 线程私有 -->
+          <rect x="20" y="40" width="270" height="330" rx="14" class="b-pd"/>
+          <text x="155" y="64" text-anchor="middle" class="t-pd">线程私有（每个线程一份）</text>
+          <rect x="48" y="84" width="230" height="268" rx="10" class="b-dash"/>
+          <rect x="36" y="78" width="230" height="268" rx="10" class="b-card"/>
+          <text x="50" y="98" class="t-b">线程 1</text><text x="272" y="96" text-anchor="end" class="t-xs">线程 2、3 …</text>
+          <rect x="50" y="108" width="202" height="34" rx="6" class="b-card"/><text x="151" y="130" text-anchor="middle" class="t-s">程序计数器：执行到哪一行</text>
+          <rect x="50" y="150" width="202" height="134" rx="6" class="b-card"/>
+          <text x="151" y="168" text-anchor="middle" class="t-b">虚拟机栈（-Xss）</text>
+          <rect x="66" y="178" width="170" height="28" rx="5" class="b-pd"/><text x="151" y="197" text-anchor="middle" class="t-s">栈帧 calc()</text>
+          <rect x="66" y="212" width="170" height="28" rx="5" class="b-card"/><text x="151" y="231" text-anchor="middle" class="t-s">栈帧 order()</text>
+          <rect x="66" y="246" width="170" height="28" rx="5" class="b-card"/><text x="151" y="265" text-anchor="middle" class="t-s">栈帧 main()</text>
+          <rect x="50" y="292" width="202" height="34" rx="6" class="b-card"/><text x="151" y="314" text-anchor="middle" class="t-s">本地方法栈：native 方法用</text>
+          <!-- 堆 -->
+          <rect x="318" y="40" width="290" height="330" rx="14" class="b-card"/>
+          <text x="463" y="64" text-anchor="middle" class="t-b">所有线程共享：堆（-Xms / -Xmx）</text>
+          <rect x="332" y="78" width="262" height="112" rx="10" class="b-bk"/>
+          <text x="346" y="98" class="t-bk">新生代</text>
+          <rect x="344" y="108" width="140" height="70" rx="6" class="b-card"/><text x="414" y="140" text-anchor="middle" class="t-b">Eden</text><text x="414" y="158" text-anchor="middle" class="t-xs">新对象先放这</text>
+          <rect x="492" y="108" width="44" height="70" rx="6" class="b-card"/><text x="514" y="148" text-anchor="middle" class="t-s">S0</text>
+          <rect x="542" y="108" width="44" height="70" rx="6" class="b-card"/><text x="564" y="148" text-anchor="middle" class="t-s">S1</text>
+          <rect x="332" y="200" width="262" height="156" rx="10" class="b-g2"/>
+          <text x="346" y="222" class="t-g2">老年代</text>
+          <rect x="344" y="232" width="238" height="30" rx="6" class="b-card"/><text x="463" y="252" text-anchor="middle" class="t-s">字符串常量池（7 起在堆）</text>
+          <rect x="344" y="270" width="238" height="30" rx="6" class="b-card"/><text x="463" y="290" text-anchor="middle" class="t-s">类的静态变量（7 起在堆）</text>
+          <text x="463" y="330" text-anchor="middle" class="t-m">熬过多次 GC 的对象、大对象</text>
+          <!-- 堆外 -->
+          <rect x="636" y="40" width="248" height="330" rx="14" class="b-rn"/>
+          <text x="760" y="64" text-anchor="middle" class="t-rn">堆外：本地内存（-Xmx 管不到）</text>
+          <rect x="650" y="78" width="220" height="70" rx="8" class="b-cg"/>
+          <text x="760" y="98" text-anchor="middle" class="t-b">元空间（8 起）</text>
+          <text x="760" y="116" text-anchor="middle" class="t-xs">类的结构、方法字节码、运行时常量池</text>
+          <text x="760" y="134" text-anchor="middle" class="t-monos">MaxMetaspaceSize：默认不限</text>
+          <rect x="650" y="156" width="220" height="34" rx="8" class="b-cg"/><text x="760" y="178" text-anchor="middle" class="t-s">压缩类空间（默认 1 GB）</text>
+          <rect x="650" y="198" width="220" height="52" rx="8" class="b-card"/>
+          <text x="760" y="218" text-anchor="middle" class="t-b">代码缓存</text>
+          <text x="760" y="238" text-anchor="middle" class="t-xs">JIT 编译出的机器码，默认 240 MB</text>
+          <rect x="650" y="258" width="220" height="52" rx="8" class="b-card"/>
+          <text x="760" y="278" text-anchor="middle" class="t-b">直接内存</text>
+          <text x="760" y="298" text-anchor="middle" class="t-xs">allocateDirect、Netty；默认上限 = 堆上限</text>
+          <text x="760" y="334" text-anchor="middle" class="t-xs">还有：线程栈本身、GC 和 JIT</text>
+          <text x="760" y="350" text-anchor="middle" class="t-xs">自己的数据结构</text>
+          <!-- 引用 -->
+          <path d="M236 192 C290 192 300 150 340 146" class="e-ink" marker-end="url(#ah-ink)"/>
+          <text x="296" y="186" text-anchor="middle" class="t-xs halo">引用</text>
+          <text x="20" y="398" class="t-m">JVM 规范里叫“方法区”的那块：HotSpot 7 及以前用堆里的“永久代”实现，8 起换成本地内存里的元空间。</text>
+        </svg>
+      </div>
+      <figcaption>数字是本机 JDK 17 的默认值（⑤ 实测打印出来的）：压缩类空间 1 GB、代码缓存 240 MB、元空间不设上限、直接内存上限不设时等于堆上限。</figcaption>
+    </figure>
+    <div class="two">
+      <ul class="pains">
+        <li class="ok"><b>线程私有</b>的几块随线程生、随线程死，方法返回时栈帧直接弹掉，不需要 GC。每个线程的栈大小固定（<code>-Xss</code>，本机默认 2 MB 预留），所以线程越多，堆外占得越多。</li>
+        <li class="ok"><b>堆</b>是唯一要靠 GC 回收的大块，也是 <code>-Xmx</code> 唯一管得到的地方。</li>
+      </ul>
+      <ul class="pains">
+        <li class="ok"><b>元空间</b>存的是“类本身”，随类加载器一起卸载。动态生成类的框架（代理、脚本引擎、热部署）用得最多。</li>
+        <li class="ok"><b>直接内存</b>不经过堆，网络 IO 时少拷贝一次（见 <a href="../network/io-models.html">网络 IO 模型</a>），但它的回收要等堆里那个小小的 <code>ByteBuffer</code> 对象被 GC 掉。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="sub" id="m-stack">
+    <h3><span class="sn">机制 2</span>栈和堆怎么配合：栈帧里只放引用</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 240" role="img" aria-label="calc 方法的栈帧：局部变量表里有 this、引用 o 和 long 类型的 total；o 指向堆里的 Order 对象，Order 的 user 字段又指向堆里的 User 对象。基本类型的局部变量直接存在栈帧里。">
+          <rect x="20" y="20" width="300" height="200" rx="12" class="b-pd"/>
+          <text x="170" y="44" text-anchor="middle" class="t-b">栈帧：calc(Order o)</text>
+          <text x="36" y="70" class="t-s">局部变量表</text>
+          <rect x="36" y="78" width="80" height="30" rx="5" class="b-card"/><text x="76" y="98" text-anchor="middle" class="t-mono">this</text>
+          <rect x="122" y="78" width="80" height="30" rx="5" class="b-card"/><text x="162" y="98" text-anchor="middle" class="t-mono">o ●</text>
+          <rect x="208" y="78" width="96" height="30" rx="5" class="b-card"/><text x="256" y="98" text-anchor="middle" class="t-mono">total=99</text>
+          <text x="36" y="134" class="t-s">操作数栈：算到一半的中间值</text>
+          <text x="36" y="158" class="t-s">返回地址：算完回到 order() 的哪一行</text>
+          <text x="36" y="196" class="t-xs">long total 这样的基本类型，值就在栈帧里</text>
+          <rect x="430" y="40" width="200" height="100" rx="10" class="b-bk"/>
+          <text x="530" y="62" text-anchor="middle" class="t-b">Order 对象（堆）</text>
+          <text x="446" y="86" class="t-mono">id = 1001</text>
+          <text x="446" y="106" class="t-mono">status = 2</text>
+          <text x="446" y="126" class="t-mono">user ●</text>
+          <rect x="690" y="110" width="190" height="80" rx="10" class="b-bk"/>
+          <text x="785" y="132" text-anchor="middle" class="t-b">User 对象（堆）</text>
+          <text x="706" y="156" class="t-mono">name ●→ String</text>
+          <text x="706" y="176" class="t-mono">age = 30</text>
+          <path d="M184 92 C300 92 360 70 426 70" class="e-ink" marker-end="url(#ah-ink)"/>
+          <path d="M500 122 C590 122 620 140 686 146" class="e-ink" marker-end="url(#ah-ink)"/>
+          <text x="660" y="222" text-anchor="middle" class="t-m">方法返回：栈帧弹掉，o 这个引用没了；Order 有没有别人引用，交给 GC 判断</text>
+        </svg>
+      </div>
+    </figure>
+    <p class="tip">所以“栈溢出”（<code>StackOverflowError</code>）说的是调用太深、栈帧太多，和对象多不多无关；“堆溢出”说的是活着的对象太多。</p>
+  </div>
+
+  <div class="sub" id="m-object">
+    <h3><span class="sn">机制 3</span>一个对象在堆里长什么样：对象头 + 字段 + 对齐</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="Order 对象的布局示意：8 字节 mark word、4 字节压缩的类指针、int status、long id、引用 user，再补齐到 8 的倍数，共 32 字节；int[3] 数组多一个 4 字节的长度，共 32 字节；开了紧凑对象头后对象头只有 8 字节，Order 变成 24 字节。">
+          <text x="20" y="22" class="t-m">每格 = 1 字节；示意按本机默认（开启压缩指针）。字段的实际顺序由 JVM 决定</text>
+          <text x="20" y="58" class="t-b">Order</text><text x="20" y="74" class="t-xs">32 字节</text>
+          <rect x="110" y="44" width="176" height="34" rx="4" class="b-of"/><text x="198" y="65" text-anchor="middle" class="t-s">mark word 8</text>
+          <rect x="286" y="44" width="88" height="34" rx="4" class="b-cg"/><text x="330" y="65" text-anchor="middle" class="t-s">类指针 4</text>
+          <rect x="374" y="44" width="88" height="34" rx="4" class="b-card"/><text x="418" y="65" text-anchor="middle" class="t-s">status 4</text>
+          <rect x="462" y="44" width="176" height="34" rx="4" class="b-card"/><text x="550" y="65" text-anchor="middle" class="t-s">id（long）8</text>
+          <rect x="638" y="44" width="88" height="34" rx="4" class="b-card"/><text x="682" y="65" text-anchor="middle" class="t-s">user 引用 4</text>
+          <rect x="726" y="44" width="88" height="34" rx="4" class="b-dash"/><text x="770" y="65" text-anchor="middle" class="t-xs">补齐 4</text>
+          <text x="20" y="118" class="t-b">int[3]</text><text x="20" y="134" class="t-xs">32 字节</text>
+          <rect x="110" y="104" width="176" height="34" rx="4" class="b-of"/><text x="198" y="125" text-anchor="middle" class="t-s">mark word 8</text>
+          <rect x="286" y="104" width="88" height="34" rx="4" class="b-cg"/><text x="330" y="125" text-anchor="middle" class="t-s">类指针 4</text>
+          <rect x="374" y="104" width="88" height="34" rx="4" class="b-pd"/><text x="418" y="125" text-anchor="middle" class="t-s">长度 4</text>
+          <rect x="462" y="104" width="264" height="34" rx="4" class="b-card"/><text x="594" y="125" text-anchor="middle" class="t-s">3 个 int，12</text>
+          <rect x="726" y="104" width="88" height="34" rx="4" class="b-dash"/><text x="770" y="125" text-anchor="middle" class="t-xs">补齐 4</text>
+          <text x="20" y="178" class="t-b">Order</text><text x="20" y="194" class="t-xs">紧凑对象头 24</text>
+          <rect x="110" y="164" width="176" height="34" rx="4" class="b-of"/><text x="198" y="185" text-anchor="middle" class="t-s">对象头 8（含类指针）</text>
+          <rect x="286" y="164" width="88" height="34" rx="4" class="b-card"/><text x="330" y="185" text-anchor="middle" class="t-s">status 4</text>
+          <rect x="374" y="164" width="88" height="34" rx="4" class="b-card"/><text x="418" y="185" text-anchor="middle" class="t-s">user 4</text>
+          <rect x="462" y="164" width="176" height="34" rx="4" class="b-card"/><text x="550" y="185" text-anchor="middle" class="t-s">id（long）8</text>
+          <text x="830" y="186" class="t-good">省 8</text>
+          <text x="20" y="232" class="t-m">mark word 里有：哈希码、GC 年龄（4 位，所以最多 15）、锁状态。紧凑对象头 25 要手动开，27 起默认。</text>
+        </svg>
+      </div>
+    </figure>
+    <ul class="pains">
+      <li class="ok"><code>new Object()</code> 也要 16 字节：12 字节对象头再补齐到 8 的倍数。所以一个只装几个字段的小对象，对象头可能比数据还大，这正是紧凑对象头要省的部分。</li>
+      <li class="ok">“压缩指针”让引用只占 4 字节而不是 8 字节，前提是堆小于约 32 GB；堆一旦超过，所有引用都变成 8 字节（⑥ 坑 5）。</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="m-gen">
+    <h3><span class="sn">机制 4</span>为什么要分代：大多数对象活不过一次 GC<small>设计对比</small></h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 230" role="img" aria-label="对象的一生：新对象在 Eden 分配；Young GC 时活着的复制到 Survivor，年龄加一，在两个 Survivor 之间来回；年龄到阈值（默认 15）或 Survivor 放不下，晋升到老年代；大对象可能直接进老年代。大多数对象在 Eden 里就死了，不用复制。">
+          <rect x="20" y="70" width="180" height="90" rx="10" class="b-bk"/><text x="110" y="100" text-anchor="middle" class="t-b">Eden</text><text x="110" y="122" text-anchor="middle" class="t-xs">new 出来先放这</text><text x="110" y="140" text-anchor="middle" class="t-xs">大多数在这里就死了</text>
+          <rect x="300" y="50" width="130" height="56" rx="10" class="b-bk"/><text x="365" y="76" text-anchor="middle" class="t-b">Survivor S0</text><text x="365" y="94" text-anchor="middle" class="t-xs">年龄 +1</text>
+          <rect x="300" y="126" width="130" height="56" rx="10" class="b-bk"/><text x="365" y="152" text-anchor="middle" class="t-b">Survivor S1</text><text x="365" y="170" text-anchor="middle" class="t-xs">年龄 +1</text>
+          <rect x="560" y="60" width="200" height="110" rx="10" class="b-g2"/><text x="660" y="100" text-anchor="middle" class="t-b">老年代</text><text x="660" y="122" text-anchor="middle" class="t-xs">满了才做老年代回收</text><text x="660" y="140" text-anchor="middle" class="t-xs">（G1 的混合回收或 Full GC）</text>
+          <path d="M200 100 C240 100 260 80 296 78" class="e-bk" marker-end="url(#ah-bk)"/>
+          <text x="248" y="72" text-anchor="middle" class="t-xs">Young GC：只复制活的</text>
+          <path d="M365 106 L365 122" class="e-bk" marker-end="url(#ah-bk)"/><path d="M372 122 L372 108" class="e-bk" marker-end="url(#ah-bk)"/>
+          <text x="440" y="118" class="t-xs">每次 GC 来回搬</text>
+          <path d="M430 78 C490 78 510 92 556 98" class="e-g2" marker-end="url(#ah-g2)"/>
+          <text x="494" y="68" text-anchor="middle" class="t-xs">年龄到 15</text>
+          <path d="M430 154 C490 154 510 140 556 134" class="e-g2" marker-end="url(#ah-g2)"/>
+          <text x="494" y="176" text-anchor="middle" class="t-xs">Survivor 放不下</text>
+          <path d="M110 160 C110 215 600 215 640 172" class="e-ofd" marker-end="url(#ah-of)"/>
+          <text x="380" y="222" text-anchor="middle" class="t-of">大对象（G1 里超过半个 Region）直接进老年代</text>
+          <text x="790" y="104" class="t-s">晋升越快，</text><text x="790" y="124" class="t-s">老年代回收</text><text x="790" y="144" class="t-s">越频繁</text>
+        </svg>
+      </div>
+    </figure>
+    <div class="design">
+      <div class="way" data-role="bad">
+        <h4>被放弃的：整个堆一起回收</h4>
+        <ul class="pains">
+          <li>每次 GC 都要从根出发遍历整个堆，4 GB 的堆就处理 4 GB。</li>
+          <li>新对象和用了几小时的缓存混在一起，明明垃圾主要是新对象，却要连老对象一起检查。</li>
+        </ul>
+      </div>
+      <div class="way" data-role="done">
+        <h4>选中的：按年龄分开，常回收年轻的</h4>
+        <ul class="pains">
+          <li class="ok">Young GC 只处理新生代，而且用“复制”：把少数活对象搬走，Eden 整块清空。代价只和<b>活对象</b>的多少有关。</li>
+          <li class="ok">老对象引用新对象的情况，用“卡表”记下来，Young GC 时不用扫整个老年代。</li>
+        </ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="of">决定这个设计的约束是一条经验规律，叫<b>弱分代假说：绝大多数对象朝生夕死，熬过几次 GC 的对象往往会活很久</b>。业务代码里一次请求创建的 DTO、字符串、集合，请求结束就没用了，正好符合。所以新生代要够大，让短命对象死在 Eden 里；Survivor 要够大，别让中等寿命的对象被“挤”进老年代。⑥ 的实验台可以拖参数看后果。</p>
+    <p class="mismatch">不同 GC 的分法不一样：Parallel GC 的新生代、老年代是两段连续的内存；G1 把堆切成很多大小相同的 Region，每块临时扮演 Eden、Survivor 或老年代；ZGC 21 起才分代。“新生代、老年代、Survivor”是概念，具体形状看用哪个 GC。</p>
+  </div>
+
+  <div class="sub" id="m-syntax">
+    <h3><span class="sn">参数</span>每块区域归哪个参数管</h3>
+    <div class="codebox">
+      <div class="code-bar"><b>JVM 启动参数</b><span>默认值是本机 JDK 17 实测打印出来的；参数怎么调放到第⑥步</span></div>
+<pre><code>-Xms2g -Xmx2g                        <span class="cm"># 堆的初始和最大值；不写时最大值默认是物理内存（或容器限制）的 1/4</span>
+-XX:MaxRAMPercentage=75.0            <span class="cm"># 容器里按比例给堆，比写死 -Xmx 灵活</span>
+-Xss1m                               <span class="cm"># 每个线程的栈，本机默认约 2 MB</span>
+-XX:MaxMetaspaceSize=512m            <span class="cm"># 元空间上限，默认不限</span>
+-XX:MaxDirectMemorySize=512m         <span class="cm"># 直接内存上限，默认等于堆上限</span>
+-XX:ReservedCodeCacheSize=240m       <span class="cm"># 代码缓存，默认 240 MB</span>
+-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data/dump   <span class="cm"># 堆 OOM 时留下现场</span>
+-XX:NativeMemoryTracking=summary     <span class="cm"># 打开后用 jcmd &lt;pid&gt; VM.native_memory summary 看每块各占多少</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ⑤ -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>亲眼看到：列出每块内存，再挨个撑爆</h2>
+    <p class="lead">一个不依赖任何库的程序：<code>pools</code> 模式把 JVM 当前的内存池全部打印出来；另外四个模式分别往堆、元空间、直接内存、栈里塞东西，直到报错。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">1</span><b>MemDemo.java</b><span>JDK 8 / 17 / 21 都能跑</span></div>
+<pre><code>import java.io.*;
+import java.lang.management.*;
+import java.nio.ByteBuffer;
+import java.util.*;
+
+/** 看 JVM 的内存分成哪几块，再把其中几块撑爆。JDK 8 / 17 / 21 都能跑。
+ *  java MemDemo pools | heap | meta | direct | stack */
+public class MemDemo {
+    public static void main(String[] a) throws Exception {
+        String mode = a.length &gt; 0 ? a[0] : "pools";
+        System.out.println("Java " + System.getProperty("java.version") + "，模式 " + mode);
+        switch (mode) {
+            case "pools":  pools();  break;
+            case "heap":   heap();   break;
+            case "meta":   meta();   break;
+            case "direct": direct(); break;
+            case "stack":  stack();  break;
+            default: System.out.println("未知模式");
+        }
+    }
+
+    // 1. 列出所有内存池：哪些在堆里，哪些不在
+    static void pools() {
+        for (MemoryPoolMXBean p : ManagementFactory.getMemoryPoolMXBeans()) {
+            MemoryUsage u = p.getUsage();
+            System.out.printf("%-8s %-32s 已用 %6.1f MB  已提交 %6.1f MB  上限 %s%n",
+                    p.getType() == MemoryType.HEAP ? "[堆]" : "[非堆]", p.getName(),
+                    mb(u.getUsed()), mb(u.getCommitted()), u.getMax() &lt; 0 ? "不限" : String.format("%.0f MB", mb(u.getMax())));
+        }
+        System.out.printf("堆最大值 Runtime.maxMemory() = %.0f MB%n", mb(Runtime.getRuntime().maxMemory()));
+        com.sun.management.HotSpotDiagnosticMXBean hs =
+                ManagementFactory.getPlatformMXBean(com.sun.management.HotSpotDiagnosticMXBean.class);
+        for (String f : new String[]{"UseG1GC", "UseCompressedOops", "UseCompressedClassPointers", "ThreadStackSize",
+                "MaxMetaspaceSize", "CompressedClassSpaceSize", "ReservedCodeCacheSize", "MaxDirectMemorySize", "MaxTenuringThreshold"})
+            System.out.println("  -XX:" + f + " = " + hs.getVMOption(f).getValue());
+    }
+
+    // 2. 堆：一直 new 1 MB 的数组并留着
+    static void heap() {
+        List&lt;byte[]&gt; keep = new ArrayList&lt;&gt;();
+        try { while (true) keep.add(new byte[1 &lt;&lt; 20]); }
+        catch (OutOfMemoryError e) { int n = keep.size(); keep = null; System.out.println("留住了 " + n + " MB 后：" + e); }
+    }
+
+    // 3. 元空间：每次用一个新的类加载器，把同一个类再定义一遍（每次都是一个新类）
+    static class Dummy { int x; void hello() { } }
+    static class OneShotLoader extends ClassLoader {
+        OneShotLoader() { super(null); }
+        Class&lt;?&gt; define(byte[] b) { return defineClass(Dummy.class.getName(), b, 0, b.length); }
+    }
+    static void meta() throws IOException {
+        byte[] bytes;
+        try (InputStream in = MemDemo.class.getResourceAsStream("MemDemo$Dummy.class")) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096]; int r;
+            while ((r = in.read(buf)) &gt; 0) out.write(buf, 0, r);
+            bytes = out.toByteArray();
+        }
+        List&lt;Class&lt;?&gt;&gt; keep = new ArrayList&lt;&gt;();
+        try { while (true) keep.add(new OneShotLoader().define(bytes)); }
+        catch (OutOfMemoryError e) { int n = keep.size(); keep = null; System.out.println("定义了 " + n + " 个类后：" + e); }
+    }
+
+    // 4. 直接内存：一直 allocateDirect 1 MB 并留着
+    static void direct() {
+        List&lt;ByteBuffer&gt; keep = new ArrayList&lt;&gt;();
+        try { while (true) keep.add(ByteBuffer.allocateDirect(1 &lt;&lt; 20)); }
+        catch (OutOfMemoryError e) { int n = keep.size(); keep = null; System.out.println("分配了 " + n + " MB 直接内存后：" + e); }
+    }
+
+    // 5. 栈：无限递归，看能递归多深
+    static int depth;
+    static void down() { depth++; down(); }
+    static void stack() {
+        try { down(); } catch (StackOverflowError e) { System.out.println("递归 " + depth + " 层后：" + e); }
+    }
+
+    static double mb(long b) { return b / 1024.0 / 1024.0; }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">2</span><b>运行</b><span>本机 JDK 17.0.20.1，<code>javac --release 8</code> 编译</span></div>
+<pre class="console"><b>$ java -Xmx256m MemDemo pools</b>
+[非堆]  CodeHeap 'non-nmethods'          已用    1.0 MB  已提交    2.4 MB  上限 6 MB
+[非堆]  Metaspace                        已用    0.7 MB  已提交    0.9 MB  上限 不限
+[非堆]  CodeHeap 'profiled nmethods'     已用    0.3 MB  已提交    2.4 MB  上限 117 MB
+[非堆]  Compressed Class Space           已用    0.1 MB  已提交    0.1 MB  上限 1024 MB
+<span class="w">[堆]    G1 Eden Space                    已用    1.0 MB  已提交   10.0 MB  上限 不限</span>
+<span class="w">[堆]    G1 Old Gen                       已用    0.9 MB  已提交  180.0 MB  上限 256 MB</span>
+<span class="w">[堆]    G1 Survivor Space                已用    0.0 MB  已提交    0.0 MB  上限 不限</span>
+[非堆]  CodeHeap 'non-profiled nmethods' 已用    0.1 MB  已提交    2.4 MB  上限 117 MB
+  -XX:ThreadStackSize = 2040   -XX:MaxMetaspaceSize = -1   -XX:CompressedClassSpaceSize = 1073741824
+  -XX:ReservedCodeCacheSize = 251658240   -XX:MaxDirectMemorySize = 0   -XX:MaxTenuringThreshold = 15
+
+<b>$ java -Xmx32m MemDemo heap</b>
+<span class="r">留住了 14 MB 后：java.lang.OutOfMemoryError: Java heap space</span>
+<b>$ java -XX:MaxMetaspaceSize=24m MemDemo meta</b>
+<span class="r">定义了 4031 个类后：java.lang.OutOfMemoryError: Metaspace</span>
+<b>$ java -XX:MaxDirectMemorySize=16m MemDemo direct</b>
+<span class="r">分配了 16 MB 直接内存后：java.lang.OutOfMemoryError: Cannot reserve 1048576 bytes of direct buffer memory (allocated: 16777216, limit: 16777216)</span>
+<b>$ java MemDemo stack</b>
+<span class="r">递归 47116 层后：java.lang.StackOverflowError</span>
+<b>$ java -Xss256k MemDemo stack</b>
+<span class="r">递归 3544 层后：java.lang.StackOverflowError</span></pre>
+  </div>
+  <p class="tip"><span class="tag-real">实测</span> 2 核 ARM 云主机，JDK 17.0.20.1，每个模式跑一次。<code>pools</code> 的输出为了排版删掉了两行默认值。</p>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>报错</th><th>满的是哪块</th><th>常见原因</th><th>先查什么</th></tr></thead>
+      <tbody>
+        <tr><th><code>Java heap space</code></th><td>堆</td><td>活对象太多：一次查出几十万行、缓存只进不出、集合当全局变量</td><td>OOM 时的堆转储，用 MAT 看谁占得最多</td></tr>
+        <tr><th><code>Metaspace</code></th><td>元空间</td><td>类太多或类加载器泄漏：动态代理、Groovy 脚本反复编译、热部署</td><td><code>jcmd &lt;pid&gt; VM.classloader_stats</code>、类的数量是不是一直涨</td></tr>
+        <tr><th><code>… direct buffer memory</code></th><td>直接内存</td><td>Netty、NIO 的堆外缓冲没释放，或者堆很空、GC 不来，堆外缓冲迟迟不回收</td><td>NMT、Netty 的泄漏检测</td></tr>
+        <tr><th><code>StackOverflowError</code></th><td>某个线程的栈</td><td>递归没有出口、两个方法互相调用、调用链太深</td><td>异常栈里重复出现的那几行</td></tr>
+        <tr><th><code>unable to create native thread</code></th><td>系统给进程的线程数或内存</td><td>线程池无界、每个请求开线程</td><td>线程数（<code>jstack</code>）、<code>ulimit -u</code></td></tr>
+        <tr><th>进程被杀、没有任何报错</th><td>进程总内存超过容器限制</td><td>堆开得太满，没给堆外留空间</td><td>容器事件里的 OOMKilled、NMT</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="pains">
+    <li class="ok">32 MB 的堆只留住了 14 个 1 MB 的数组：堆小时 G1 的 Region 是 1 MB，超过半个 Region 的对象算“大对象”，一个 1 MB 的数组（再加对象头）要占两个 Region，堆一下就被占满了。</li>
+    <li class="ok">直接内存的报错文字随版本变过：JDK 8 是 <code>Direct buffer memory</code>，17 上是 <code>Cannot reserve … bytes of direct buffer memory</code>。按关键词 <code>direct buffer memory</code> 搜日志最稳。</li>
+    <li class="ok">栈从默认的约 2 MB 调到 256 KB，递归深度从 47116 层降到 3544 层，大致按比例缩小（每层栈帧大小一样）。</li>
+  </ul>
+  <div class="two">
+    <div class="done-box"><b>到这里已经能交差了。</b>能画出五块区域、说出每块放什么、由哪个参数管；看到一条 OOM 报错，能马上说出是哪块满了、该先查什么。</div>
+    <div class="todo">
+      <b>已知还没处理的细节</b>
+      <ul>
+        <li>容器被杀却没有 OOM 日志 → <a href="#pit-container">⑥ 坑 1</a></li>
+        <li>元空间为什么会“泄漏” → <a href="#pit-meta">⑥ 坑 2</a></li>
+        <li>新生代、Survivor 开多大 → <a href="#lab">⑥ 分代实验台</a></li>
+        <li>不同 JDK 版本里结构的变化 → <a href="#c3">⑥ 第三圈</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ⑥ -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>细节：哪块会满、怎么配、各版本怎么变</h2>
+    <p class="lead">第一圈是线上最常见的几种内存事故，每条标了根源在 ④ 的哪一条；第二圈是配置规范；第三圈是逃逸分析、TLAB、版本差异和分代实验台。</p>
+  </div>
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-container">
+        <b><em>坑 1</em>容器隔几天被杀一次，没有任何 OOM 日志<a class="root" href="#m-map">← ④ 机制 1 堆外</a></b>
+        <dl>
+          <dt>现象</dt><dd>Kubernetes 里 Pod 状态是 OOMKilled，应用日志戛然而止，没有 OutOfMemoryError，也没有堆转储。</dd>
+          <dt>根源</dt><dd>进程总内存 = 堆 + 元空间 + 代码缓存 + 线程栈 + 直接内存 + GC/JIT 自己的内存。<code>-Xmx</code> 设到容器限制的 90% 以上，堆外一涨就超了；容器是直接杀进程，JVM 来不及做任何事。</dd>
+          <dt>做法</dt><dd class="fix">堆用 <code>-XX:MaxRAMPercentage=75</code> 左右，给堆外留 25%；给元空间和直接内存设上限，让它们超了在 JVM 里报错，而不是被容器杀；用 NMT 看清每块各占多少。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-meta">
+        <b><em>坑 2</em>OutOfMemoryError: Metaspace，类的数量一直涨<a class="root" href="#m-map">← ④ 机制 1 元空间</a></b>
+        <dl>
+          <dt>现象</dt><dd>服务跑得越久，加载的类越多，最后元空间报 OOM；或者元空间没设上限，进程内存一直涨。<span class="seen">⑤ 实测</span></dd>
+          <dt>根源</dt><dd>类的元数据只有在它的类加载器整个被回收时才会卸载。每次都新建类加载器去生成类（Groovy 脚本每次重新编译、每次请求都 new 一个 CGLIB 增强器、反复热部署），旧的加载器又被别处引用着，类就越积越多。</dd>
+          <dt>做法</dt><dd class="fix">脚本编译结果、动态代理类要缓存复用；设 <code>MaxMetaspaceSize</code> 让问题早暴露；用 <code>jcmd &lt;pid&gt; VM.classloader_stats</code> 看哪种类加载器最多。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-direct">
+        <b><em>坑 3</em>堆很空闲，却报 direct buffer memory<a class="root" href="#m-map">← ④ 机制 1 直接内存</a></b>
+        <dl>
+          <dt>现象</dt><dd>Netty 或 NIO 服务报直接内存 OOM，堆监控里却很空闲。<span class="seen">⑤ 实测</span></dd>
+          <dt>根源</dt><dd>直接内存要等堆里那个对应的 <code>ByteBuffer</code> 小对象被 GC 掉才释放。堆很空闲时 GC 很少发生，堆外的缓冲就一直不还；Netty 的池化缓冲则是忘了 <code>release()</code> 就永远不还。</dd>
+          <dt>做法</dt><dd class="fix">显式设 <code>MaxDirectMemorySize</code>；Netty 的缓冲用完要 <code>release</code>，测试环境打开泄漏检测；别用 <code>-XX:+DisableExplicitGC</code> 关掉分配直接内存时那次兜底的 <code>System.gc()</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-humongous">
+        <b><em>坑 4</em>堆还有很多空间，却频繁 GC 甚至 OOM<a class="root" href="#m-gen">← ④ 机制 4 大对象</a></b>
+        <dl>
+          <dt>现象</dt><dd>GC 日志里很多 “Humongous” 字样，或者 ⑤ 里那样：32 MB 的堆只放下 14 MB 数据就满了。<span class="seen">⑤ 实测</span></dd>
+          <dt>根源</dt><dd>G1 里超过半个 Region 的对象直接按整块 Region 分配，尾巴上用不完的部分也浪费掉；它们直接进老年代，回收也更麻烦。</dd>
+          <dt>做法</dt><dd class="fix">避免一次性的大数组、大字符串（比如整个文件读进内存、一次查出几十万行）；确实需要时调大 <code>-XX:G1HeapRegionSize</code>，让它们不再算大对象。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-32g">
+        <b><em>坑 5</em>堆从 31 GB 加到 33 GB，能放的对象反而少了<a class="root" href="#m-object">← ④ 机制 3 压缩指针</a></b>
+        <dl>
+          <dt>现象</dt><dd>机器内存多了，把 <code>-Xmx</code> 从 31g 调到 33g 甚至 40g，GC 压力没降，堆用量还更高。</dd>
+          <dt>根源</dt><dd>压缩指针（引用占 4 字节）只在堆小于约 32 GB 时生效，超过后每个引用变成 8 字节。对象里引用多的应用，同样的数据要多占不少空间。</dd>
+          <dt>做法</dt><dd class="fix">堆要么留在 31 GB 以内，要么加到明显更大（多出来的部分要先抵掉引用变长的损失）；用 <code>-XX:+PrintFlagsFinal</code> 看 <code>UseCompressedOops</code> 是否还是 true。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-threads">
+        <b><em>坑 6</em>StackOverflowError，或者 unable to create native thread<a class="root" href="#m-stack">← ④ 机制 2 栈</a></b>
+        <dl>
+          <dt>现象</dt><dd>前者：递归或互相调用的方法一跑就崩。后者：并发一高，新线程起不来。</dd>
+          <dt>根源</dt><dd>每个线程的栈大小固定，调用太深就溢出（⑤：默认约 47000 层，<code>-Xss256k</code> 只有约 3500 层）；而每个线程的栈都要占堆外内存，线程开得太多，内存或系统的线程数上限先到。</dd>
+          <dt>做法</dt><dd class="fix">递归改循环，或者给出口条件；线程池有界；线程数确实要很多的，看 <a href="../network/io-models.html">网络 IO 模型</a> 里的虚拟线程。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>容器里用比例给堆，给堆外留够</b><p><code>-XX:MaxRAMPercentage=75</code> 左右；直接内存用得多的（Netty、Kafka 客户端）再少给一点。</p><p class="guard">OOMKilled 且没有日志（坑 1）</p></div>
+      <div class="rl"><b>延迟敏感的服务 <code>-Xms</code> 等于 <code>-Xmx</code></b><p>启动就把堆要满，运行时不再扩缩。</p><p class="guard">堆扩张时的停顿和抖动</p></div>
+      <div class="rl"><b>OOM 一定要留现场</b><p><code>-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=…</code>，路径放在有空间的持久化盘上；GC 日志一直开着。</p><p class="guard">出了事只能猜</p></div>
+      <div class="rl"><b>元空间、直接内存都设上限</b><p>默认一个不限、一个等于堆上限。</p><p class="guard">泄漏时把整个进程拖垮，而不是在 JVM 里早早报错</p></div>
+      <div class="rl"><b>线程池有界，别为每个请求开线程</b><p>每个线程都带着一个固定大小的栈。</p><p class="guard">unable to create native thread、堆外内存暴涨（坑 6）</p></div>
+      <div class="rl"><b>查堆外先开 NMT</b><p><code>-XX:NativeMemoryTracking=summary</code>，再 <code>jcmd &lt;pid&gt; VM.native_memory summary</code>，每块各占多少一目了然。开着有一点性能开销。</p><p class="guard">对着 RSS 瞎猜是哪块涨了</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>更深一层</h3></div>
+    <div class="deep">
+      <div class="dp" data-role="bk">
+        <h4>TLAB：为什么 new 对象这么快</h4>
+        <p>所有线程都往 Eden 里分配，如果每次都抢同一把锁会很慢。HotSpot 给每个线程在 Eden 里划一小块私有的分配缓冲（TLAB），线程在自己的那块里分配只要把指针往后挪一下，不用加锁；用完了再去要一块新的。</p>
+      </div>
+      <div class="dp" data-role="pd">
+        <h4>逃逸分析：有的对象根本不在堆上</h4>
+        <p>JIT（C2）编译时如果发现一个对象只在方法内部用、不会被别处拿到（不逃逸），可以把它拆成几个局部变量放进寄存器或栈帧，堆上根本不分配，叫标量替换。所以“循环里 new 了很多小对象”不一定慢；但这是 JIT 的优化，没被编译的代码、逃逸了的对象都享受不到。</p>
+      </div>
+      <div class="dp" data-role="cg">
+        <h4>永久代为什么换成元空间</h4>
+        <p>永久代在堆里、大小固定（<code>-XX:MaxPermSize</code>），类一多就 <code>PermGen space</code> 报错，开大了又浪费堆。8 把类的元数据挪到本地内存，按需增长，随类加载器卸载；字符串常量池和静态变量在 7 已经先挪进了堆。代价是默认没有上限，所以要自己设 <code>MaxMetaspaceSize</code>（坑 2）。</p>
+      </div>
+      <div class="dp" data-role="g2">
+        <h4>Survivor 为什么有两块</h4>
+        <p>复制算法需要一块“空的目标区”：每次 Young GC 把 Eden 和其中一块 Survivor 里的活对象，一起复制到另一块空的 Survivor，然后整块清空原来的两块。两块轮流当目标，所以任何时刻总有一块是空的，这是复制算法的代价。G1 里 Survivor 也是一组 Region，原理相同。</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:12px">版本差异</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th>点</th><th>JDK 8</th><th>JDK 17</th><th>JDK 21 / 25</th></tr></thead>
+        <tbody>
+          <tr><th>方法区</th><td>元空间（7 及以前是永久代）</td><td>元空间</td><td>元空间</td></tr>
+          <tr><th>默认 GC 和堆的形状</th><td>Parallel：新生代、老年代两段连续内存；内存池叫 PS Eden Space 等</td><td>G1（9 起）：堆切成 Region</td><td>G1；ZGC 21 起有分代模式，23 起默认分代</td></tr>
+          <tr><th>代码缓存</th><td>一整块</td><td>9 起分成三段（⑤ 里的三个 CodeHeap）</td><td>同 17</td></tr>
+          <tr><th>容器感知</th><td>8u191 起</td><td>有</td><td>有</td></tr>
+          <tr><th>对象头</th><td>12 字节（压缩类指针）</td><td>12 字节</td><td>25 可开紧凑对象头（8 字节），27 起默认</td></tr>
+          <tr><th>直接内存的报错文字</th><td><code>Direct buffer memory</code></td><td><code>Cannot reserve … direct buffer memory</code></td><td>同 17</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tip">版本改动的来龙去脉见 <a href="../jdk/jdk-8-17-21.html">JDK 8、17、21、25</a>。直接内存报错文字按 jdk8u 和 jdk17u 的 <code>java.nio.Bits</code> 源码核对。</p>
+
+    <h3 id="lab" style="margin-top:12px">分代实验台<small style="font-family:var(--font-body);font-size:14px;color:var(--muted);margin-left:8px">先猜，再运行</small></h3>
+    <div class="lab" id="lab-box">
+      <div class="presets" id="lab-presets"></div>
+      <div class="guess" id="lab-guess"></div>
+      <div class="ctl-grid">
+        <div class="ctl"><span class="lbl">分配速度<output id="c-rate-o"></output></span><input type="range" id="c-rate" min="20" max="1500" step="10" aria-label="分配速度"></div>
+        <div class="ctl"><span class="lbl">Eden 大小<output id="c-eden-o"></output></span><input type="range" id="c-eden" min="64" max="4096" step="64" aria-label="Eden 大小"></div>
+        <div class="ctl"><span class="lbl">每个 Survivor<output id="c-surv-o"></output></span><input type="range" id="c-surv" min="8" max="512" step="8" aria-label="Survivor 大小"></div>
+        <div class="ctl"><span class="lbl">中等寿命对象占比<output id="c-mid-o"></output></span><input type="range" id="c-mid" min="0" max="30" step="1" aria-label="中等寿命对象占比"></div>
+        <div class="ctl"><span class="lbl">它们平均活多久<output id="c-tau-o"></output></span><input type="range" id="c-tau" min="0.2" max="10" step="0.2" aria-label="平均寿命"></div>
+        <div class="ctl"><span class="lbl">长寿对象占比（如缓存）<output id="c-long-o"></output></span><input type="range" id="c-long" min="0" max="2" step="0.05" aria-label="长寿对象占比"></div>
+        <div class="ctl"><span class="lbl">晋升年龄阈值<output id="c-thr-o"></output></span><input type="range" id="c-thr" min="1" max="15" step="1" aria-label="晋升年龄阈值"></div>
+        <div class="ctl"><span class="lbl">老年代大小<output id="c-old-o"></output></span><input type="range" id="c-old" min="256" max="8192" step="256" aria-label="老年代大小"></div>
+      </div>
+      <div class="run-row">
+        <button class="btn primary" type="button" id="lab-run">运行</button>
+        <button class="btn" type="button" id="lab-base">把现在的设置当基线</button>
+        <span class="tip" id="lab-tip">选一个剧情先猜；之后拖滑块，结果会一直和基线对比。</span>
+      </div>
+      <div class="tiles" id="lab-tiles"></div>
+      <div class="lab-res" id="lab-res" data-role="other">先选一个剧情，猜一下，再点“运行”。</div>
+    </div>
+    <p class="tip">模型：对象按寿命分三种。短命的活不过下一次 Young GC；中等寿命的平均活 τ 秒（指数分布）；长寿的一直活着。Young GC 间隔 = Eden ÷ 分配速度；每次 GC 时还活着的对象进 Survivor、年龄 +1，到阈值进老年代；Survivor 装不下时，像 JVM 的动态年龄那样把晋升年龄降低。为了好懂做了简化：不算 <code>TargetSurvivorRatio</code>（JVM 默认只把 Survivor 用到一半），不算老年代里对象的死亡，只算“老年代从空到满要多久”。逻辑在 node 里随机测过 2 万组：Survivor 调大，晋升不会变快；晋升速度不会超过对象存活下来的速度。</p>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>G1 和 ZGC 怎么回收：Region、记忆集、混合回收、并发标记</li>
+      <li>堆转储分析：用 MAT 找出谁占了内存、谁引用着它</li>
+      <li>类加载器和元空间泄漏的排查</li>
+      <li>NMT 深入：每块本地内存都是谁在用</li>
+      <li>JIT、代码缓存和代码缓存满了以后的“编译停止”</li>
+      <li>对象分配全过程：TLAB、逃逸分析、大对象</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ↺ -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 MemDemo</h2>
+    <p class="lead">预期是按 ④ 推出来的，<b>没有在本机跑过</b>，你跑出来的数字应该落在附近。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="bk">
+      <h4>练习 1 · 先猜，再换成 256 KB 的数组</h4>
+      <p>把 heap 模式里的 <code>new byte[1 &lt;&lt; 20]</code> 改成 <code>new byte[1 &lt;&lt; 18]</code>（256 KB），还是 <code>-Xmx32m</code>。先猜能留住多少 MB。</p>
+      <p><b>预期：</b>明显多于 14 MB，接近 30 MB：256 KB 小于半个 Region（512 KB），不再算大对象，不会一个占两块。</p>
+      <p class="uses">用到：坑 4</p>
+    </div>
+    <div class="exc" data-role="rn">
+      <h4>练习 2 · 用 NMT 看清每一块</h4>
+      <p>pools 模式最后加一句 <code>Thread.sleep(60000)</code>，用 <code>-XX:NativeMemoryTracking=summary</code> 启动，另开终端 <code>jcmd &lt;pid&gt; VM.native_memory summary</code>。</p>
+      <p><b>预期：</b>能看到 Java Heap、Class、Thread、Code、GC、Internal 等每一项的 reserved 和 committed；reserved（预留）远大于 committed（真正占用）。</p>
+      <p class="uses">用到：坑 1、第二圈“查堆外先开 NMT”</p>
+    </div>
+    <div class="exc" data-role="pd">
+      <h4>练习 3 · 栈和递归深度</h4>
+      <p>分别用 <code>-Xss512k</code> 和 <code>-Xss1m</code> 跑 stack 模式，再给 <code>down()</code> 加两个 long 型局部变量再跑一次。</p>
+      <p><b>预期：</b>512k 约 7000 层、1m 约 14000 层（按 256k 时约 3500 层成比例估算）；加了局部变量后每层栈帧变大，同样的 <code>-Xss</code> 下层数变少。</p>
+      <p class="uses">用到：④ 机制 2、坑 6</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出 JVM 内存结构的要点。</summary><p>线程私有的栈和程序计数器、共享的堆、堆外的元空间、代码缓存和直接内存；堆按对象年龄分代，因为大多数对象很快就死；<code>-Xmx</code> 只管堆，进程总内存是各块之和。</p><p class="from">← 开头 + ④ 机制 1</p></details>
+    <details><summary>2. 没有自动内存管理的语言痛在哪？JVM 为此付出了什么？</summary><p>手动释放会泄漏或野指针。JVM 改成 GC 自动回收，代价是要把内存按用途分区、让 GC 知道从哪找根，并且要为堆、元空间等分别配大小。</p><p class="from">← ②</p></details>
+    <details><summary>3. 容器被杀却没有 OOM 日志，根源是 ④ 的哪一条？</summary><p>机制 1：进程总内存包括堆外的元空间、代码缓存、线程栈、直接内存等，<code>-Xmx</code> 管不到；总数超过容器限制，容器直接杀进程，JVM 没机会抛错。</p><p class="from">← ④ 机制 1 + 坑 1</p></details>
+    <details><summary>4. 预测：分配速度不变，把 Eden 调大一倍、Survivor 不动，Young GC 的频率会怎样？晋升会不会跟着变少？</summary><p>频率大约减半（间隔 = Eden ÷ 分配速度）。晋升不一定变少：间隔变长，每次 GC 时还活着的中等寿命对象变多，Survivor 装不下，晋升年龄就被迫降低，对象提前进老年代。所以新生代要 Eden 和 Survivor 一起调，JVM 默认也是按 <code>SurvivorRatio=8</code> 一起缩放的。实验台第一、二个剧情可以对照着看。</p><p class="from">← ④ 机制 4 + 实验台</p></details>
+    <details><summary>5. 预测：一个服务的本地缓存只进不出，每秒新增 1 MB 长期存活的对象。把新生代调大能救吗？</summary><p>救不了。长寿对象迟早会熬到晋升年龄进老年代，新生代多大都只是推迟；老年代被它们填满的速度就是每秒 1 MB。根本办法是给缓存设上限和过期。实验台第三个剧情就是这个。</p><p class="from">← ④ 机制 4 + 实验台</p></details>
+    <details><summary>6. 预测：一个 Netty 服务堆开了 4 GB、几乎是空的，<code>MaxDirectMemorySize</code> 没设，会不会报直接内存 OOM？</summary><p>可能会，而且上限是 4 GB（不设时等于堆上限）。堆空闲意味着 GC 很少，已经没用的 <code>ByteBuffer</code> 对象迟迟不被回收，它们占着的堆外内存就不释放；用池化缓冲又忘了 release 的，更是永远不还。</p><p class="from">← ④ 机制 1 直接内存 + 坑 3</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>档位：标准档。本机实测：⑤ 的 MemDemo，在 2 核 ARM 云主机上用 JDK 17.0.20.1 跑（<code>--release 8</code> 编译），每个模式一次。查过的文档和源码：JVM 规范第 2.5 节（运行时数据区）；jdk8u 和 jdk17u 的 <code>java.nio.Bits</code>（直接内存的报错文字）；本机 JDK 17 打印的参数默认值；JEP 122（删除永久代）、JEP 197（分段代码缓存）、JEP 248（G1 默认）、JEP 450 / 519 / 534（紧凑对象头）。实验台是简化的估算模型，不是实测。↺ 的练习预期没有在本机跑过。</p>
+  <p>相关：<a href="../juc/java-memory-model.html">Java 内存模型</a> · <a href="../jdk/jdk-8-17-21.html">JDK 8、17、21、25</a> · <a href="../network/io-models.html">网络 IO 模型</a> · <a href="../arch/three-highs-map.html">三高知识地图</a> · <a href="../kafka/kafka-storage-zerocopy.html">Kafka 存储与零拷贝</a></p>
+</footer>
+</main>
+<script>
+/*SIM-START*/
+// 分代模型：对象分三种寿命
+//   短命（请求里的临时对象）：下一次 Young GC 前就死了
+//   中等寿命（平均活 tau 秒，指数分布）：比如一次长请求、一批任务里的对象
+//   长寿（一直活着）：比如不断变大的本地缓存
+// 每次 Young GC：Eden 里活着的复制到 Survivor，年龄 +1；年龄到阈值进老年代；Survivor 装不下时晋升年龄自动降低（动态年龄）。
+function simulate(p) {
+  // p: rate(MB/s) eden survivor(MB, 单个) tau(s) mid(%) longp(%) thr old(MB)
+  var T = p.eden / p.rate;                                  // Young GC 间隔（秒）
+  var m = p.mid / 100, L = p.longp / 100;
+  var q = Math.exp(-T / p.tau);                             // 中等寿命对象再熬过一次 GC 的概率
+  var M1 = p.rate * m * p.tau * (1 - q);                    // 一次 GC 时，刚分配的中等寿命对象还活着的量
+  var L1 = p.rate * L * T;                                  // 这段时间分配的长寿对象
+  function cohort(a) { return M1 * Math.pow(q, a - 1) + L1; }   // 年龄为 a 的那批还剩多少
+  var need = 0;
+  for (var a = 1; a < p.thr; a++) need += cohort(a);          // 不提前晋升时，Survivor 需要装下的量
+  // 像 JVM 的动态年龄一样：Survivor 装不下时，把晋升年龄降到 k，年龄 1..k-1 留在 Survivor
+  var k = 1, held = 0;
+  while (k < p.thr && held + cohort(k) <= p.survivor) { held += cohort(k); k++; }
+  var promoGC = cohort(k);                                    // 每次 Young GC 晋升到老年代的量
+  var perMin = 60 / T;
+  var promoMin = promoGC * perMin;                            // 每分钟晋升
+  return {
+    T: T, perMin: perMin, copied: held + promoGC,              // 每次要复制的活对象（决定 Young GC 停顿）
+    need: need, held: held, survPct: need / p.survivor, k: k, early: k < p.thr,
+    promoGC: promoGC, promoMin: promoMin,
+    oldFullMin: promoMin > 0 ? p.old / promoMin : Infinity     // 老年代从空到满要几分钟
+  };
+}
+/*SIM-END*/
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var CTL = [
+    ['rate', 'c-rate', function (v) { return v + ' MB/s'; }],
+    ['eden', 'c-eden', function (v) { return v + ' MB'; }],
+    ['survivor', 'c-surv', function (v) { return v + ' MB'; }],
+    ['mid', 'c-mid', function (v) { return v + '%'; }],
+    ['tau', 'c-tau', function (v) { return (+v).toFixed(1) + ' 秒'; }],
+    ['longp', 'c-long', function (v) { return (+v).toFixed(2) + '%'; }],
+    ['thr', 'c-thr', function (v) { return v; }],
+    ['old', 'c-old', function (v) { return v + ' MB'; }]
+  ];
+  var BASE = { rate: 300, eden: 256, survivor: 32, tau: 2, mid: 10, longp: 0.05, thr: 15, old: 2048 };
+  function mix(a, b) { var o = {}, k; for (k in a) o[k] = a[k]; for (k in b) o[k] = b[k]; return o; }
+  var PRESETS = [
+    { name: '只调大 Eden', sub: '256 → 1024 MB，Survivor 不动', before: BASE, after: mix(BASE, { eden: 1024 }),
+      q: '分配速度不变，Eden 从 256 MB 调到 1024 MB，Survivor 还是 32 MB。每分钟晋升到老年代的量会怎样？',
+      opts: ['明显下降', '基本不变', '变成 4 倍'],
+      answer: function (b, a) { var r = a.promoMin / b.promoMin; return r < 0.7 ? 0 : (r < 1.5 ? 1 : 2); } },
+    { name: 'Survivor 太小', sub: '32 → 128 MB', before: BASE, after: mix(BASE, { survivor: 128 }),
+      q: '只把每个 Survivor 从 32 MB 调到 128 MB。老年代从空到满要多久？',
+      opts: ['差不多', '变长几倍', '变长几十倍以上'],
+      answer: function (b, a) { var r = a.oldFullMin / b.oldFullMin; return r < 2 ? 0 : (r < 50 ? 1 : 2); } },
+    { name: '缓存只进不出', sub: '长寿对象 1%', before: mix(BASE, { survivor: 128, longp: 1 }), after: mix(BASE, { survivor: 128, longp: 1, eden: 1024 }),
+      q: '1% 的对象会一直活着（本地缓存一直涨）。把 Eden 调大 4 倍，能让老年代不再被填满吗？',
+      opts: ['能，晋升会降到接近 0', '不能，晋升速度基本不变', '会填得更快'],
+      answer: function (b, a) { var r = a.promoMin / b.promoMin; return r < 0.3 ? 0 : (r < 1.3 ? 1 : 2); } }
+  ];
+  var cur = -1, guess = -1, ran = false, base = mix(BASE, {});
+  function read() { var p = {}; CTL.forEach(function (c) { p[c[0]] = +$(c[1]).value; }); return p; }
+  function write(p) { CTL.forEach(function (c) { $(c[1]).value = p[c[0]]; $(c[1] + '-o').textContent = c[2](p[c[0]]); }); }
+  function f1(x) { return x >= 100 ? Math.round(x).toString() : (Math.round(x * 10) / 10).toString(); }
+  function mins(x) { if (!isFinite(x) || x > 60 * 24 * 7) return '一周以上'; if (x >= 120) return f1(x / 60) + ' 小时'; if (x < 1) return f1(x * 60) + ' 秒'; return f1(x) + ' 分钟'; }
+  function tile(role, label, now, was) {
+    return '<div class="tile" data-role="' + role + '"><small>' + label + '</small><b>' + now + '</b><span>基线 ' + was + '</span></div>';
+  }
+  function render() {
+    var p = read(); write(p);
+    var r = simulate(p), b = simulate(base);
+    var oldRole = r.oldFullMin < 10 ? 'bad' : (r.oldFullMin < 60 ? 'of' : 'done');
+    $('lab-tiles').innerHTML =
+      tile('bk', 'Young GC 间隔', f1(r.T) + ' 秒', f1(b.T) + ' 秒') +
+      tile('bk', '每次复制的活对象', f1(r.copied) + ' MB', f1(b.copied) + ' MB') +
+      tile(r.survPct > 1 ? 'bad' : 'done', 'Survivor 需要 / 容量', Math.round(r.survPct * 100) + '%', Math.round(b.survPct * 100) + '%') +
+      tile(r.promoMin > 500 ? 'bad' : 'of', '每分钟晋升', f1(r.promoMin) + ' MB', f1(b.promoMin) + ' MB') +
+      tile(oldRole, '老年代多久填满', mins(r.oldFullMin), mins(b.oldFullMin));
+    var res = $('lab-res'), why = [];
+    why.push('每 ' + f1(r.T) + ' 秒一次 Young GC（Eden ' + p.eden + ' MB ÷ 每秒 ' + p.rate + ' MB），中等寿命的对象熬过一次 GC 的概率约 ' + Math.round(Math.exp(-r.T / p.tau) * 100) + '%。');
+    if (r.early) why.push('要让对象熬到 ' + p.thr + ' 岁，Survivor 需要 ' + f1(r.need) + ' MB，只有 ' + p.survivor + ' MB：晋升年龄被迫降到 ' + r.k + ' 岁，中等寿命的对象还没死就进了老年代（提前晋升）。这是老年代涨得快的主因，要把 Survivor 和 Eden 一起调大。');
+    else why.push('Survivor 放得下，中等寿命的对象大多在 Survivor 里就死了，没进老年代。');
+    if (p.longp > 0) why.push('长寿对象每分钟稳定产生 ' + f1(p.rate * p.longp / 100 * 60) + ' MB，它们迟早都要进老年代，新生代怎么调都躲不掉。');
+    res.setAttribute('data-role', oldRole);
+    res.innerHTML = '<b>老年代约 ' + mins(r.oldFullMin) + '填满一次</b>（基线 ' + mins(b.oldFullMin) + '）。<ul><li>' + why.join('</li><li>') + '</li></ul>';
+    return { r: r, b: b };
+  }
+  function renderPresets() {
+    var box = $('lab-presets'); box.innerHTML = '';
+    PRESETS.forEach(function (pr, i) {
+      var bt = document.createElement('button'); bt.type = 'button';
+      bt.setAttribute('aria-pressed', String(i === cur));
+      bt.innerHTML = '<b>' + pr.name + '</b><span>' + pr.sub + '</span>';
+      bt.addEventListener('click', function () { pick(i); });
+      box.appendChild(bt);
+    });
+  }
+  function renderGuess(rb) {
+    var g = $('lab-guess');
+    if (cur < 0) { g.hidden = true; return; }
+    g.hidden = false;
+    var pr = PRESETS[cur], ans = ran ? pr.answer(rb.b, rb.r) : -1;
+    var h = '<p><b>先猜：</b>' + pr.q + '</p><div class="opts">';
+    pr.opts.forEach(function (o, i) {
+      var cls = ran ? (i === ans ? 'right' : (i === guess ? 'wrong' : '')) : '';
+      h += '<button type="button" data-i="' + i + '" class="' + cls + '" aria-pressed="' + (i === guess) + '">' + o + '</button>';
+    });
+    h += '</div>';
+    if (ran && guess >= 0) h += '<div class="res" data-role="' + (guess === ans ? 'done' : 'bad') + '">' + (guess === ans ? '猜对了。' : '没猜中，答案是“' + pr.opts[ans] + '”。') + ' 每分钟晋升 ' + f1(rb.b.promoMin) + ' → ' + f1(rb.r.promoMin) + ' MB，老年代填满 ' + mins(rb.b.oldFullMin) + ' → ' + mins(rb.r.oldFullMin) + '。</div>';
+    g.innerHTML = h;
+    [].forEach.call(g.querySelectorAll('.opts button'), function (bt) {
+      bt.addEventListener('click', function () { guess = +bt.dataset.i; ran = false; renderGuess(rb); $('lab-tip').textContent = '已选。点“运行”看结果。'; });
+    });
+  }
+  function pick(i) {
+    cur = i; guess = -1; ran = false;
+    base = mix(PRESETS[i].before, {}); write(PRESETS[i].after);
+    renderPresets(); renderGuess(null);
+    $('lab-tiles').innerHTML = ''; $('lab-res').setAttribute('data-role', 'other'); $('lab-res').innerHTML = '先猜，再点“运行”。';
+    $('lab-tip').textContent = '滑块已经是“改之后”的设置，基线是改之前。先选一个答案。';
+  }
+  CTL.forEach(function (c) { $(c[1]).addEventListener('input', function () { cur = -1; ran = false; renderPresets(); renderGuess(null); render(); }); });
+  $('lab-run').addEventListener('click', function () {
+    if (cur >= 0 && guess < 0) { $('lab-tip').textContent = '先在上面选一个答案。'; return; }
+    ran = true; var rb = render(); renderGuess(rb);
+    $('lab-tip').textContent = '之后拖滑块，结果会一直和基线对比。';
+  });
+  $('lab-base').addEventListener('click', function () { base = read(); render(); $('lab-tip').textContent = '已把现在的设置当成基线。'; });
+  write(BASE); renderPresets(); render(); $('lab-guess').hidden = true;
+})();
+</script>
+
+<script id="tocx-js">
+(function () {
+  var bar = document.querySelector('nav.topbar .tb-in');
+  if (!bar || bar.querySelector('.tocx-steps, .tocx-dd')) return;
+  var route = document.querySelector('main nav.route');
+  var items = [], btn = null, panel = null;
+
+  function margin(t) {
+    try { if (getComputedStyle(t).scrollMarginTop === '0px') t.style.scrollMarginTop = '64px'; } catch (e) {}
+  }
+  if (route) {
+    var nav = document.createElement('nav');
+    nav.className = 'tocx-steps';
+    nav.setAttribute('aria-label', '六步跳转');
+    [].forEach.call(route.querySelectorAll('a[href^="#"]'), function (r) {
+      var id = r.getAttribute('href').slice(1), t = document.getElementById(id);
+      if (!t) return;
+      var b = r.querySelector('b'), num = b ? b.textContent.trim() : '';
+      var label = r.textContent.replace(num, '').trim();
+      var a = document.createElement('a');
+      a.href = '#' + id; a.title = (num + ' ' + label).trim();
+      a.innerHTML = '<b></b><span></span>';
+      a.firstChild.textContent = num; a.lastChild.textContent = label;
+      nav.appendChild(a); items.push({ a: a, t: t }); margin(t);
+    });
+    if (!items.length) return;
+    bar.appendChild(nav);
+    document.documentElement.classList.add('tocx-on');
+  } else {
+    var hs = document.querySelectorAll('main h2');
+    if (hs.length < 3) return;
+    var dd = document.createElement('div');
+    dd.className = 'tocx-dd';
+    dd.innerHTML = '<button type="button" class="tocx-btn" aria-expanded="false" aria-controls="tocx-panel">目录 ▾</button><div class="tocx-panel" id="tocx-panel" hidden></div>';
+    btn = dd.firstChild; panel = dd.lastChild;
+    var used = {};
+    [].forEach.call(hs, function (h, i) {
+      var t = h.closest('section[id]');
+      if (!t || used[t.id]) t = h;
+      if (!t.id) t.id = 'tocx-' + (i + 1);
+      used[t.id] = 1;
+      var c = h.cloneNode(true);
+      [].forEach.call(c.querySelectorAll('small, .sn'), function (x) { x.parentNode.removeChild(x); });
+      var a = document.createElement('a');
+      a.href = '#' + t.id;
+      a.innerHTML = '<i></i><span></span>';
+      a.firstChild.textContent = (i < 9 ? '0' : '') + (i + 1);
+      a.lastChild.textContent = c.textContent.replace(/\s+/g, ' ').trim();
+      panel.appendChild(a); items.push({ a: a, t: t }); margin(t);
+    });
+    bar.appendChild(dd);
+    function open(v) {
+      panel.hidden = !v; btn.setAttribute('aria-expanded', String(v));
+      if (v && cur >= 0) { var a = items[cur].a; panel.scrollTop = a.offsetTop - panel.clientHeight / 2; }
+    }
+    btn.addEventListener('click', function (e) { e.stopPropagation(); open(panel.hidden); });
+    panel.addEventListener('click', function (e) { if (e.target.closest('a')) open(false); });
+    document.addEventListener('click', function (e) { if (!panel.hidden && !dd.contains(e.target)) open(false); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !panel.hidden) { open(false); btn.focus(); } });
+  }
+
+  var cur = -1, ticking = false, top = bar.parentNode;
+  function spy() {
+    ticking = false;
+    var y = top.getBoundingClientRect().bottom + 24, k = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].t.getBoundingClientRect().top <= y) k = i; else break;
+    }
+    var de = document.documentElement;
+    if (k >= 0 && window.innerHeight + window.pageYOffset >= de.scrollHeight - 4) k = items.length - 1;
+    if (k === cur) return;
+    if (cur >= 0) { items[cur].a.classList.remove('on'); items[cur].a.removeAttribute('aria-current'); }
+    cur = k;
+    if (k < 0) return;
+    var a = items[k].a;
+    a.classList.add('on'); a.setAttribute('aria-current', 'true');
+    if (route) {
+      var n = a.parentNode, nr = n.getBoundingClientRect(), ar = a.getBoundingClientRect();
+      if (ar.left < nr.left) n.scrollLeft -= nr.left - ar.left + 8;
+      else if (ar.right > nr.right) n.scrollLeft += ar.right - nr.right + 8;
+    }
+  }
+  window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(spy); } }, { passive: true });
+  window.addEventListener('resize', spy);
+  spy();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Java 内存模型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* Layout: one 1040px column, same family as the other notes, walked through the six-step method for a basic-theory topic (① 要解决的问题 ② 朴素做法 ③ 几种思路 ④ 关键洞察 ⑤ 手推一遍 ⑥ 边界和变体 ↺). Colors: thread 1 blue (pd), thread 2 teal (bk), main memory / shared state purple (cg), compiler and CPU reordering brown (g2), happens-before edges and highlights amber (of), broken outcomes red, guaranteed outcomes green. Interactive: one stepper walking double-checked locking with and without volatile (⑤). Numbers in ② come from JmmDemo.java run on JDK 17 on a 2-vCPU ARM VM. */
+:root{
+  --paper:#F1F2F4; --card:#FFFFFF; --ink:#18202A; --muted:#5A6473; --line:#D8DDE5; --line-strong:#A8B2C1;
+  --pd:#3150C4; --pd-tint:#E2E7FA;
+  --bk:#0D7A69; --bk-tint:#DCF0EB;
+  --cg:#6A3FC0; --cg-tint:#ECE5FA;
+  --g2:#8A5A2B; --g2-tint:#F3E6D8;
+  --rn:#A8327A; --rn-tint:#F7E1EE;
+  --of:#A26A00; --of-tint:#FBEFCC;
+  --warn:#C2410C; --warn-tint:#FDE6D8;
+  --neutral:#4A5568; --neutral-tint:#E4E8EE;
+  --bad:#C43838; --bad-tint:#F9DEDD;
+  --good:#23824A; --good-tint:#DCF1E3;
+  --on-accent:#FFFFFF;
+  --code-bg:#F7F8FA; --console-bg:#1B2230; --console-fg:#E6EBF2; --console-dim:#8D99AD; --console-hi:#F2C94C;
+  --font-display:"ZCOOL KuaiLe","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+    --pd:#90A4FF; --pd-tint:#1D2650;
+    --bk:#40C6B0; --bk-tint:#12352F;
+    --cg:#B9A0FF; --cg-tint:#2A2148;
+    --g2:#D9A26B; --g2-tint:#3A2A1A;
+    --rn:#F08BC6; --rn-tint:#3D1A30;
+    --of:#F2C94C; --of-tint:#3A3212;
+    --warn:#FB923C; --warn-tint:#3A2214;
+    --neutral:#B4BFCE; --neutral-tint:#232C38;
+    --bad:#FF7B78; --bad-tint:#3D1B1C;
+    --good:#5FD08A; --good-tint:#163524;
+    --on-accent:#0F141A;
+    --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10141A; --card:#182029; --ink:#E6EBF2; --muted:#9AA6B8; --line:#2A3340; --line-strong:#4A5870;
+  --pd:#90A4FF; --pd-tint:#1D2650;
+  --bk:#40C6B0; --bk-tint:#12352F;
+  --cg:#B9A0FF; --cg-tint:#2A2148;
+  --g2:#D9A26B; --g2-tint:#3A2A1A;
+  --rn:#F08BC6; --rn-tint:#3D1A30;
+  --of:#F2C94C; --of-tint:#3A3212;
+  --warn:#FB923C; --warn-tint:#3A2214;
+  --neutral:#B4BFCE; --neutral-tint:#232C38;
+  --bad:#FF7B78; --bad-tint:#3D1B1C;
+  --good:#5FD08A; --good-tint:#163524;
+  --on-accent:#0F141A;
+  --code-bg:#0F151C; --console-bg:#0A0E13; --console-fg:#E6EBF2; --console-dim:#7D889B; --console-hi:#F2C94C;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+main{max-width:1040px;margin:0 auto;padding-block:40px 72px;display:flex;flex-direction:column;gap:84px}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:400;line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,58px)}
+h2{font-size:clamp(28px,4vw,40px)}
+h3{font-size:24px}
+h4{font-size:19px}
+p{margin:0}
+a{color:var(--pd)}
+code{font-family:var(--font-mono);font-size:.86em}
+.lead{color:var(--muted);max-width:44em;margin-top:8px}
+button{font:inherit;color:inherit}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible,input:focus-visible{outline:3px solid var(--pd);outline-offset:2px}
+section{display:flex;flex-direction:column;gap:24px}
+.sub{display:flex;flex-direction:column;gap:20px;padding-top:12px}
+.sub > h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sub > h3 small{font-family:var(--font-body);font-size:14px;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section[id], .sub[id], .pit[id], figure[id]{scroll-margin-top:64px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--paper)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line);margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.tb-in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding-block:10px;font-size:14px;color:var(--muted);min-width:0}
+.tb-home{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-weight:500;flex:none}
+.tb-home:hover{border-color:var(--ink)}
+.tb-here{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* role colors */
+[data-role="pd"]{--rc:var(--pd);--rt:var(--pd-tint)}
+[data-role="bk"]{--rc:var(--bk);--rt:var(--bk-tint)}
+[data-role="cg"]{--rc:var(--cg);--rt:var(--cg-tint)}
+[data-role="g2"]{--rc:var(--g2);--rt:var(--g2-tint)}
+[data-role="rn"]{--rc:var(--rn);--rt:var(--rn-tint)}
+[data-role="of"]{--rc:var(--of);--rt:var(--of-tint)}
+[data-role="warn"]{--rc:var(--warn);--rt:var(--warn-tint)}
+[data-role="other"]{--rc:var(--neutral);--rt:var(--neutral-tint)}
+[data-role="bad"]{--rc:var(--bad);--rt:var(--bad-tint)}
+[data-role="done"]{--rc:var(--good);--rt:var(--good-tint)}
+
+/* ---------- hero + route ---------- */
+.hero{display:flex;flex-direction:column;gap:12px}
+.kicker{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.08em;color:var(--muted)}
+.hero .lead{font-size:17.5px;color:var(--ink)}
+.hero .lead b{color:var(--of)}
+.route{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px 2px 10px;margin-top:6px;scrollbar-width:thin}
+.route a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);text-decoration:none;font-size:14px;white-space:nowrap}
+.route a:hover{border-color:var(--ink)}
+.route a b{font-family:var(--font-display);font-weight:400;font-size:18px;line-height:1;color:var(--of)}
+.route i{flex:none;color:var(--line-strong);font-style:normal;font-size:13px}
+.scene{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--card);border:1.5px dashed var(--line-strong);font-size:14.5px;max-width:54em}
+.scene b{flex:none;font-family:var(--font-display);font-weight:400;font-size:17px;color:var(--of)}
+.sn{font-family:var(--font-display);color:var(--of);margin-right:.25em}
+
+/* ---------- figures ---------- */
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figcaption{font-size:14px;color:var(--muted);max-width:54em}
+.fig-box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:12px;overflow-x:auto}
+.fig-box svg{display:block;width:100%;height:auto}
+.fig-box.wide svg{min-width:660px}
+.sv text{font-family:var(--font-body)}
+.t-h{font-size:15px;font-weight:700;fill:var(--ink)}
+.t-s{font-size:12.5px;fill:var(--ink)}
+.t-b{font-size:12.5px;font-weight:700;fill:var(--ink)}
+.t-m{font-size:11.5px;fill:var(--muted)}
+.t-xs{font-size:10.5px;fill:var(--muted)}
+.t-mono{font-family:var(--font-mono)!important;font-size:11.5px;fill:var(--ink)}
+.t-monos{font-family:var(--font-mono)!important;font-size:10.5px;fill:var(--muted)}
+.t-of{font-size:12px;font-weight:700;fill:var(--of)}
+.t-bad{font-size:12px;font-weight:700;fill:var(--bad)}
+.t-cg{font-size:12px;font-weight:700;fill:var(--cg)}
+.t-g2{font-size:12px;font-weight:700;fill:var(--g2)}
+.t-pd{font-size:12px;font-weight:700;fill:var(--pd)}
+.t-bk{font-size:12px;font-weight:700;fill:var(--bk)}
+.t-rn{font-size:12px;font-weight:700;fill:var(--rn)}
+.t-warn{font-size:12px;font-weight:700;fill:var(--warn)}
+.t-good{font-size:12px;font-weight:700;fill:var(--good)}
+.halo{paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+.halo-c{paint-order:stroke;stroke:var(--code-bg);stroke-width:4px;stroke-linejoin:round}
+.b-pd{fill:var(--pd-tint);stroke:var(--pd);stroke-width:2}
+.b-bk{fill:var(--bk-tint);stroke:var(--bk);stroke-width:2}
+.b-cg{fill:var(--cg-tint);stroke:var(--cg);stroke-width:2}
+.b-g2{fill:var(--g2-tint);stroke:var(--g2);stroke-width:2}
+.b-rn{fill:var(--rn-tint);stroke:var(--rn);stroke-width:2}
+.b-of{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.b-warn{fill:var(--warn-tint);stroke:var(--warn);stroke-width:2}
+.b-good{fill:var(--good-tint);stroke:var(--good);stroke-width:2}
+.b-neu{fill:var(--neutral-tint);stroke:var(--neutral);stroke-width:1.5}
+.b-card{fill:var(--card);stroke:var(--line-strong);stroke-width:1.5}
+.b-bad{fill:var(--bad-tint);stroke:var(--bad);stroke-width:2.5}
+.b-dash{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:5 4}
+.f-ink{fill:var(--ink)} .f-of{fill:var(--of)} .f-cg{fill:var(--cg)} .f-g2{fill:var(--g2)} .f-mut{fill:var(--line-strong)} .f-bad{fill:var(--bad)} .f-pd{fill:var(--pd)} .f-neu{fill:var(--neutral)} .f-bk{fill:var(--bk)} .f-warn{fill:var(--warn)} .f-good{fill:var(--good)} .f-rn{fill:var(--rn)}
+.f-card{fill:var(--card)} .f-code{fill:var(--code-bg)} .f-oft{fill:var(--of-tint)} .f-pdt{fill:var(--pd-tint)} .f-bkt{fill:var(--bk-tint)} .f-cgt{fill:var(--cg-tint)} .f-g2t{fill:var(--g2-tint)} .f-rnt{fill:var(--rn-tint)} .f-neut{fill:var(--neutral-tint)}
+.e-ink{stroke:var(--ink);stroke-width:2;fill:none}
+.e-mut{stroke:var(--line-strong);stroke-width:2;fill:none}
+.e-grid{stroke:var(--line);stroke-width:1;fill:none}
+.e-axis{stroke:var(--line-strong);stroke-width:1.2;fill:none}
+.e-life{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:2 5}
+.e-of{stroke:var(--of);stroke-width:2.5;fill:none}
+.e-pd{stroke:var(--pd);stroke-width:2.5;fill:none}
+.e-bk{stroke:var(--bk);stroke-width:2.5;fill:none}
+.e-cg{stroke:var(--cg);stroke-width:2.5;fill:none}
+.e-g2{stroke:var(--g2);stroke-width:2.5;fill:none}
+.e-rn{stroke:var(--rn);stroke-width:2.5;fill:none}
+.e-warn{stroke:var(--warn);stroke-width:2.5;fill:none}
+.e-good{stroke:var(--good);stroke-width:2.5;fill:none}
+.e-bad{stroke:var(--bad);stroke-width:2.5;fill:none}
+.e-badd{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.e-dash{stroke:var(--line-strong);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.e-rnd{stroke:var(--rn);stroke-width:2;fill:none;stroke-dasharray:6 4}
+.e-ofd{stroke:var(--of);stroke-width:2;fill:none;stroke-dasharray:5 3}
+
+/* ---------- cards ---------- */
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.essence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 18px;align-items:center;padding:18px 20px;border-radius:18px;background:var(--of-tint);border:2px solid var(--of)}
+.essence .big{font-family:var(--font-display);font-size:30px;line-height:1.1;color:var(--of);grid-row:span 2}
+.essence p{font-size:15.5px}
+.misj{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mj{background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--neutral);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mj > b{font-size:16.5px}
+.mj > b i{font-style:normal;font-family:var(--font-display);color:var(--neutral);margin-right:6px;font-size:18px}
+.mj dl{margin:0;display:grid;grid-template-columns:4.6em minmax(0,1fr);gap:5px 10px;font-size:14px}
+.mj dt{color:var(--muted);font-size:13px;padding-top:1px}
+.mj dd{margin:0;min-width:0}
+.mj dd code{overflow-wrap:anywhere}
+.mj dd.ev b{color:var(--bad)}
+.pick-line{font-size:16px;padding:12px 16px;border-radius:14px;background:var(--bk);color:var(--on-accent)}
+.pick-line b{font-weight:700}
+.pick-line code{color:inherit}
+
+/* ---------- code ---------- */
+.codebox{border:1.5px solid var(--line);border-radius:16px;background:var(--code-bg);overflow:hidden;min-width:0}
+.code-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1.5px solid var(--line);font-size:14px;color:var(--muted)}
+.code-bar code,.code-bar b{color:var(--ink)}
+.code-bar .n{font-family:var(--font-display);font-size:17px;color:var(--of)}
+pre{margin:0;padding:14px 18px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--ink)}
+pre code{font-size:inherit}
+.cm{color:var(--muted)}
+.hl{background:var(--of-tint)}
+pre.console{background:var(--console-bg);color:var(--console-dim)}
+pre.console b{color:var(--console-hi);font-weight:600}
+pre.console .w{color:var(--console-fg)}
+pre.console .r{color:#FF9B98}
+.note-box{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-radius:14px;background:var(--of-tint);font-size:14.5px}
+.note-box b{flex:none}
+.note-box code{overflow-wrap:anywhere}
+.tip{font-size:14px;color:var(--muted)}
+.tip code{color:var(--ink);overflow-wrap:anywhere}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.done-box{padding:14px 16px;border-radius:14px;background:var(--good-tint);border:2px solid var(--good);font-size:15px}
+.todo{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.todo ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:14.5px}
+.tag-real{font-family:var(--font-mono);font-size:11.5px;color:var(--bk);border:1.5px solid var(--bk);border-radius:999px;padding:0 7px;white-space:nowrap}
+.callouts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.callouts li{display:grid;grid-template-columns:2em minmax(0,1fr);gap:8px;font-size:14.5px;align-items:start}
+.callouts li > b{font-family:var(--font-display);font-weight:400;font-size:18px;color:var(--of);text-align:center}
+.callouts code{overflow-wrap:anywhere}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:16px;background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;line-height:1.55}
+.t th,.t td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.t thead th{font-family:var(--font-display);font-weight:400;font-size:17px;white-space:nowrap}
+.t tbody th{font-weight:600;white-space:nowrap}
+.t tbody tr:last-child > *{border-bottom:0}
+.t td code{font-size:12.5px;overflow-wrap:anywhere}
+.t td.num, .t th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.t tr.hl td, .t tr.hl th{background:var(--of-tint)}
+.t .bad{color:var(--bad);font-weight:700}
+.t .good{color:var(--good);font-weight:700}
+
+/* ---------- ④ ---------- */
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fact{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.fact h4{color:var(--rc);font-size:18px}
+.fact p{font-size:14px}
+.fact code{overflow-wrap:anywhere}
+.formula{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:14px;background:var(--card);border:2px solid var(--ink);font-size:15px}
+.formula .f{font-family:var(--font-mono);font-size:15px;font-weight:600}
+.formula .f em{font-style:normal;color:var(--of)}
+.formula p{font-size:14px;color:var(--muted)}
+.design{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.design.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.way{border:2px solid var(--rc);border-radius:18px;background:var(--card);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.way h4{color:var(--rc);font-size:20px}
+.way h4 small{font-family:var(--font-body);font-size:13px;color:var(--muted);margin-left:8px}
+.way svg{display:block;width:100%;height:auto}
+.way pre{padding:10px 12px;background:var(--code-bg);border-radius:10px;font-size:12px}
+.pains{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.pains li{position:relative;padding-left:28px}
+.pains li::before{content:"✕";position:absolute;left:0;top:0;width:22px;color:var(--bad);font-weight:700;text-align:center}
+.pains li.ok::before{content:"✓";color:var(--good)}
+.pains code{overflow-wrap:anywhere}
+.verdict{font-size:14.5px;padding:10px 14px;border-radius:12px;background:var(--rt);border:2px solid var(--rc)}
+.metaphor{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.mp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:12px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mp span{font-size:12.5px;color:var(--muted)}
+.mp b{color:var(--rc)}
+.mismatch{font-size:14px;color:var(--muted);padding:10px 14px;border-radius:12px;border:1.5px dashed var(--line-strong)}
+.mech-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+.mech-h .sn{font-size:20px}
+
+/* ---------- stepper ---------- */
+.stage{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st-pos{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-left:auto}
+.st-pos b{color:var(--ink)}
+.cap-txt{font-size:15px;padding:10px 14px;border-radius:12px;background:var(--of-tint);border:2px solid var(--of);min-height:5.4em}
+.cap-txt b{color:var(--ink)}
+.cap-txt .wl{display:block;margin-top:6px;font-size:14px;color:var(--muted)}
+.svg-scroll{overflow-x:auto;border:1.5px solid var(--line);border-radius:14px;background:var(--code-bg)}
+.svg-scroll svg{display:block;width:100%;min-width:640px;height:auto}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font-size:13.5px;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);cursor:pointer}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.ledger{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lg-c{border-radius:12px;padding:6px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.lg-c small{font-size:12px;color:var(--muted)}
+.lg-c b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:17px}
+.lg-c span{font-size:11.5px;color:var(--muted)}
+/* ---------- lab ---------- */
+.lab{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.presets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.presets button{text-align:left;border:1.5px solid var(--line-strong);border-radius:12px;background:var(--card);padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+.presets button b{font-family:var(--font-display);font-weight:400;font-size:17px}
+.presets button span{font-size:12.5px;color:var(--muted)}
+.presets button[aria-pressed="true"]{border-color:var(--of);background:var(--of-tint);box-shadow:inset 0 0 0 1px var(--of)}
+.guess{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:14px;background:var(--neutral-tint)}
+.guess > p{font-size:15px}
+.guess .opts{display:flex;flex-wrap:wrap;gap:8px}
+.guess .opts button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:10px;padding:6px 12px;font-size:14px;cursor:pointer;text-align:left}
+.guess .opts button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.guess .opts button.right{border-color:var(--good);background:var(--good-tint)}
+.guess .opts button.wrong{border-color:var(--bad);background:var(--bad-tint)}
+.guess .res{font-size:14.5px;padding:8px 12px;border-radius:10px;border-left:4px solid var(--rc);background:var(--card)}
+.ctl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl.span{grid-column:1 / -1}
+.ctl > .lbl{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.ctl > .lbl output{font-family:var(--font-mono);color:var(--ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--of)}
+.seg-btns{display:inline-flex;flex-wrap:wrap;border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;align-self:flex-start}
+.seg-btns button{border:0;background:var(--card);padding:5px 10px;font-size:13px;cursor:pointer}
+.seg-btns button + button{border-left:1.5px solid var(--line)}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.run-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-row .tip{flex:1 1 260px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.tile{border-radius:12px;padding:8px 10px;background:var(--rt);border:1.5px solid var(--rc);display:flex;flex-direction:column;min-width:0}
+.tile small{font-size:12px;color:var(--muted)}
+.tile b{font-family:var(--font-display);font-weight:400;font-size:24px;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile span{font-size:12px}
+.lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:16px;height:10px;border-radius:3px;display:inline-block;background:var(--rc);border:1.5px solid var(--rc)}
+.lg i.t{background:var(--rt)}
+.lg i.mk{width:3px;height:14px;border-radius:1px;border:0}
+.lab-res{font-size:14.5px;padding:10px 14px;border-radius:12px;border-left:5px solid var(--rc);background:var(--rt)}
+.lab-res ul{margin:6px 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:3px}
+/* ---------- ⑥ ---------- */
+.round{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round .rb{font-family:var(--font-mono);font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--ink);color:var(--paper)}
+.pits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.pit{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--card);border:1.5px solid var(--line);border-left:5px solid var(--bad);border-radius:14px;min-width:0}
+.pit > b{font-size:16px;line-height:1.45}
+.pit > b em{font-style:normal;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-right:6px}
+.root{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;border:1.5px solid var(--of);color:var(--ink);background:var(--of-tint);text-decoration:none;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.root.env{border-color:var(--neutral);background:var(--neutral-tint)}
+.pit dl{margin:0;display:grid;grid-template-columns:2.6em minmax(0,1fr);gap:4px 8px;font-size:14px}
+.pit dt{color:var(--muted);font-size:13px;padding-top:1px}
+.pit dd{margin:0;min-width:0}
+.pit dd code{overflow-wrap:anywhere}
+.pit dd.fix{color:var(--good)}
+.pit dd.fix code{color:var(--ink)}
+.pit .seen{font-size:11.5px;font-family:var(--font-mono);color:var(--bk);margin-left:4px}
+.rules-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rl{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.rl b{font-size:15.5px}
+.rl p{font-size:14px;color:var(--muted)}
+.rl p.guard{color:var(--ink);font-size:13.5px}
+.rl p.guard::before{content:"防：";color:var(--good);font-weight:700}
+.rl code{color:var(--ink);overflow-wrap:anywhere}
+.deep{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dp{background:var(--card);border:1.5px solid var(--line);border-top:4px solid var(--rc);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dp h4{color:var(--rc)}
+.dp p, .dp li{font-size:14.5px}
+.dp ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:6px}
+.dp code{overflow-wrap:anywhere}
+.dp svg{display:block;width:100%;height:auto}
+.faq{display:flex;flex-direction:column;gap:8px}
+details{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+details[open] summary{margin-bottom:8px}
+details p, details li{font-size:14.5px}
+details p + p{margin-top:6px}
+details ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details .from{font-size:13px;color:var(--muted)}
+.next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}
+.next li{font-size:14.5px;padding-left:1.2em;position:relative}
+.next li::before{content:"↗";position:absolute;left:0;color:var(--of)}
+.ex{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.exc{background:var(--card);border:2px solid var(--rc);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.exc h4{color:var(--rc)}
+.exc p{font-size:14px}
+.exc code{overflow-wrap:anywhere}
+.exc .uses{font-size:12.5px;color:var(--muted);margin-top:auto}
+footer{font-size:13px;color:var(--muted);border-top:1.5px dashed var(--line-strong);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+/* ---------- responsive ---------- */
+@media (max-width:980px){
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metaphor{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .presets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ex,.design.three{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .duo,.two,.trio,.misj,.design,.pits,.rules-list,.deep,.next{grid-template-columns:1fr}
+  .essence{grid-template-columns:1fr}
+  .essence .big{grid-row:auto}
+  .ledger{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .facts,.presets,.ctl-grid{grid-template-columns:1fr}
+  .metaphor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tile b{font-size:21px}
+}
+.models{display:flex;flex-direction:column;gap:6px}
+.st-svg{display:block;width:100%;min-width:640px;height:auto}
+#dcl .arw{display:none}
+#dcl rect.ln{fill:transparent;stroke:none}
+#dcl rect.ln.on{fill:var(--of-tint);stroke:var(--of);stroke-width:2}
+.mode-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.hb-list{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.hb-list li{background:var(--card);border:1.5px solid var(--line);border-left:4px solid var(--of);border-radius:10px;padding:8px 12px;font-size:14px}
+@media (max-width:860px){.hb-list{grid-template-columns:1fr}}
+</style>
+<style id="tocx-css">
+/* tocx：顶栏里的跳转导航，由 learn skill 的 add_toc.py 注入（wrap.py 会自动调用）。
+   有六步路线条（main nav.route）的页面：把路线条复制进顶栏，滚动时高亮当前一步；窄屏只留序号。
+   没有路线条的老页面：顶栏右侧加“目录 ▾”，下拉列出各个 h2，滚动时高亮当前一节。
+   只用各页都有的颜色变量：--paper --card --ink --muted --line --line-strong。 */
+.tocx-steps{margin-left:auto;flex:none;display:flex;align-items:center;gap:3px;overflow-x:auto;scrollbar-width:none;max-width:100%}
+.tocx-steps::-webkit-scrollbar{display:none}
+.tocx-steps a{flex:none;display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;border:1.5px solid transparent;color:var(--muted);text-decoration:none;font-size:13px;line-height:1.4;white-space:nowrap}
+.tocx-steps a b{font-weight:700;color:var(--ink)}
+.tocx-steps a:hover{border-color:var(--line-strong);color:var(--ink)}
+.tocx-steps a.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.tocx-steps a.on b{color:var(--paper)}
+.tocx-dd{margin-left:auto;flex:none;position:relative}
+.tocx-btn{font:inherit;font-size:13.5px;line-height:1.4;padding:4px 12px;border-radius:999px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);cursor:pointer;white-space:nowrap}
+.tocx-btn:hover,.tocx-btn[aria-expanded="true"]{border-color:var(--ink)}
+.tocx-panel{position:absolute;right:0;top:calc(100% + 9px);width:min(360px,calc(100vw - 32px));max-height:min(70vh,560px);overflow:auto;background:var(--card);border:1.5px solid var(--line-strong);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px;z-index:40}
+.tocx-panel a{display:flex;gap:8px;padding:7px 10px;border-radius:9px;color:var(--ink);text-decoration:none;font-size:14px;line-height:1.45}
+.tocx-panel a i{flex:none;width:1.7em;font-style:normal;font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px;padding-top:2px}
+.tocx-panel a:hover{background:var(--line)}
+.tocx-panel a.on{background:var(--ink);color:var(--paper)}
+.tocx-panel a.on i{color:var(--paper)}
+.tocx-steps a:focus-visible,.tocx-btn:focus-visible,.tocx-panel a:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+@media (max-width:1180px){.tocx-steps a span{display:none}.tocx-steps a{padding:3px 8px}}
+@media (max-width:640px){.tocx-on .tb-in > span{display:none}.tocx-steps{flex:0 1 auto;min-width:0}.tocx-steps a{padding:3px 6px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-ink" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-mut" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-of" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-of" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-bad" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-good" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="f-g2" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<nav class="topbar" aria-label="页面导航"><div class="tb-in"><a class="tb-home" href="../">← 返回目录</a><span aria-hidden="true">/</span><span>Java 并发</span><span aria-hidden="true">/</span><span class="tb-here">Java 内存模型</span></div></nav>
+
+<main>
+
+<header class="hero">
+  <p class="kicker">JMM · HAPPENS-BEFORE · VOLATILE · SYNCHRONIZED · FINAL · 重排序 · 内存屏障 · 双重检查锁</p>
+  <h1>一个线程写的值，另一个线程什么时候看得到</h1>
+  <p class="lead">编译器和 CPU 为了快，会把你的代码调换顺序、把变量先放在寄存器和写缓冲区里，单线程看不出来，多线程就会看到“不可能”的结果。<b>Java 内存模型（JMM）不承诺所有代码都按顺序执行，只承诺一件事：只要两次访问之间有 happens-before 关系（用 volatile、锁、线程启动和 join 等建立），后一次一定能看到前一次的写；没有数据竞争的程序，结果就和按顺序一条条执行一样。</b></p>
+  <nav class="route" aria-label="六步学习路线">
+    <a href="#s1"><b>①</b>要解决的问题</a><i aria-hidden="true">→</i>
+    <a href="#s2"><b>②</b>朴素做法</a><i aria-hidden="true">→</i>
+    <a href="#s3"><b>③</b>几种思路</a><i aria-hidden="true">→</i>
+    <a href="#s4"><b>④</b>关键洞察</a><i aria-hidden="true">→</i>
+    <a href="#s5"><b>⑤</b>手推一遍</a><i aria-hidden="true">→</i>
+    <a href="#s6"><b>⑥</b>边界和变体</a><i aria-hidden="true">→</i>
+    <a href="#loop"><b>↺</b>回到⑤</a>
+  </nav>
+  <p class="scene"><b>假设场景</b><span>线上一个定时任务，用一个 <code>boolean</code> 标志让工作线程停下，结果怎么也停不下来；代码评审时有人说双重检查的单例必须加 <code>volatile</code>，你说不清为什么。面试里“volatile 和 synchronized 的区别”“happens-before 是什么”也必问。注意它和“JVM 内存结构”是两回事，后者讲堆、栈、元空间，见 <a href="../jvm/jvm-memory-structure.html">JVM 内存结构</a>。标<span class="tag-real">实测</span>的数字来自 ② 的程序，在 2 核 ARM 云主机上用 JDK 17 跑。</span></p>
+</header>
+
+<!-- ① -->
+<section id="s1">
+  <div>
+    <h2><span class="sn">①</span>要解决的问题：写了，不等于别人看到了</h2>
+    <p class="lead">线程 1 先准备数据、再把 <code>ready</code> 设为 true；线程 2 等到 <code>ready</code> 为 true 就去读数据。看起来天经地义，中间却有三个地方可能“不按你写的来”。</p>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="线程 1 写 data 再写 ready，线程 2 循环等 ready 再读 data。三个不按顺序的来源：编译器可能调换两行写；CPU 的写缓冲区让写延迟才进内存；JIT 可能把 ready 读进寄存器后不再重读。问题是线程 2 一定能退出循环吗，退出后一定读到 42 吗。">
+        <rect x="20" y="40" width="220" height="110" rx="12" class="b-pd"/>
+        <text x="130" y="64" text-anchor="middle" class="t-b">线程 1</text>
+        <text x="40" y="94" class="t-mono">data = 42;</text>
+        <text x="40" y="118" class="t-mono">ready = true;</text>
+        <rect x="340" y="60" width="220" height="110" rx="12" class="b-cg"/>
+        <text x="450" y="84" text-anchor="middle" class="t-b">主内存（共享）</text>
+        <text x="370" y="114" class="t-mono">data  = 0 → 42 ?</text>
+        <text x="370" y="140" class="t-mono">ready = false → true ?</text>
+        <rect x="660" y="40" width="220" height="110" rx="12" class="b-bk"/>
+        <text x="770" y="64" text-anchor="middle" class="t-b">线程 2</text>
+        <text x="680" y="94" class="t-mono">while (!ready) { }</text>
+        <text x="680" y="118" class="t-mono">print(data);</text>
+        <path d="M240 106 L336 112" class="e-mut" marker-end="url(#ah-mut)"/>
+        <path d="M560 112 L656 106" class="e-mut" marker-end="url(#ah-mut)"/>
+        <g>
+          <circle cx="130" cy="24" r="11" class="f-g2"/><text x="130" y="28" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">1</text>
+          <text x="150" y="28" class="t-g2">编译器可能把两行写调换</text>
+          <circle cx="288" cy="140" r="11" class="f-g2"/><text x="288" y="144" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">2</text>
+          <text x="246" y="170" class="t-g2">CPU 写缓冲区：</text><text x="246" y="186" class="t-g2">写了先排队，晚点才进内存</text>
+          <circle cx="770" cy="170" r="11" class="f-g2"/><text x="770" y="174" text-anchor="middle" class="t-b" style="fill:var(--on-accent)">3</text>
+          <text x="610" y="198" class="t-g2">JIT 把 ready 读进寄存器，循环里不再重读</text>
+        </g>
+        <text x="20" y="232" class="t-bad">问题：线程 2 一定能退出循环吗？退出以后一定打印 42 吗？</text>
+      </svg>
+    </div>
+    <figcaption>三处都是正经的性能优化，单线程里完全看不出来（结果和按顺序执行一样）。只有另一个线程同时在看，才会撞上。</figcaption>
+  </figure>
+  <div class="trio">
+    <div class="fact" data-role="of"><h4>可见性</h4><p>一个线程写的值，别的线程什么时候能看到。</p></div>
+    <div class="fact" data-role="g2"><h4>有序性</h4><p>一个线程里的几次读写，别的线程看到的顺序，是不是和代码里写的一样。</p></div>
+    <div class="fact" data-role="pd"><h4>原子性</h4><p>一个操作会不会被切成几半、中间被别的线程插进来。<code>count++</code> 就是读、加、写三步。</p></div>
+  </div>
+</section>
+
+<!-- ② -->
+<section id="s2">
+  <div>
+    <h2><span class="sn">②</span>朴素做法：以为“写了就看得到、按顺序执行”</h2>
+    <p class="lead">最自然的假设叫“顺序一致性”：所有线程的读写排成一条线，每个线程内部按代码顺序。下面两个实验把这个假设打破了。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">1</span><b>JmmDemo.java</b><span>JDK 8 / 17 / 21 都能跑；不依赖任何库</span></div>
+<pre><code>import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
+
+/** 亲眼看到 Java 内存模型要解决的两个问题：看不见、乱了序。JDK 8 / 17 / 21 都能跑。
+ *  java JmmDemo stop       不加 volatile 的停止标志
+ *  java JmmDemo stopv      加了 volatile
+ *  java JmmDemo sb [n]     两个线程各写一个、读另一个，统计四种结果
+ *  java JmmDemo sbv [n]    同上，但 x、y 用 volatile 语义读写 */
+public class JmmDemo {
+    // ---------- 1. 可见性 ----------
+    static boolean stop;              // 普通字段
+    static volatile boolean vstop;    // volatile 字段
+
+    static void stopDemo(final boolean useVolatile) throws Exception {
+        Thread worker = new Thread(() -&gt; {
+            long n = 0;
+            if (useVolatile) { while (!vstop) n++; }
+            else             { while (!stop)  n++; }
+            System.out.println("工作线程看到了停止标志，退出（循环了 " + n + " 次）");
+        });
+        worker.setDaemon(true);
+        worker.start();
+        Thread.sleep(1000);                          // 让循环先跑一会儿，被 JIT 编译
+        if (useVolatile) vstop = true; else stop = true;
+        System.out.println("主线程已把标志设为 true");
+        worker.join(3000);
+        System.out.println(worker.isAlive() ? "3 秒后工作线程还在跑：它一直没看到这次写" : "工作线程已结束");
+    }
+
+    // ---------- 2. 重排序：store buffering ----------
+    static void sbDemo(final int n, final boolean useVolatile) throws Exception {
+        final int[] x = new int[n], y = new int[n], r1 = new int[n], r2 = new int[n];
+        final AtomicIntegerArray vx = new AtomicIntegerArray(n), vy = new AtomicIntegerArray(n);
+        final AtomicInteger barrier = new AtomicInteger();
+        Thread a = new Thread(() -&gt; {
+            for (int i = 0; i &lt; n; i++) {
+                await(barrier, i);
+                if (useVolatile) { vx.set(i, 1); r1[i] = vy.get(i); }   // volatile 写 x，再 volatile 读 y
+                else             { x[i] = 1;     r1[i] = y[i]; }        // 普通写 x，再普通读 y
+            }
+        });
+        Thread b = new Thread(() -&gt; {
+            for (int i = 0; i &lt; n; i++) {
+                await(barrier, i);
+                if (useVolatile) { vy.set(i, 1); r2[i] = vx.get(i); }
+                else             { y[i] = 1;     r2[i] = x[i]; }
+            }
+        });
+        long t0 = System.nanoTime();
+        a.start(); b.start(); a.join(); b.join();     // join 之后，主线程能看到两个线程的全部结果
+        int[] c = new int[4];
+        for (int i = 0; i &lt; n; i++) c[r1[i] * 2 + r2[i]]++;
+        System.out.printf("%d 次（%d ms）：r1=1,r2=1 %d 次 | r1=0,r2=1 %d 次 | r1=1,r2=0 %d 次 | r1=0,r2=0 %d 次%n",
+                n, (System.nanoTime() - t0) / 1_000_000, c[3], c[1], c[2], c[0]);
+    }
+    // 两个线程每一轮都在这里会合，然后几乎同时开始这一轮
+    static void await(AtomicInteger barrier, int round) {
+        barrier.incrementAndGet();
+        while (barrier.get() &lt; 2 * (round + 1)) { /* 自旋等另一个线程 */ }
+    }
+
+    public static void main(String[] args) throws Exception {
+        String mode = args.length &gt; 0 ? args[0] : "stop";
+        int n = args.length &gt; 1 ? Integer.parseInt(args[1]) : 1_000_000;
+        System.out.println("Java " + System.getProperty("java.version") + "，" + Runtime.getRuntime().availableProcessors() + " 核，模式 " + mode);
+        switch (mode) {
+            case "stop":  stopDemo(false); break;
+            case "stopv": stopDemo(true);  break;
+            case "sb":    sbDemo(n, false); break;
+            case "sbv":   sbDemo(n, true);  break;
+            default: System.out.println("未知模式");
+        }
+    }
+}</code></pre>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><span class="n">2</span><b>运行</b><span>本机 JDK 17.0.20.1，2 核 ARM，<code>javac --release 8</code> 编译</span></div>
+<pre class="console"><b>$ java JmmDemo stop</b>
+主线程已把标志设为 true
+<span class="r">3 秒后工作线程还在跑：它一直没看到这次写</span>
+<b>$ java JmmDemo stopv</b>
+主线程已把标志设为 true
+<span class="w">工作线程看到了停止标志，退出（循环了 1902526033 次）</span>
+<b>$ java JmmDemo sb 1000000</b>
+<span class="r">1000000 次（153 ms）：r1=1,r2=1 19 次 | r1=0,r2=1 355235 次 | r1=1,r2=0 353629 次 | r1=0,r2=0 291117 次</span>
+<b>$ java JmmDemo sbv 1000000</b>
+<span class="w">1000000 次（202 ms）：r1=1,r2=1 263077 次 | r1=0,r2=1 368155 次 | r1=1,r2=0 368768 次 | r1=0,r2=0 0 次</span></pre>
+  </div>
+  <figure>
+    <div class="fig-box wide">
+      <svg class="sv" viewBox="0 0 900 250" role="img" aria-label="一百万次实验的结果：普通变量时 r1 等于 0 且 r2 等于 0 出现了 291117 次，按顺序一致性这是不可能的；用 volatile 后这种结果出现 0 次。">
+        <text x="20" y="22" class="t-m">线程 A：x = 1; r1 = y;　　线程 B：y = 1; r2 = x;　　各 100 万次</text>
+        <text x="200" y="44" class="t-xs">0</text><text x="600" y="44" text-anchor="end" class="t-xs">40 万次</text>
+        <!-- r1=1 r2=1 -->
+        <text x="20" y="72" class="t-b">r1=1, r2=1</text>
+        <rect x="200" y="58" width="2" height="14" class="f-neu"/><text x="208" y="70" class="t-xs">普通 19</text>
+        <rect x="200" y="76" width="263" height="14" rx="3" class="b-good"/><text x="470" y="88" class="t-xs">volatile 263077</text>
+        <!-- 0 1 -->
+        <text x="20" y="122" class="t-b">r1=0, r2=1</text>
+        <rect x="200" y="108" width="355" height="14" rx="3" class="b-neu"/><text x="562" y="120" class="t-xs">普通 355235</text>
+        <rect x="200" y="126" width="368" height="14" rx="3" class="b-good"/><text x="575" y="138" class="t-xs">volatile 368155</text>
+        <!-- 1 0 -->
+        <text x="20" y="172" class="t-b">r1=1, r2=0</text>
+        <rect x="200" y="158" width="354" height="14" rx="3" class="b-neu"/><text x="561" y="170" class="t-xs">普通 353629</text>
+        <rect x="200" y="176" width="369" height="14" rx="3" class="b-good"/><text x="576" y="188" class="t-xs">volatile 368768</text>
+        <!-- 0 0 -->
+        <text x="20" y="222" class="t-bad">r1=0, r2=0</text>
+        <rect x="200" y="208" width="291" height="14" rx="3" class="b-bad"/><text x="498" y="220" class="t-bad">普通 291117</text>
+        <text x="200" y="240" class="t-good">volatile 0</text>
+        <text x="700" y="120" class="t-s">按“顺序执行”，</text>
+        <text x="700" y="140" class="t-s">至少有一边的写</text>
+        <text x="700" y="160" class="t-s">先发生，r1、r2</text>
+        <text x="700" y="180" class="t-s">不可能都是 0</text>
+      </svg>
+    </div>
+    <figcaption><span class="tag-real">实测</span> 2 核 ARM 云主机，JDK 17.0.20.1，每个模式跑一次；次数每次跑都会不同，但 volatile 下 r1=0,r2=0 一直是 0。</figcaption>
+  </figure>
+  <div class="essence">
+    <div class="big">疼在哪</div>
+    <p>实验 1：主线程写了 <code>stop = true</code>，工作线程 3 秒都没看到，因为 JIT 把循环里对 <code>stop</code> 的读提到了循环外面（①的第 3 处）。实验 2：两个线程都“先写后读”，却有 29% 的情况两个都读到 0，因为写还在写缓冲区里排队，读已经先做了（①的第 2 处）。</p>
+    <p>缺的那块：<b>一套规则，告诉程序员“怎么写才保证看得到、顺序对”，同时告诉编译器和 CPU“哪些地方不能乱动”。</b>这就是 Java 内存模型。</p>
+  </div>
+  <div class="note-box"><b>典型误解</b><span>“是因为每个 CPU 有自己的缓存，缓存不同步。”现代 CPU 的缓存之间有一致性协议，缓存本身是同步的。真正让你看不到的，是编译器的优化（把读提到循环外、调换顺序）和 CPU 的写缓冲区、乱序执行。把问题怪在“缓存”上，就推不出为什么 volatile 能解决。</span></div>
+</section>
+
+<!-- ③ -->
+<section id="s3">
+  <div>
+    <h2><span class="sn">③</span>几种思路：内存模型可以定多严</h2>
+    <p class="lead">硬件和语言都要回答同一个问题：允许多少重排。定得越严越好懂，但越慢；定得越松越快，但越难写对。</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="t">
+      <thead><tr><th>模型</th><th>允许什么</th><th>谁在用</th><th>代价</th></tr></thead>
+      <tbody>
+        <tr><th>顺序一致性</th><td>不允许任何重排，所有线程看到同一个全局顺序</td><td>理论上的理想模型</td><td>写缓冲区、寄存器缓存、指令重排都不能用，慢很多</td></tr>
+        <tr><th>x86 的 TSO</th><td>只允许“先写后读”被重排成“先读后写”（写缓冲区造成的）</td><td>Intel、AMD</td><td>比较好懂；实验 2 那种结果在 x86 上也会出现</td></tr>
+        <tr><th>ARM、RISC-V 的弱模型</th><td>读读、读写、写写、写读四种都可能重排</td><td>手机、苹果 M 系列、云上的 ARM 服务器（本页的实验机）</td><td>最快，最难写对，靠屏障指令约束</td></tr>
+        <tr class="hl"><th>语言级：无数据竞争就顺序一致</th><td>没标记同步的地方随便优化；标记了同步（volatile、锁）的地方按规则排序</td><td>Java（JMM）、C++11、Go</td><td>程序员要把共享变量的同步标出来</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="pick-line">Java 选最后一种：<b>不管底下是 x86 还是 ARM，同一份程序只要没有数据竞争，结果都和顺序执行一样</b>；具体怎么做到，由 JVM 在每种 CPU 上插不同的屏障指令。本页学 JMM 的规则（happens-before）和三个关键字各保证什么。</p>
+</section>
+
+<!-- ④ -->
+<section id="s4">
+  <div>
+    <h2><span class="sn">④</span>关键洞察：重排序不可怕，没有 happens-before 才可怕</h2>
+    <p class="lead">先看重排序从哪来、为什么单线程看不出来；再看 JMM 用来约束它的那张“先后关系图”；然后看为什么 Java 只保证“没有数据竞争的程序”；最后把 volatile、synchronized、final 各管什么对齐。</p>
+  </div>
+  <div class="sub">
+    <h3>先知道这些</h3>
+    <div class="facts">
+      <div class="fact" data-role="other"><h4>数据竞争</h4><p>两个线程访问同一个变量，至少一个是写，而且两次访问之间没有 happens-before 关系。JMM 的保证都以“没有数据竞争”为前提。</p></div>
+      <div class="fact" data-role="other"><h4>as-if-serial</h4><p>编译器和 CPU 怎么重排都行，只要<b>本线程</b>看到的结果和按顺序执行一样。别的线程不在这个承诺里。</p></div>
+      <div class="fact" data-role="other"><h4>缓存是一致的</h4><p>多核 CPU 的缓存之间有一致性协议，同一地址不会长期存两个不同的值。问题出在写缓冲区、乱序执行和编译器优化。</p></div>
+      <div class="fact" data-role="other"><h4>JIT</h4><p>热点代码会被 JIT 编译成机器码，编译时会做循环外提、删掉“没用”的读写等优化，所以有的问题只在跑了一会儿之后才出现。</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="m-reorder">
+    <h3><span class="sn">洞察 1</span>重排序从哪来：三层都在“帮你优化”</h3>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 200" role="img" aria-label="一行 Java 代码到真正写进内存要经过三层：javac 基本不重排；JIT 会把循环里的读提到循环外、调换没有依赖的读写；CPU 有写缓冲区、乱序执行。每一层都只保证本线程看起来按顺序。">
+          <rect x="20" y="50" width="150" height="70" rx="10" class="b-card"/><text x="95" y="80" text-anchor="middle" class="t-b">源代码</text><text x="95" y="100" text-anchor="middle" class="t-xs">你写的顺序</text>
+          <rect x="210" y="50" width="150" height="70" rx="10" class="b-neu"/><text x="285" y="80" text-anchor="middle" class="t-b">javac</text><text x="285" y="100" text-anchor="middle" class="t-xs">基本照搬成字节码</text>
+          <rect x="400" y="50" width="220" height="70" rx="10" class="b-g2"/><text x="510" y="76" text-anchor="middle" class="t-b">JIT 编译器</text><text x="510" y="96" text-anchor="middle" class="t-xs">循环里的读提到循环外</text><text x="510" y="112" text-anchor="middle" class="t-xs">调换没有依赖的读写</text>
+          <rect x="660" y="50" width="220" height="70" rx="10" class="b-g2"/><text x="770" y="76" text-anchor="middle" class="t-b">CPU</text><text x="770" y="96" text-anchor="middle" class="t-xs">写先进写缓冲区</text><text x="770" y="112" text-anchor="middle" class="t-xs">乱序执行、提前读</text>
+          <g class="e-mut" marker-end="url(#ah-mut)"><line x1="170" y1="85" x2="206" y2="85"/><line x1="360" y1="85" x2="396" y2="85"/><line x1="620" y1="85" x2="656" y2="85"/></g>
+          <text x="510" y="146" text-anchor="middle" class="t-g2">实验 1 撞上的是这里</text>
+          <text x="770" y="146" text-anchor="middle" class="t-g2">实验 2 撞上的是这里</text>
+          <text x="20" y="184" class="t-of">每一层只保证“本线程看起来按顺序”（as-if-serial）；别的线程看到的顺序，要靠 JMM 的规则来约束。</text>
+        </svg>
+      </div>
+    </figure>
+  </div>
+
+  <div class="sub" id="m-hb">
+    <h3><span class="sn">洞察 2</span>happens-before：一张“谁一定先于谁”的图</h3>
+    <p class="lead" style="margin-top:0">JMM 不描述机器怎么执行，只规定一组“先后关系”。如果操作 A happens-before 操作 B，那么 A 的写对 B 一定可见，而且 B 看到的 A 之前的一切也都生效了。关系能传递，所以把几条边连起来就能推出结论。</p>
+    <figure>
+      <div class="fig-box wide">
+        <svg class="sv" viewBox="0 0 900 290" role="img" aria-label="happens-before 推导：线程 1 里 data 等于 42 按程序顺序先于 volatile 写 ready；volatile 写 ready 先于线程 2 读到 ready 为 true；线程 2 里读 ready 按程序顺序先于读 data。三条边连起来，data 等于 42 先于读 data，所以一定读到 42。去掉 volatile 就没有中间那条边，成了数据竞争。">
+          <text x="170" y="30" text-anchor="middle" class="t-pd">线程 1</text>
+          <text x="690" y="30" text-anchor="middle" class="t-bk">线程 2</text>
+          <rect x="40" y="46" width="260" height="38" rx="8" class="b-pd"/><text x="170" y="70" text-anchor="middle" class="t-mono">data = 42</text>
+          <rect x="40" y="150" width="260" height="38" rx="8" class="b-pd"/><text x="170" y="174" text-anchor="middle" class="t-mono">ready = true（volatile 写）</text>
+          <rect x="560" y="150" width="260" height="38" rx="8" class="b-bk"/><text x="690" y="174" text-anchor="middle" class="t-mono">读 ready → true（volatile 读）</text>
+          <rect x="560" y="222" width="260" height="38" rx="8" class="b-good"/><text x="690" y="246" text-anchor="middle" class="t-mono">读 data → 一定是 42</text>
+          <line x1="170" y1="84" x2="170" y2="146" class="e-of" marker-end="url(#ah-of)"/><text x="180" y="120" class="t-of">① 程序顺序</text>
+          <line x1="300" y1="169" x2="556" y2="169" class="e-of" marker-end="url(#ah-of)"/><text x="428" y="159" text-anchor="middle" class="t-of">② volatile 写 → 读</text>
+          <line x1="690" y1="188" x2="690" y2="218" class="e-of" marker-end="url(#ah-of)"/><text x="700" y="208" class="t-of">③ 程序顺序</text>
+          <text x="40" y="228" class="t-of">①②③ 连起来（传递）：</text>
+          <text x="40" y="246" class="t-of">data = 42 happens-before 读 data</text>
+          <text x="40" y="280" class="t-bad">去掉 volatile：没有 ②，两个线程之间没有任何边，成了数据竞争：可能读到 0，甚至一直看不到 ready</text>
+        </svg>
+      </div>
+    </figure>
+    <h4>能建立 happens-before 的几条规则（JLS 17.4.5）</h4>
+    <ul class="hb-list">
+      <li><b>程序顺序</b>：同一个线程里，前面的操作先于后面的操作。</li>
+      <li><b>锁</b>：对一把锁的解锁，先于之后任何线程对<b>同一把锁</b>的加锁。</li>
+      <li><b>volatile</b>：对一个 volatile 变量的写，先于之后对<b>同一个变量</b>的读。</li>
+      <li><b>线程启动</b>：<code>t.start()</code> 先于线程 t 里的任何操作。</li>
+      <li><b>线程结束</b>：线程 t 里的所有操作，先于别的线程从 <code>t.join()</code> 返回。②的实验就是靠 join 拿到结果数组的。</li>
+      <li><b>传递性</b>：A 先于 B、B 先于 C，则 A 先于 C。</li>
+    </ul>
+    <p class="tip">另外还有中断（<code>interrupt</code> 先于被中断线程发现中断）、对象构造结束先于它的 finalizer 等。并发包里的工具都在这些规则上搭起来：比如 <code>ConcurrentHashMap.put</code> 先于随后读到这个值的 <code>get</code>，线程池里 <code>submit</code> 先于任务开始执行。</p>
+  </div>
+
+  <div class="sub" id="m-drf">
+    <h3><span class="sn">洞察 3</span>为什么只保证“没有数据竞争的程序”<small>设计对比</small></h3>
+    <div class="design">
+      <div class="way" data-role="bad">
+        <h4>被放弃的：所有读写都顺序一致</h4>
+        <ul class="pains">
+          <li>每次读写共享变量都要插屏障，写缓冲区形同虚设。</li>
+          <li>JIT 不能再把变量放在寄存器里、不能把读提到循环外，几乎所有优化都要关掉。</li>
+          <li>绝大多数变量只有一个线程在用，却都要为极少数共享变量付钱。</li>
+        </ul>
+      </div>
+      <div class="way" data-role="done">
+        <h4>选中的：无数据竞争就顺序一致（DRF-SC）</h4>
+        <ul class="pains">
+          <li class="ok">程序员用 volatile、锁、并发工具把共享变量的同步<b>标出来</b>。</li>
+          <li class="ok">JVM 只在这些标记处插屏障、禁止相关的重排，其余代码照常优化。</li>
+          <li class="ok">换来的承诺：只要没有数据竞争，程序的结果就和按顺序一条条执行一样，不用去想底下是 x86 还是 ARM。</li>
+        </ul>
+      </div>
+    </div>
+    <p class="verdict" data-role="of">决定这个设计的约束有两条：<b>一是性能，共享变量在程序里只占极少数；二是“一次编写到处运行”，x86 和 ARM 允许的重排完全不同</b>。所以 Java 不规定机器怎么执行，只规定 happens-before；JVM 在每种 CPU 上用不同的屏障指令去兑现它（第三圈）。代价是：有数据竞争的程序，JMM 只给很弱的保证，结果可能随 CPU、JDK 版本、JIT 是否编译而变。</p>
+  </div>
+
+  <div class="sub" id="m-keywords">
+    <h3><span class="sn">洞察 4</span>volatile、synchronized、final 各保证什么</h3>
+    <div class="tbl-wrap">
+      <table class="t">
+        <thead><tr><th></th><th>可见性</th><th>有序性</th><th>原子性</th><th>代价</th></tr></thead>
+        <tbody>
+          <tr><th>volatile</th><td class="good">写之后的读一定看到</td><td class="good">volatile 写之前的读写不会被排到它后面；volatile 读之后的不会被排到它前面</td><td>只有单次读或写是原子的，<code>count++</code> <span class="bad">不是</span></td><td>读几乎免费；写要一道屏障</td></tr>
+          <tr><th>synchronized</th><td class="good">解锁前的写，下一个拿同一把锁的线程看得到</td><td class="good">临界区里的操作不会被排到锁外面</td><td class="good">整个代码块</td><td>有竞争时要排队；锁不同就没有保证</td></tr>
+          <tr><th>final 字段</th><td class="good">构造器结束后，任何线程拿到这个对象，都能看到 final 字段的初始值</td><td>只管这一件事</td><td>—</td><td>几乎免费；前提是构造器里 <code>this</code> 没有提前逃逸</td></tr>
+          <tr><th><code>Atomic*</code>、<code>VarHandle</code></th><td class="good">同 volatile</td><td class="good">同 volatile，9 起还能选更弱的模式</td><td class="good">单个变量的 CAS、自增</td><td>竞争激烈时 CAS 反复重试</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="codebox">
+      <div class="code-bar"><b>最常用的几种写法</b><span>每种对应一类场景，细节放到第⑥步</span></div>
+<pre><code>volatile boolean running = true;                     <span class="cm">// 状态标志：一个线程写、别的线程读</span>
+
+private final Map&lt;String, String&gt; config;            <span class="cm">// 构造器里赋值，之后只读：不可变对象可以放心共享</span>
+
+synchronized void add(Item i) { items.add(i); }      <span class="cm">// 读和写都要加同一把锁</span>
+synchronized List&lt;Item&gt; snapshot() { return new ArrayList&lt;&gt;(items); }
+
+AtomicLong counter = new AtomicLong();               <span class="cm">// 计数：用原子类，不用 volatile long++</span>
+counter.incrementAndGet();
+
+class Config {                                       <span class="cm">// 延迟加载的单例：静态内部类，类初始化天然线程安全</span>
+    private static class Holder { static final Config INSTANCE = new Config(); }
+    static Config get() { return Holder.INSTANCE; }
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ⑤ -->
+<section id="s5">
+  <div>
+    <h2><span class="sn">⑤</span>手推一遍：双重检查锁为什么要加 volatile</h2>
+    <p class="lead">经典的延迟加载单例。<code>new Singleton()</code> 在机器层面是三步：分配内存、执行构造器写字段、把地址写进 <code>instance</code>。用下面的分步演示，分别推一遍不加和加了 volatile 的情况。</p>
+  </div>
+  <div class="codebox">
+    <div class="code-bar"><b>Singleton.java</b><span>双重检查锁；这段是推演用的，不在本机复现（这种半初始化很难稳定撞上）</span></div>
+<pre><code>class Singleton {
+    private static <span class="hl">volatile</span> Singleton instance;      <span class="cm">// 演示里切换“有 / 没有 volatile”</span>
+    private int port;
+    private Singleton() { port = 8080; }
+
+    static Singleton get() {
+        if (instance == null) {                      <span class="cm">// 第一次检查：不加锁，图的是快</span>
+            synchronized (Singleton.class) {
+                if (instance == null)                <span class="cm">// 第二次检查：防止两个线程都创建</span>
+                    instance = new Singleton();      <span class="cm">// 分配内存 → 构造器写 port → 写入 instance</span>
+            }
+        }
+        return instance;
+    }
+}</code></pre>
+  </div>
+  <div class="stage" id="stage" tabindex="0" aria-label="分步演示：双重检查锁，左右方向键翻页">
+    <div class="mode-row">
+      <span class="seg-btns" id="dcl-mode" role="group" aria-label="是否加 volatile"><button type="button" data-v="plain" aria-pressed="true">没有 volatile</button><button type="button" data-v="vol" aria-pressed="false">加了 volatile</button></span>
+      <span class="st-pos" id="st-pos"></span>
+    </div>
+    <div class="ctrl">
+      <button class="btn" type="button" id="st-prev">← 上一步</button>
+      <button class="btn primary" type="button" id="st-next">下一步 →</button>
+      <button class="btn" type="button" id="st-auto">自动播放</button>
+      <button class="btn" type="button" id="st-reset">从头来</button>
+    </div>
+    <div class="svg-scroll">
+      <svg class="sv st-svg" id="dcl" viewBox="0 0 900 270" role="img" aria-label="三列：左边线程 1 执行 get 并创建对象，中间是共享内存里的 instance 和对象的 port 字段，右边线程 2 执行 get 并读 port。每一步高亮当前执行的那一行，并更新内存里的值。">
+        <rect x="20" y="20" width="290" height="230" rx="12" class="b-pd"/>
+        <text x="165" y="44" text-anchor="middle" class="t-b">线程 1：第一次调用 get()</text>
+        <rect class="ln" id="t1-0" x="32" y="56" width="266" height="30" rx="6"/><text x="44" y="76" class="t-mono">if (instance == null)</text>
+        <rect class="ln" id="t1-1" x="32" y="92" width="266" height="30" rx="6"/><text x="44" y="112" class="t-mono">加锁，再检查一次：还是 null</text>
+        <rect class="ln" id="t1-2" x="32" y="128" width="266" height="30" rx="6"/><text x="44" y="148" class="t-mono">分配内存（port 默认 0）</text>
+        <rect class="ln" id="t1-3" x="32" y="164" width="266" height="30" rx="6"/><text x="44" y="184" class="t-mono">构造器：port = 8080</text>
+        <rect class="ln" id="t1-4" x="32" y="200" width="266" height="30" rx="6"/><text x="44" y="220" class="t-mono">instance = 对象地址</text>
+
+        <rect x="350" y="60" width="200" height="150" rx="12" class="b-cg"/>
+        <text x="450" y="84" text-anchor="middle" class="t-b">共享内存</text>
+        <text x="368" y="122" class="t-s">instance</text><text id="m-inst" x="532" y="122" text-anchor="end" class="t-mono">null</text>
+        <text x="368" y="160" class="t-s">对象.port</text><text id="m-port" x="532" y="160" text-anchor="end" class="t-mono">—</text>
+        <text x="450" y="194" text-anchor="middle" class="t-xs" id="m-note"></text>
+
+        <rect x="590" y="20" width="290" height="230" rx="12" class="b-bk"/>
+        <text x="735" y="44" text-anchor="middle" class="t-b">线程 2：同时调用 get()</text>
+        <rect class="ln" id="t2-0" x="602" y="74" width="266" height="30" rx="6"/><text x="614" y="94" class="t-mono">if (instance == null)：不是 null</text>
+        <rect class="ln" id="t2-1" x="602" y="116" width="266" height="30" rx="6"/><text x="614" y="136" class="t-mono">直接 return instance</text>
+        <rect class="ln" id="t2-2" x="602" y="158" width="266" height="30" rx="6"/><text x="614" y="178" class="t-mono">读 port → <tspan id="t2-seen">?</tspan></text>
+
+        <g class="arw" id="a-reorder"><path d="M300 215 C330 215 330 180 310 178" class="e-badd" marker-end="url(#ah-bad)"/><text x="165" y="266" text-anchor="middle" class="t-bad">“写 instance”被排到了构造器之前</text></g>
+        <g class="arw" id="a-hb"><path d="M298 215 C450 250 560 120 600 92" class="e-of" marker-end="url(#ah-of)"/><text x="450" y="262" text-anchor="middle" class="t-of">volatile 写 → volatile 读：happens-before</text></g>
+      </svg>
+    </div>
+    <div class="cap-txt" id="st-cap" aria-live="polite"></div>
+    <div class="ledger">
+      <div class="lg-c" data-role="cg"><small>instance</small><b id="lg-inst">null</b><span>共享内存里的值</span></div>
+      <div class="lg-c" data-role="cg"><small>对象.port</small><b id="lg-port">—</b><span>共享内存里的值</span></div>
+      <div class="lg-c" data-role="bk"><small>线程 2 读到的 port</small><b id="lg-seen">—</b><span>应该是 8080</span></div>
+      <div class="lg-c" data-role="of"><small>线程 1 写和线程 2 读之间</small><b id="lg-hb">—</b><span>有没有 happens-before</span></div>
+    </div>
+  </div>
+  <div class="two">
+    <div class="done-box"><b>到这里已经能交差了。</b>能说清三个问题（可见性、有序性、原子性）从哪来；会用 happens-before 推一段代码对不对；知道状态标志用 volatile、复合操作用锁或原子类、单例用静态内部类；能讲清双重检查锁为什么要 volatile。</div>
+    <div class="todo">
+      <b>已知还没处理的细节</b>
+      <ul>
+        <li>volatile 的 count++ 为什么还是会丢 → <a href="#pit-inc">⑥ 坑 1</a></li>
+        <li>只给写加锁、读不加锁行不行 → <a href="#pit-halflock">⑥ 坑 4</a></li>
+        <li>加一行 println 问题就“消失”了 → <a href="#pit-print">⑥ 坑 6</a></li>
+        <li>volatile 在 CPU 上到底插了什么 → <a href="#c3">⑥ 第三圈</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ⑥ -->
+<section id="s6">
+  <div>
+    <h2><span class="sn">⑥</span>边界和变体：哪里最容易以为自己写对了</h2>
+    <p class="lead">第一圈的坑每条标了根源在 ④ 的哪一条；第二圈是团队里该怎么写；第三圈讲 volatile 在 CPU 上插了什么、VarHandle 的几种模式和各版本的情况。</p>
+  </div>
+  <div class="sub" id="c1">
+    <div class="round"><span class="rb">第一圈</span><h3>注意事项</h3></div>
+    <div class="pits">
+      <div class="pit" id="pit-inc">
+        <b><em>坑 1</em>加了 volatile，计数还是会丢<a class="root" href="#m-keywords">← ④ 洞察 4</a></b>
+        <dl>
+          <dt>现象</dt><dd><code>volatile int count</code>，两个线程各加 100 万次，结果小于 200 万。</dd>
+          <dt>根源</dt><dd>volatile 只保证单次读、单次写的可见性和顺序。<code>count++</code> 是“读、加一、写回”三步，两个线程可能读到同一个旧值，各自加一后写回，丢掉一次。</dd>
+          <dt>做法</dt><dd class="fix">计数用 <code>AtomicLong</code>，高并发计数用 <code>LongAdder</code>；“先判断再修改”这类复合操作用锁。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-dcl">
+        <b><em>坑 2</em>双重检查锁不加 volatile<a class="root" href="#s5">← ⑤ 手推</a></b>
+        <dl>
+          <dt>现象</dt><dd>极少数情况下拿到一个字段还是默认值的单例，偶发 NPE 或配置为空，几乎无法复现。</dd>
+          <dt>根源</dt><dd>“把地址写进 instance”可以被排到构造器之前；第一次检查不加锁，和写之间没有 happens-before，另一个线程可能看到非 null 却没初始化完的对象。</dd>
+          <dt>做法</dt><dd class="fix"><code>instance</code> 加 <code>volatile</code>；更简单的是用静态内部类（Holder）或枚举单例，交给类初始化的线程安全保证。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-flag">
+        <b><em>坑 3</em>停止标志不加 volatile，线程停不下来<a class="root" href="#m-reorder">← ④ 洞察 1 JIT</a></b>
+        <dl>
+          <dt>现象</dt><dd>改了 <code>running = false</code>，后台线程照样跑；本地调试时又是好的。<span class="seen">② 实测</span></dd>
+          <dt>根源</dt><dd>循环被 JIT 编译后，对普通字段的读被提到了循环外面，相当于 <code>if (!stop) while (true)</code>。调试时代码没被 JIT 编译，所以看不出来。</dd>
+          <dt>做法</dt><dd class="fix">标志用 volatile，或者用 <code>AtomicBoolean</code>；线程池里的任务优先用中断（<code>Future.cancel(true)</code>）配合检查 <code>Thread.interrupted()</code>。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-halflock">
+        <b><em>坑 4</em>只给写加锁，读不加锁<a class="root" href="#m-hb">← ④ 洞察 2 锁规则</a></b>
+        <dl>
+          <dt>现象</dt><dd>“写入要防止并发，所以 set 方法加了 synchronized；读只是看一眼，不用加。”结果读到旧值，或者读到写了一半的状态。</dd>
+          <dt>根源</dt><dd>锁的 happens-before 只发生在“解锁”和<b>之后对同一把锁的加锁</b>之间。读线程不加锁，就和写线程之间没有任何边，还是数据竞争。</dd>
+          <dt>做法</dt><dd class="fix">读写都用同一把锁；读多写少用 <code>ReadWriteLock</code>，或者把状态做成不可变对象，用一个 volatile 引用整体替换。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-escape">
+        <b><em>坑 5</em>构造器里把 this 交出去，final 也救不了<a class="root" href="#m-keywords">← ④ 洞察 4 final</a></b>
+        <dl>
+          <dt>现象</dt><dd>在构造器里注册监听器、启动线程、把 <code>this</code> 放进静态集合，别的线程偶尔看到 final 字段是 null 或 0。</dd>
+          <dt>根源</dt><dd>final 的保证是“构造器<b>结束后</b>才拿到引用的线程，一定看到 final 字段的初始值”。构造器还没结束就把 <code>this</code> 交出去，这个保证就不成立。</dd>
+          <dt>做法</dt><dd class="fix">构造器里只赋值；注册、启动线程放到构造完成之后（工厂方法、<code>@PostConstruct</code>、<code>start()</code> 方法）。</dd>
+        </dl>
+      </div>
+      <div class="pit" id="pit-print">
+        <b><em>坑 6</em>加一行日志，问题就“好了”<a class="root" href="#m-drf">← ④ 洞察 3</a></b>
+        <dl>
+          <dt>现象</dt><dd>循环里加一句 <code>System.out.println</code> 或 <code>Thread.sleep</code>，停止标志就能被看到了，于是以为问题解决。</dd>
+          <dt>根源</dt><dd><code>println</code> 内部有 <code>synchronized</code>，会妨碍 JIT 把读提到循环外，顺带让问题不再出现。但规范没有给你任何保证，换个日志框架、换个 JDK 版本、换到 ARM 上，可能又回来了。</dd>
+          <dt>做法</dt><dd class="fix">先用 happens-before 推一遍有没有边；没有边就是数据竞争，用 volatile、锁或并发工具把边建起来，别依赖巧合。</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="c2">
+    <div class="round"><span class="rb">第二圈</span><h3>使用规范</h3></div>
+    <div class="rules-list">
+      <div class="rl"><b>能不共享就不共享，能不可变就不可变</b><p>局部变量、<code>ThreadLocal</code> / <code>ScopedValue</code>、final 字段组成的不可变对象，天然没有数据竞争。</p><p class="guard">所有可见性问题</p></div>
+      <div class="rl"><b>优先用现成的并发工具</b><p><code>ConcurrentHashMap</code>、<code>AtomicLong</code>、<code>LongAdder</code>、<code>BlockingQueue</code>、线程池，它们的文档里写明了 happens-before。</p><p class="guard">自己写同步写错</p></div>
+      <div class="rl"><b>状态标志用 volatile，复合操作用锁或原子类</b><p>“一个写、多个读”的布尔、引用用 volatile；读改写用 CAS 或锁。</p><p class="guard">坑 1、坑 3</p></div>
+      <div class="rl"><b>安全发布对象的四种方式</b><p>静态初始化器里赋值；存进 volatile 字段或 <code>AtomicReference</code>；存进 final 字段；存进由锁保护的字段或并发容器。</p><p class="guard">别的线程看到半初始化的对象（坑 2、坑 5）</p></div>
+      <div class="rl"><b>单例不要手写双重检查</b><p>用静态内部类或枚举；Spring 里交给容器管理。</p><p class="guard">坑 2</p></div>
+      <div class="rl"><b>并发代码用 jcstress 测</b><p>OpenJDK 的并发压力测试框架，专门跑 ② 那种实验，会把各种结果出现的次数统计出来。普通单元测试几乎测不出数据竞争。</p><p class="guard">“我跑了一万遍都没问题”</p></div>
+    </div>
+  </div>
+
+  <div class="sub" id="c3">
+    <div class="round"><span class="rb">第三圈</span><h3>更深一层</h3></div>
+    <div class="deep">
+      <div class="dp" data-role="g2">
+        <h4>volatile 在 CPU 上插了什么</h4>
+        <p>JSR-133 的实现指南把屏障分成四种：LoadLoad、LoadStore、StoreStore、StoreLoad。volatile 写之前要 StoreStore、之后要 StoreLoad；volatile 读之后要 LoadLoad 和 LoadStore。</p>
+        <ul>
+          <li>x86 本来只会把“先写后读”重排，所以只有 StoreLoad 需要真指令：HotSpot 在 volatile 写后加一条带 <code>lock</code> 前缀的指令，volatile 读不需要额外指令。这就是“volatile 读几乎免费”。</li>
+          <li>ARM 四种重排都可能，HotSpot 用 <code>ldar</code> / <code>stlr</code> 这类自带获取、释放语义的读写指令。所以同一段有数据竞争的代码，在 ARM 上更容易出事（② 的实验机就是 ARM）。</li>
+        </ul>
+      </div>
+      <div class="dp" data-role="pd">
+        <h4>VarHandle：比 volatile 更细的几档（JDK 9）</h4>
+        <p>对同一个变量可以按需选内存顺序，从弱到强：</p>
+        <ul>
+          <li><b>plain</b>：普通读写，没有任何保证。</li>
+          <li><b>opaque</b>：保证最终能看到、不会被优化掉，但不保证和其他变量的顺序。</li>
+          <li><b>release / acquire</b>：写之前的操作不会排到写后面，读之后的不会排到读前面，“消息传递”够用了，比 volatile 便宜（不需要 StoreLoad）。</li>
+          <li><b>volatile</b>：最强，全局一个顺序。</li>
+        </ul>
+        <p>业务代码一般用不到，JDK 的并发类、Netty 等底层库在用，也是替代 <code>sun.misc.Unsafe</code> 的官方方式。</p>
+      </div>
+      <div class="dp" data-role="cg">
+        <h4>为什么 String 能随便在线程之间传</h4>
+        <p><code>String</code> 存内容的字段是 final，构造完成后不再修改（缓存哈希值的字段是例外，但它每次重算出来都一样），加上 final 字段的初始化保证，任何线程拿到它都能看到完整的内容，不需要任何同步。这就是“不可变对象天然线程安全”在 JMM 里的根据。</p>
+      </div>
+      <div class="dp" data-role="of">
+        <h4>版本差异：JMM 自 JDK 5 起基本没变</h4>
+        <ul>
+          <li>JDK 5（JSR 133）重新定义了 JMM：修好了旧模型下 final 字段可能被看到变化、volatile 不能阻止与普通读写重排等问题，双重检查锁从此“加 volatile 就对”。</li>
+          <li>JDK 9 加了 VarHandle 的几种访问模式，规范的核心规则没变。</li>
+          <li>JDK 8、17、21、25 写并发代码的规则一样；虚拟线程（21）也遵守同一套 happens-before，<code>start</code>、<code>join</code> 规则同样适用。</li>
+        </ul>
+        <p>和 JMM 同年加入的 <code>java.util.concurrent</code> 见 <a href="../jdk/jdk-8-17-21.html#m-base">JDK 页的“地基”</a>。</p>
+      </div>
+    </div>
+    <h3 style="margin-top:12px">面试官会怎么问</h3>
+    <div class="faq">
+      <details><summary>volatile 和 synchronized 有什么区别？</summary><p>volatile 只管可见性和有序性，不保证复合操作的原子性，不会阻塞；synchronized 三样都管，还提供互斥，有竞争时会阻塞。前者适合状态标志、一写多读的引用，后者适合需要“读改写”整体不被打断的地方。</p><p class="from">← ④ 洞察 4</p></details>
+      <details><summary>什么是 happens-before？举几条规则。</summary><p>JMM 定义的“先后关系”：A happens-before B，则 A 的结果对 B 可见，且 A 不会被排到 B 之后。规则有程序顺序、同一把锁的解锁先于加锁、同一个 volatile 变量的写先于读、start 先于线程内操作、线程内操作先于 join 返回、传递性等。</p><p class="from">← ④ 洞察 2</p></details>
+      <details><summary>指令重排序是什么？为什么单线程感觉不到？</summary><p>编译器和 CPU 为了性能调换没有依赖关系的读写顺序。它们遵守 as-if-serial：只保证本线程看到的结果和按顺序执行一样，所以单线程感觉不到；另一个线程同时观察时才会看到“不可能”的结果。</p><p class="from">← ④ 洞察 1</p></details>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>下一圈</h3>
+    <ul class="next">
+      <li>jcstress：怎么写一个并发压力测试，读懂它的结果表</li>
+      <li>CPU 缓存一致性（MESI）、写缓冲区和失效队列</li>
+      <li>C++ 的 memory_order 和 Java 的对照</li>
+      <li>AQS、ConcurrentHashMap 源码里 volatile 和 CAS 是怎么配合的</li>
+      <li>伪共享和 <code>@Contended</code>：两个变量挤在同一个缓存行</li>
+      <li>final 字段的冻结语义和反序列化（与 JDK 26 的 JEP 500 有关）</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ↺ -->
+<section id="loop">
+  <div>
+    <h2><span class="sn">↺</span>回到第⑤步：改 JmmDemo</h2>
+    <p class="lead">预期是按 ④ 推出来的，<b>没有在本机跑过</b>。并发实验每次结果都会有波动，看趋势。</p>
+  </div>
+  <div class="ex">
+    <div class="exc" data-role="pd">
+      <h4>练习 1 · 先猜，再在循环里打日志</h4>
+      <p>在 stop 模式的循环里加一句 <code>System.out.print("")</code>，不加 volatile，再跑。先猜能不能停下来。</p>
+      <p><b>预期：</b>多半能停下来：<code>print</code> 里的 <code>synchronized</code> 让 JIT 不再把读提到循环外。但这是巧合，不是保证（坑 6）。</p>
+      <p class="uses">用到：坑 6、④ 洞察 1</p>
+    </div>
+    <div class="exc" data-role="bad">
+      <h4>练习 2 · volatile 计数</h4>
+      <p>加一个模式：<code>static volatile int count</code>，两个线程各 <code>count++</code> 100 万次，join 后打印。再换成 <code>AtomicInteger</code> 比一比。</p>
+      <p><b>预期：</b>volatile 版每次都小于 200 万，而且每次不一样；AtomicInteger 版每次都是 200 万。</p>
+      <p class="uses">用到：坑 1</p>
+    </div>
+    <div class="exc" data-role="bk">
+      <h4>练习 3 · 只让一个变量是 volatile</h4>
+      <p>sb 模式里，只把 x 改成 volatile 语义（<code>vx</code>），y 仍是普通数组，再跑 100 万次。先猜 r1=0、r2=0 还会不会出现。</p>
+      <p><b>预期：</b>还会出现。线程 B 那边是普通写 y、普通读 x，它自己的“先写后读”照样可以被重排；要禁止这种结果，两边都得是 volatile。</p>
+      <p class="uses">用到：④ 洞察 2、第三圈屏障</p>
+    </div>
+  </div>
+  <div class="faq">
+    <details><summary>1. 用一句话说出 Java 内存模型的精华。</summary><p>编译器和 CPU 会重排、会延迟写，JMM 不禁止这些，只规定 happens-before：用 volatile、锁、start / join 等建立先后关系的地方一定看得到、顺序对；没有数据竞争的程序，结果和按顺序执行一样。</p><p class="from">← 开头 + ④ 洞察 3</p></details>
+    <details><summary>2. “写了就看得到、按顺序执行”这个朴素假设，被哪两个实验打破了？</summary><p>不加 volatile 的停止标志，工作线程 3 秒都没看到（JIT 把读提到了循环外）；两个线程都先写后读，100 万次里有 29% 两个都读到 0（写还在写缓冲区里）。</p><p class="from">← ②</p></details>
+    <details><summary>3. 双重检查锁不加 volatile 会拿到半初始化对象，根源是 ④ 的哪一条？</summary><p>洞察 2：第一次检查不加锁，和线程 1 写 instance 之间没有 happens-before；而“写 instance”可以被排到构造器之前（洞察 1）。加了 volatile，写 instance 之前的构造器写入，对读到它的线程一定可见。</p><p class="from">← ④ 洞察 1、2 + ⑤</p></details>
+    <details><summary>4. 预测：线程 1 在 synchronized(lockA) 里写 x = 1；线程 2 在 synchronized(lockB) 里读 x。线程 2 一定能看到 1 吗？</summary><p>不一定。锁规则只连接同一把锁的解锁和加锁，lockA 和 lockB 之间没有边，这仍然是数据竞争。</p><p class="from">← ④ 洞察 2 锁规则</p></details>
+    <details><summary>5. 预测：主线程写好一个普通的 HashMap，再 new Thread(...).start()，新线程里读这个 Map，能看到全部数据吗？如果新线程是在 Map 写完之前就启动了呢？</summary><p>先写完再 start：能，start 先于新线程里的所有操作。先 start 再写：不能保证，之后的写和新线程之间没有边，而且 HashMap 本身也不是线程安全的。</p><p class="from">← ④ 洞察 2 线程启动规则</p></details>
+    <details><summary>6. 预测：② 的 sb 实验换到一台 x86 机器上，普通变量时 r1=0、r2=0 还会出现吗？</summary><p>会。x86 的 TSO 唯一允许的重排就是“先写后读”，而写缓冲区正是造成这个结果的原因。比例可能和 ARM 上不同，但不会是 0；只有两边都用 volatile 才会是 0。</p><p class="from">← ③ 硬件模型 + 第三圈</p></details>
+  </div>
+</section>
+
+<footer>
+  <p>档位：标准档。本机实测：② 的 JmmDemo，在 2 核 ARM 云主机上用 JDK 17.0.20.1 跑（<code>--release 8</code> 编译），每个模式一次。⑤ 的双重检查锁是按规范推演的，没有在本机复现。查过的文档：JLS 第 17.4 节（happens-before、数据竞争）、17.5 节（final 字段）；Doug Lea 的 JSR-133 Cookbook（屏障分类和各平台的实现）；JEP 193（VarHandle）；<code>java.util.concurrent</code> 包文档里的“内存一致性效果”。↺ 的练习预期没有在本机跑过。</p>
+  <p>相关：<a href="../jvm/jvm-memory-structure.html">JVM 内存结构</a> · <a href="aqs.html">AQS 源码</a> · <a href="threadpool-execute.html">ThreadPoolExecutor.execute 源码</a> · <a href="../jdk/jdk-8-17-21.html">JDK 8、17、21、25</a> · <a href="../network/io-models.html">网络 IO 模型</a></p>
+</footer>
+</main>
+<script>
+/*SIM-START*/
+// 双重检查锁的两种剧情。t1 / t2：高亮哪一行（-1 不高亮）；inst / port：共享内存里的值；seen：线程 2 读到的 port；hb：有没有 happens-before；arw：显示哪支箭头
+var DCL = {
+  plain: [
+    { t1: -1, t2: -1, inst: 'null', port: '—', seen: '—', hb: '—', arw: null, cap: '<b>开始。</b>两个线程同时第一次调用 <code>get()</code>，<code>instance</code> 还是 null，对象还不存在。<code>instance</code> 没有 volatile。' },
+    { t1: 1, t2: -1, inst: 'null', port: '—', seen: '—', hb: '—', arw: null, cap: '<b>线程 1 进锁。</b>第一次检查是 null，加锁后再检查一次，还是 null，准备创建对象。' },
+    { t1: 2, t2: -1, inst: 'null', port: '0', seen: '—', hb: '—', arw: null, cap: '<b>分配内存。</b>堆里有了一个对象，所有字段先是默认值，<code>port = 0</code>。' },
+    { t1: 4, t2: -1, inst: '@1f', port: '0', seen: '—', hb: '—', arw: 'a-reorder', cap: '<b>先写了 instance。</b>“写构造器里的 port”和“写 instance”之间没有依赖，单线程看不出先后，JIT 或 CPU 可以把“写 instance”排到前面。现在共享内存里 <code>instance</code> 已经不是 null，但 <code>port</code> 还是 0。', wl: '这一步对线程 1 自己完全没有影响：等它从 get() 返回时，port 一定已经是 8080 了（as-if-serial）。' },
+    { t1: -1, t2: 0, inst: '@1f', port: '0', seen: '—', hb: '没有', arw: null, cap: '<b>线程 2 第一次检查。</b>不加锁，直接读 <code>instance</code>，读到了非 null。它和线程 1 的写之间没有任何 happens-before 边（没有 volatile，线程 2 也没拿锁）。' },
+    { t1: -1, t2: 2, inst: '@1f', port: '0', seen: '0', hb: '没有', arw: null, cap: '<b>线程 2 返回并使用对象。</b>读 <code>port</code>，拿到 0。<b>拿到了一个没初始化完的对象。</b>', wl: '这就是数据竞争的后果：JMM 不保证线程 2 能看到构造器里的写。' },
+    { t1: 3, t2: -1, inst: '@1f', port: '8080', seen: '0', hb: '没有', arw: null, cap: '<b>线程 1 的构造器这时才写完 port。</b>已经晚了，线程 2 早就带着 0 走了。这种情况极少发生、几乎无法复现，所以特别难查。' }
+  ],
+  vol: [
+    { t1: -1, t2: -1, inst: 'null', port: '—', seen: '—', hb: '—', arw: null, cap: '<b>开始。</b>同样两个线程同时调用 <code>get()</code>，这次 <code>instance</code> 是 <code>volatile</code>。' },
+    { t1: 1, t2: -1, inst: 'null', port: '—', seen: '—', hb: '—', arw: null, cap: '<b>线程 1 进锁。</b>两次检查都是 null，准备创建对象。' },
+    { t1: 2, t2: -1, inst: 'null', port: '0', seen: '—', hb: '—', arw: null, cap: '<b>分配内存。</b>对象的 <code>port</code> 先是默认值 0。' },
+    { t1: 3, t2: -1, inst: 'null', port: '8080', seen: '—', hb: '—', arw: null, cap: '<b>构造器写 port = 8080。</b>volatile 写之前的普通写，不允许被排到 volatile 写的后面，所以这一步一定先完成。' },
+    { t1: 4, t2: -1, inst: '@1f', port: '8080', seen: '—', hb: '—', arw: null, cap: '<b>volatile 写 instance。</b>JVM 在这里插了屏障：前面的写都已经生效，才会写出 instance。' },
+    { t1: -1, t2: 0, inst: '@1f', port: '8080', seen: '—', hb: '有', arw: 'a-hb', cap: '<b>线程 2 volatile 读 instance。</b>读到了线程 1 写的值，于是“volatile 写 → volatile 读”这条 happens-before 边成立。' },
+    { t1: -1, t2: 2, inst: '@1f', port: '8080', seen: '8080', hb: '有', arw: 'a-hb', cap: '<b>线程 2 读 port，一定是 8080。</b>构造器写 port 按程序顺序先于 volatile 写，volatile 写先于 volatile 读，读又先于读 port，传递下来就是：构造器的写对线程 2 可见。', wl: '对照“没有 volatile”的第 4、6 步：差的就是中间那条边。' }
+  ]
+};
+/*SIM-END*/
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var mode = 'plain', i = 0, timer = null;
+  function show() {
+    var s = DCL[mode][i];
+    for (var k = 0; k < 5; k++) $('t1-' + k).setAttribute('class', 'ln' + (s.t1 === k ? ' on' : ''));
+    for (var k2 = 0; k2 < 3; k2++) $('t2-' + k2).setAttribute('class', 'ln' + (s.t2 === k2 ? ' on' : ''));
+    $('m-inst').textContent = s.inst; $('m-port').textContent = s.port;
+    $('m-note').textContent = mode === 'vol' ? 'instance 是 volatile' : 'instance 是普通字段';
+    $('t2-seen').textContent = s.seen === '—' ? '?' : s.seen;
+    ['a-reorder', 'a-hb'].forEach(function (a) { $(a).style.display = s.arw === a ? 'inline' : 'none'; });
+    $('st-cap').innerHTML = s.cap + (s.wl ? '<span class="wl">' + s.wl + '</span>' : '');
+    $('lg-inst').textContent = s.inst; $('lg-port').textContent = s.port; $('lg-seen').textContent = s.seen; $('lg-hb').textContent = s.hb;
+    $('lg-seen').style.color = s.seen === '0' ? 'var(--bad)' : (s.seen === '8080' ? 'var(--good)' : '');
+    $('st-pos').innerHTML = '第 <b>' + (i + 1) + '</b> / ' + DCL[mode].length + ' 步';
+    $('st-prev').disabled = i === 0; $('st-next').disabled = i === DCL[mode].length - 1;
+  }
+  function go(d) { i = Math.max(0, Math.min(DCL[mode].length - 1, i + d)); show(); }
+  function stop() { if (timer) { clearInterval(timer); timer = null; $('st-auto').textContent = '自动播放'; } }
+  $('st-prev').addEventListener('click', function () { stop(); go(-1); });
+  $('st-next').addEventListener('click', function () { stop(); go(1); });
+  $('st-reset').addEventListener('click', function () { stop(); i = 0; show(); });
+  $('st-auto').addEventListener('click', function () {
+    if (timer) { stop(); return; }
+    if (i === DCL[mode].length - 1) i = 0;
+    $('st-auto').textContent = '暂停'; show();
+    timer = setInterval(function () { if (i >= DCL[mode].length - 1) { stop(); return; } go(1); }, 3000);
+  });
+  [].forEach.call($('dcl-mode').querySelectorAll('button'), function (b) {
+    b.addEventListener('click', function () {
+      stop(); mode = b.dataset.v; i = 0;
+      [].forEach.call($('dcl-mode').querySelectorAll('button'), function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      show();
+    });
+  });
+  $('stage').addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight') { stop(); go(1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { stop(); go(-1); e.preventDefault(); }
+  });
+  show();
+})();
+</script>
+
+<script id="tocx-js">
+(function () {
+  var bar = document.querySelector('nav.topbar .tb-in');
+  if (!bar || bar.querySelector('.tocx-steps, .tocx-dd')) return;
+  var route = document.querySelector('main nav.route');
+  var items = [], btn = null, panel = null;
+
+  function margin(t) {
+    try { if (getComputedStyle(t).scrollMarginTop === '0px') t.style.scrollMarginTop = '64px'; } catch (e) {}
+  }
+  if (route) {
+    var nav = document.createElement('nav');
+    nav.className = 'tocx-steps';
+    nav.setAttribute('aria-label', '六步跳转');
+    [].forEach.call(route.querySelectorAll('a[href^="#"]'), function (r) {
+      var id = r.getAttribute('href').slice(1), t = document.getElementById(id);
+      if (!t) return;
+      var b = r.querySelector('b'), num = b ? b.textContent.trim() : '';
+      var label = r.textContent.replace(num, '').trim();
+      var a = document.createElement('a');
+      a.href = '#' + id; a.title = (num + ' ' + label).trim();
+      a.innerHTML = '<b></b><span></span>';
+      a.firstChild.textContent = num; a.lastChild.textContent = label;
+      nav.appendChild(a); items.push({ a: a, t: t }); margin(t);
+    });
+    if (!items.length) return;
+    bar.appendChild(nav);
+    document.documentElement.classList.add('tocx-on');
+  } else {
+    var hs = document.querySelectorAll('main h2');
+    if (hs.length < 3) return;
+    var dd = document.createElement('div');
+    dd.className = 'tocx-dd';
+    dd.innerHTML = '<button type="button" class="tocx-btn" aria-expanded="false" aria-controls="tocx-panel">目录 ▾</button><div class="tocx-panel" id="tocx-panel" hidden></div>';
+    btn = dd.firstChild; panel = dd.lastChild;
+    var used = {};
+    [].forEach.call(hs, function (h, i) {
+      var t = h.closest('section[id]');
+      if (!t || used[t.id]) t = h;
+      if (!t.id) t.id = 'tocx-' + (i + 1);
+      used[t.id] = 1;
+      var c = h.cloneNode(true);
+      [].forEach.call(c.querySelectorAll('small, .sn'), function (x) { x.parentNode.removeChild(x); });
+      var a = document.createElement('a');
+      a.href = '#' + t.id;
+      a.innerHTML = '<i></i><span></span>';
+      a.firstChild.textContent = (i < 9 ? '0' : '') + (i + 1);
+      a.lastChild.textContent = c.textContent.replace(/\s+/g, ' ').trim();
+      panel.appendChild(a); items.push({ a: a, t: t }); margin(t);
+    });
+    bar.appendChild(dd);
+    function open(v) {
+      panel.hidden = !v; btn.setAttribute('aria-expanded', String(v));
+      if (v && cur >= 0) { var a = items[cur].a; panel.scrollTop = a.offsetTop - panel.clientHeight / 2; }
+    }
+    btn.addEventListener('click', function (e) { e.stopPropagation(); open(panel.hidden); });
+    panel.addEventListener('click', function (e) { if (e.target.closest('a')) open(false); });
+    document.addEventListener('click', function (e) { if (!panel.hidden && !dd.contains(e.target)) open(false); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !panel.hidden) { open(false); btn.focus(); } });
+  }
+
+  var cur = -1, ticking = false, top = bar.parentNode;
+  function spy() {
+    ticking = false;
+    var y = top.getBoundingClientRect().bottom + 24, k = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].t.getBoundingClientRect().top <= y) k = i; else break;
+    }
+    var de = document.documentElement;
+    if (k >= 0 && window.innerHeight + window.pageYOffset >= de.scrollHeight - 4) k = items.length - 1;
+    if (k === cur) return;
+    if (cur >= 0) { items[cur].a.classList.remove('on'); items[cur].a.removeAttribute('aria-current'); }
+    cur = k;
+    if (k < 0) return;
+    var a = items[k].a;
+    a.classList.add('on'); a.setAttribute('aria-current', 'true');
+    if (route) {
+      var n = a.parentNode, nr = n.getBoundingClientRect(), ar = a.getBoundingClientRect();
+      if (ar.left < nr.left) n.scrollLeft -= nr.left - ar.left + 8;
+      else if (ar.right > nr.right) n.scrollLeft += ar.right - nr.right + 8;
+    }
+  }
+  window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(spy); } }, { passive: true });
+  window.addEventListener('resize', spy);
+  spy();
+})();
+</script>
+</body>
+</html>

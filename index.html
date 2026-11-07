@@ -120,6 +120,7 @@ a.card:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
       <li><a class="card" href="juc/synchronous-transfer-queue.html"><span class="no">01</span><span class="t">SynchronousQueue 与 LinkedTransferQueue</span><span class="d">双重队列和双重栈、一次 CAS 完成交接、xfer 的四种模式、先自旋再 park、slack 与自链接、线程池里的后果、JDK 11 / 21 实测，分步演示和沙盘</span></a></li>
       <li><a class="card" href="juc/threadpool-execute.html"><span class="no">02</span><span class="t">ThreadPoolExecutor.execute 源码</span><span class="d">execute 的三个 if、ctl 的位、Worker 和 getTask、放进队列后的复查和线程退出前的检查、几件只能靠源码解释的怪事、各版本差异，线程调度实验台</span></a></li>
       <li><a class="card" href="juc/aqs.html"><span class="no">03</span><span class="t">AQS 源码</span><span class="d">state 加等待队列、独占和共享、Condition 的两条队、公平与非公平、JDK 8 和 17 / 21 两代源码对照、日常开发里哪些框架和 JDK 类用到了它，三个 JDK 实测和实验台</span></a></li>
+      <li><a class="card" href="juc/java-memory-model.html"><span class="no">04</span><span class="t">Java 内存模型</span><span class="d">写了不等于别人看到：重排序从哪来、happens-before 规则和推导、为什么只保证没有数据竞争的程序、volatile / synchronized / final 各保证什么、内存屏障和 VarHandle，可见性和重排序实测（JDK 17，ARM），双重检查锁分步推演</span></a></li>
     </ol>
   </section>
 
@@ -142,6 +143,13 @@ a.card:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
     <h2>JDK<small>JDK 8 / 17 / 21 / 25 · LTS 演进</small></h2>
     <ol>
       <li><a class="card" href="jdk/jdk-8-17-21.html"><span class="no">01</span><span class="t">JDK 8、17、21、25</span><span class="d">四个 LTS 是怎么连起来的：5、6、7 留下的地基（内存模型、锁优化、invokedynamic、Fork/Join）、半年一班车和预览特性、四条主线（语言、并发、GC、平台治理）、50 个新特性各是什么、为什么加、怎么用（带示例）、record + sealed + 模式匹配、强封装、ScopedValue 的设计取舍、8 / 21 / 25 写法对照与升级五步、十二个升级坑、25 之后的 27 和 29，升级检查器</span></a></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>JVM<small>HotSpot · JDK 8 / 17 / 21 / 25</small></h2>
+    <ol>
+      <li><a class="card" href="jvm/jvm-memory-structure.html"><span class="no">01</span><span class="t">JVM 内存结构</span><span class="d">一个 Java 进程的内存分成哪几块：线程私有的栈、共享的堆、堆外的元空间和直接内存，栈和堆怎么配合、对象头和对象大小、为什么分代，六种 OOM 怎么认、容器被杀的原因，实测撑爆四块内存（JDK 17），分代实验台</span></a></li>
     </ol>
   </section>
 </main>
